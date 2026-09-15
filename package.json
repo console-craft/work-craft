@@ -1,0 +1,5 @@
+{
+  "name": "work-craft",
+  "private": true,
+  "workspaces": ["packages/*"]
+}
