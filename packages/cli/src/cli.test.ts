@@ -154,13 +154,16 @@ async function processCommand(
     : { status: "mismatch", command };
 }
 
+type ProcessObserver = typeof processCommand;
+
 async function waitForProcessExit(
   pid: number,
   expectedCommand: string,
   deadline: number,
+  observeProcess: ProcessObserver = processCommand,
 ): Promise<void> {
   while (Date.now() < deadline) {
-    const observation = await processCommand(pid, expectedCommand, {
+    const observation = await observeProcess(pid, expectedCommand, {
       timeout: Math.max(1, Math.min(PROBE_TIMEOUT, deadline - Date.now())),
     });
     if (observation.status === "absent") {
@@ -232,7 +235,10 @@ async function cleanupHealth(
   }
 }
 
-async function cleanup(home: string): Promise<void> {
+async function cleanup(
+  home: string,
+  observeProcess: ProcessObserver = processCommand,
+): Promise<void> {
   const lockPath = join(home, "daemon.lock");
   const socketPath = join(home, "work-craft.sock");
   const deadline = Date.now() + CLEANUP_TIMEOUT;
@@ -258,7 +264,7 @@ async function cleanup(home: string): Promise<void> {
     confirmed?.pid === pid &&
     health.epoch === confirmed.epoch
   ) {
-    const observation = await processCommand(pid, SERVER_COMMAND, {
+    const observation = await observeProcess(pid, SERVER_COMMAND, {
       timeout: Math.max(1, Math.min(PROBE_TIMEOUT, deadline - Date.now())),
     });
     const finalHealth = await cleanupHealth(socketPath, deadline);
@@ -269,7 +275,7 @@ async function cleanup(home: string): Promise<void> {
     ) {
       process.kill(pid, "SIGKILL");
       try {
-        await waitForProcessExit(pid, observation.command, deadline);
+        await waitForProcessExit(pid, observation.command, deadline, observeProcess);
       } catch (cause) {
         throw cleanupError(home, cause);
       }
@@ -634,6 +640,83 @@ test("process observer distinguishes timeout, errors, absence, and mismatch", as
     }
   }
 });
+
+test("cleanup preserves owned files when post-kill observation is uncertain", async () => {
+  const outcomes: ProcessObservation[] = [
+    { status: "error", reason: "process observer timed out" },
+    { status: "error", reason: "unexpected ps exit 2" },
+    { status: "mismatch", command: "other" },
+  ];
+  const reasons = [
+    "process observer timed out",
+    "unexpected ps exit 2",
+    "process command changed to other",
+  ];
+  const cases: Array<{
+    home: string;
+    lockPath: string;
+    socketPath: string;
+    server: Bun.Server<undefined>;
+    result: Promise<{ status: "resolved" } | { status: "rejected"; error: unknown }>;
+  }> = [];
+  const kill = spyOn(process, "kill").mockImplementation(() => true);
+
+  try {
+    for (const [index, outcome] of outcomes.entries()) {
+      const home = await tempHome();
+      const lockPath = join(home, "daemon.lock");
+      const socketPath = join(home, "work-craft.sock");
+      await writeFile(lockPath, `${process.pid}\n`);
+      const server = Bun.serve({
+        unix: socketPath,
+        fetch(request) {
+          if (new URL(request.url).pathname === "/command") {
+            return Response.json({
+              ok: true,
+              revision: 0,
+              result: { id: "daemon", stopping: true },
+            });
+          }
+          return Response.json({ epoch: `test-${index}`, revision: 0, pid: process.pid });
+        },
+      });
+      let observations = 0;
+      const result = cleanup(home, async (_pid, expectedCommand) => {
+        observations += 1;
+        return observations === 1 ? { status: "matching", command: expectedCommand } : outcome;
+      }).then(
+        () => ({ status: "resolved" as const }),
+        (error: unknown) => ({ status: "rejected" as const, error }),
+      );
+      cases.push({ home, lockPath, socketPath, server, result });
+    }
+
+    const settled = await Promise.all(
+      cases.map(({ result }) =>
+        Promise.race([result, Bun.sleep(3_500).then(() => ({ status: "timed-out" as const }))]),
+      ),
+    );
+    for (const [index, result] of settled.entries()) {
+      expect(result.status).toBe("rejected");
+      if (result.status === "rejected") {
+        expect(result.error).toBeInstanceOf(Error);
+        const error = result.error as Error;
+        expect(error.message).toBe(cleanupError(cases[index]!.home).message);
+        expect(error.cause).toBeInstanceOf(Error);
+        expect((error.cause as Error).message).toBe(reasons[index]);
+      }
+      expect((await stat(cases[index]!.home)).isDirectory()).toBe(true);
+      expect(await Bun.file(cases[index]!.lockPath).exists()).toBe(true);
+      expect((await stat(cases[index]!.socketPath)).isSocket()).toBe(true);
+    }
+    expect(kill.mock.calls).toEqual(outcomes.map(() => [process.pid, "SIGKILL"]));
+  } finally {
+    kill.mockRestore();
+    await Promise.all(cases.map(({ server }) => server.stop(true)));
+    await Promise.all(cases.map(({ result }) => result));
+    await Promise.all(cases.map(({ home }) => rm(home, { recursive: true, force: true })));
+  }
+}, 10_000);
 
 test("retries status reads until snapshot and health revisions match", async () => {
   const emptySnapshot = {
