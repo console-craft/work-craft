@@ -1,5 +1,5 @@
 import { expect, spyOn, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createClient, type WorkCraftClient } from "@work-craft/server/client";
@@ -89,38 +89,85 @@ async function readLockPid(home: string): Promise<number | undefined> {
   return Number.isSafeInteger(pid) ? pid : undefined;
 }
 
+async function processCommand(pid: number): Promise<string | undefined> {
+  const child = Bun.spawn(["ps", "-p", String(pid), "-o", "command="], {
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const [exitCode, output] = await Promise.all([child.exited, new Response(child.stdout).text()]);
+  const command = output.trim();
+  return exitCode === 0 && command !== "" ? command : undefined;
+}
+
+async function waitForProcessExit(
+  pid: number,
+  expectedCommand: string,
+  timeout = 3_000,
+): Promise<boolean> {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if ((await processCommand(pid)) !== expectedCommand) {
+      return true;
+    }
+    await Bun.sleep(20);
+  }
+  return false;
+}
+
+function cleanupError(home: string): Error {
+  return new Error(
+    `Work Craft cleanup could not confirm shutdown; preserved ${home} (lock: ${join(home, "daemon.lock")}, socket: ${join(home, "work-craft.sock")})`,
+  );
+}
+
 async function cleanup(home: string): Promise<void> {
-  const client = createClient({ socketPath: join(home, "work-craft.sock") });
-  let stopAccepted = false;
+  const lockPath = join(home, "daemon.lock");
+  const socketPath = join(home, "work-craft.sock");
+  const client = createClient({ socketPath });
   try {
     await client.command({ type: "daemon.stop" });
-    stopAccepted = true;
   } catch {}
 
-  if (!stopAccepted || !(await waitForOwnedFiles(home, 1_000))) {
-    const health = await client.health().catch(() => undefined);
-    const pid = await readLockPid(home);
-    const confirmed = await client.health().catch(() => undefined);
+  if (await waitForOwnedFiles(home, 1_000)) {
+    await rm(home, { recursive: true, force: true });
+    return;
+  }
+
+  const health = await client.health().catch(() => undefined);
+  const pid = await readLockPid(home);
+  const confirmed = await client.health().catch(() => undefined);
+  if (
+    pid !== undefined &&
+    health?.pid === pid &&
+    confirmed?.pid === pid &&
+    health.epoch === confirmed.epoch
+  ) {
+    const command = await processCommand(pid);
+    const finalHealth = await client.health().catch(() => undefined);
     if (
-      pid !== undefined &&
-      health?.pid === pid &&
-      confirmed?.pid === pid &&
-      health.epoch === confirmed.epoch
+      command?.includes("/packages/server/src/main.ts") &&
+      finalHealth?.pid === pid &&
+      finalHealth.epoch === health.epoch
     ) {
       process.kill(pid, "SIGKILL");
-      const deadline = Date.now() + 3_000;
-      while (Date.now() < deadline) {
-        if ((await client.health().catch(() => undefined)) === undefined) {
-          break;
-        }
-        await Bun.sleep(20);
+      if (!(await waitForProcessExit(pid, command))) {
+        throw cleanupError(home);
       }
-      if ((await client.health().catch(() => undefined)) !== undefined) {
-        throw new Error(`PID ${pid} did not stop`);
+      await rm(lockPath, { force: true });
+      await rm(socketPath, { force: true });
+      if (!(await waitForOwnedFiles(home, 100))) {
+        throw cleanupError(home);
       }
+      await rm(home, { recursive: true, force: true });
+      return;
     }
   }
-  await rm(home, { recursive: true, force: true });
+
+  if (await waitForOwnedFiles(home, 2_000)) {
+    await rm(home, { recursive: true, force: true });
+    return;
+  }
+  throw cleanupError(home);
 }
 
 test("starts, lists, opens, reports status, and stops", async () => {
@@ -296,15 +343,69 @@ test("cleanup never signals PIDs from empty, malformed, or stale locks", async (
   const kill = spyOn(process, "kill").mockImplementation(() => {
     throw new Error("signal blocked by test");
   });
+  const homes: string[] = [];
   try {
     for (const contents of ["", "not-a-pid\n", `${process.pid}\n`]) {
       const home = await tempHome();
+      homes.push(home);
       await writeFile(join(home, "daemon.lock"), contents);
-      await cleanup(home);
     }
+    await Promise.all(
+      homes.map((home) =>
+        expect(cleanup(home)).rejects.toThrow(
+          `Work Craft cleanup could not confirm shutdown; preserved ${home}`,
+        ),
+      ),
+    );
     expect(kill).not.toHaveBeenCalled();
   } finally {
     kill.mockRestore();
+    await Promise.all(homes.map((home) => rm(home, { recursive: true, force: true })));
+  }
+}, 10_000);
+
+test("cleanup preserves the home when shutdown cannot be confirmed", async () => {
+  const home = await tempHome();
+  const lockPath = join(home, "daemon.lock");
+  const socketPath = join(home, "work-craft.sock");
+  await writeFile(lockPath, `${process.pid}\n`);
+  let server: Bun.Server<undefined>;
+  server = Bun.serve({
+    unix: socketPath,
+    fetch(request) {
+      if (new URL(request.url).pathname === "/command") {
+        setTimeout(() => {
+          void (async () => {
+            await server.stop(true);
+            if (!(await Bun.file(socketPath).exists())) {
+              await writeFile(socketPath, "stale");
+            }
+          })();
+        }, 0);
+        return Response.json({
+          ok: true,
+          revision: 0,
+          result: { id: "daemon", stopping: true },
+        });
+      }
+      return Response.json({ epoch: "test", revision: 0, pid: process.pid });
+    },
+  });
+  const kill = spyOn(process, "kill").mockImplementation(() => {
+    throw new Error("signal blocked by test");
+  });
+  try {
+    await expect(cleanup(home)).rejects.toThrow(
+      `Work Craft cleanup could not confirm shutdown; preserved ${home} (lock: ${lockPath}, socket: ${socketPath})`,
+    );
+    expect(kill).not.toHaveBeenCalled();
+    expect((await stat(home)).isDirectory()).toBe(true);
+    expect(await Bun.file(lockPath).exists()).toBe(true);
+    expect(await Bun.file(socketPath).exists()).toBe(true);
+  } finally {
+    kill.mockRestore();
+    await server.stop(true);
+    await rm(home, { recursive: true, force: true });
   }
 });
 
