@@ -20,6 +20,17 @@ bun install
 - `packages/tui` - disposable React/OpenTUI client
 - `packages/cli` - non-interactive Unix-style client
 
+## CLI
+
+Clients start the local daemon on demand. The server remains the authority for durable state and runtimes; the CLI only parses arguments, calls the server, and prints plain text or JSON.
+
+```sh
+bun run cli -- status
+bun run cli -- list
+bun run cli -- open <item-id>
+bun run cli -- stop
+```
+
 ## Development
 
 ```sh
