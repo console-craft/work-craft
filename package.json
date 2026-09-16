@@ -28,7 +28,7 @@
     "prepare": "lefthook install",
     "server": "bun run --filter @work-craft/server start",
     "test": "bun test --pass-with-no-tests",
-    "tui": "bun run --filter @work-craft/tui start",
+    "tui": "bun packages/tui/src/main.tsx",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
