@@ -1,4 +1,8 @@
 import WebSocket from "ws";
+import { closeSync, openSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { resolvePaths } from "./paths.ts";
 import { encodeBytes } from "./protocol.ts";
 import type { Command, CommandResponse, ServerMessage, Snapshot } from "./protocol.ts";
@@ -16,6 +20,7 @@ export type StreamConnection = {
 };
 
 export type WorkCraftClient = {
+  ensureDaemon(): Promise<void>;
   health(): Promise<Health>;
   snapshot(): Promise<Snapshot>;
   command(command: Command): Promise<CommandResponse>;
@@ -38,6 +43,66 @@ async function requestJson(socketPath: string, path: string, init?: RequestInit)
 
 export function createClient(options: { socketPath?: string } = {}): WorkCraftClient {
   const socketPath = options.socketPath ?? resolvePaths().socketPath;
+
+  async function ensureDaemon(): Promise<void> {
+    try {
+      await requestJson(socketPath, "/health");
+      return;
+    } catch (error) {
+      if (!(error instanceof TypeError)) {
+        throw error;
+      }
+    }
+
+    const stderrPath = join(tmpdir(), `work-craft-startup-${crypto.randomUUID()}.log`);
+    const stderr = openSync(stderrPath, "wx", 0o600);
+    let child: Bun.Subprocess;
+    try {
+      child = Bun.spawn([process.execPath, fileURLToPath(new URL("./main.ts", import.meta.url))], {
+        detached: true,
+        env: process.env,
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr,
+      });
+      child.unref();
+    } catch (error) {
+      rmSync(stderrPath, { force: true });
+      throw error;
+    } finally {
+      closeSync(stderr);
+    }
+
+    const deadline = Date.now() + 3_000;
+    let delay = 20;
+    while (Date.now() < deadline) {
+      try {
+        const health = (await requestJson(socketPath, "/health")) as Health;
+        if (health.pid !== child.pid && child.exitCode === null) {
+          await Promise.race([
+            child.exited,
+            Bun.sleep(Math.min(20, Math.max(0, deadline - Date.now()))),
+          ]);
+          if (child.exitCode === null) {
+            continue;
+          }
+        }
+        rmSync(stderrPath, { force: true });
+        return;
+      } catch {
+        await Bun.sleep(Math.min(delay, Math.max(0, deadline - Date.now())));
+        delay = Math.min(delay * 2, 200);
+      }
+    }
+
+    const output = readFileSync(stderrPath, "utf8").trim();
+    rmSync(stderrPath, { force: true });
+    const status =
+      child.exitCode === null ? `PID ${child.pid} is still running` : `exit ${child.exitCode}`;
+    throw new Error(
+      `Work Craft daemon did not become healthy within 3 seconds (${status})${output === "" ? "" : `: ${output}`}`,
+    );
+  }
 
   function stream(handlers: StreamHandlers): Promise<StreamConnection> {
     return new Promise((resolve, reject) => {
@@ -113,6 +178,7 @@ export function createClient(options: { socketPath?: string } = {}): WorkCraftCl
   }
 
   return {
+    ensureDaemon,
     async health() {
       return (await requestJson(socketPath, "/health")) as Health;
     },

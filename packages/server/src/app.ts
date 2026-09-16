@@ -27,7 +27,11 @@ export type WorkCraftApp = {
   runtime: RuntimeRegistry;
 };
 
-export function createApp(options: { db: Database; history?: TerminalHistory }): WorkCraftApp {
+export function createApp(options: {
+  db: Database;
+  history?: TerminalHistory;
+  onStop?: () => void;
+}): WorkCraftApp {
   const epoch = crypto.randomUUID();
   const subscribers = new Set<Bun.ServerWebSocket>();
   const history = options.history ?? new TerminalHistory(options.db);
@@ -137,6 +141,9 @@ export function createApp(options: { db: Database; history?: TerminalHistory }):
       const command = parseCommand(value);
       const { result, effects } = applyCommand(options.db, command);
       if (command.type === "daemon.stop") {
+        if (options.onStop !== undefined) {
+          setTimeout(options.onStop, 0);
+        }
         return { ok: true, revision, result };
       }
 
