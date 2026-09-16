@@ -190,3 +190,74 @@ test("a failed stream gap refresh closes the connection and starts reconnecting"
     store.stop();
   }
 });
+
+test("current-epoch terminal output remains available after a renderer remount", async () => {
+  const store = createWorkCraftStore(fakeClient(snapshotFixture()));
+  await store.apply({
+    type: "snapshot",
+    snapshot: snapshotFixture({
+      terminalHistories: [
+        {
+          paneId: "pane-1",
+          cursor: 3,
+          data: Buffer.from("old").toString("base64"),
+          truncated: false,
+        },
+      ],
+    }),
+  });
+
+  await store.apply({
+    type: "terminal.output",
+    epoch: "stale-epoch",
+    paneId: "pane-1",
+    cursor: 8,
+    data: Buffer.from("stale").toString("base64"),
+  });
+  await store.apply({
+    type: "terminal.output",
+    epoch: "epoch-a",
+    paneId: "pane-1",
+    cursor: 6,
+    data: Buffer.from("new").toString("base64"),
+  });
+  await store.apply({
+    type: "snapshot",
+    snapshot: snapshotFixture({
+      revision: 5,
+      terminalHistories: [
+        {
+          paneId: "pane-1",
+          cursor: 6,
+          data: Buffer.from("oldnew").toString("base64"),
+          truncated: false,
+        },
+      ],
+    }),
+  });
+
+  const terminal = store.getState().terminals.get("pane-1");
+  expect(new TextDecoder().decode(terminal?.history)).toBe("old");
+  expect(
+    terminal?.chunks.map(({ cursor, data }) => [cursor, new TextDecoder().decode(data)]),
+  ).toEqual([[6, "new"]]);
+});
+
+test("current-session terminal output is bounded to one MiB per pane", async () => {
+  const store = createWorkCraftStore(fakeClient(snapshotFixture()));
+  await store.apply({ type: "snapshot", snapshot: snapshotFixture() });
+  const bytes = new Uint8Array(1_048_577).fill(2);
+  bytes[0] = 1;
+
+  await store.apply({
+    type: "terminal.output",
+    epoch: "epoch-a",
+    paneId: "pane-1",
+    cursor: 1_048_577,
+    data: Buffer.from(bytes).toString("base64"),
+  });
+
+  const chunks = store.getState().terminals.get("pane-1")?.chunks ?? [];
+  expect(chunks.reduce((total, chunk) => total + chunk.data.byteLength, 0)).toBe(1_048_576);
+  expect(chunks[0]?.data[0]).toBe(2);
+});

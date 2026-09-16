@@ -2,7 +2,6 @@ import { useKeyboard } from "@opentui/react";
 import { useState } from "react";
 import type { CategoryKind, Command } from "@work-craft/server";
 import { Badge, type BadgeVariant } from "@/components/ui/badge";
-import { Panel } from "@/components/ui/panel";
 import { CreatePrompt, type CreateKind } from "./create-prompt.tsx";
 import {
   buildNavigation,
@@ -11,6 +10,7 @@ import {
   type NavigationNode,
 } from "./navigation.ts";
 import { NavigationPane } from "./navigation-pane.tsx";
+import { SurfaceView } from "./surface-view.tsx";
 import { useWorkCraft } from "./use-work-craft.ts";
 
 function ancestor(
@@ -65,7 +65,7 @@ function statusVariant(status: string): BadgeVariant {
 }
 
 export function App() {
-  const { snapshot, status, command } = useWorkCraft();
+  const { snapshot, status, command, stream, terminals } = useWorkCraft();
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [prompt, setPrompt] = useState<CreateKind | null>(null);
   const [openedItemId, setOpenedItemId] = useState<string | null>(null);
@@ -89,8 +89,10 @@ export function App() {
   useKeyboard((key) => {
     if (key.name === "escape") {
       if (prompt !== null) {
+        key.preventDefault();
         setPrompt(null);
       } else if (openedItemId !== null) {
+        key.preventDefault();
         setOpenedItemId(null);
       }
       return;
@@ -117,12 +119,8 @@ export function App() {
   });
 
   const surface = snapshot?.surfaces.find((value) => value.itemId === openedItemId);
-  const processStatus = snapshot?.panes.find(
-    (pane) => pane.surfaceId === surface?.id,
-  )?.processStatus;
-
   return (
-    <box flexDirection="column" padding={1}>
+    <box flexDirection="column" padding={1} width="100%" height="100%">
       <box justifyContent="space-between">
         <text>Work Craft</text>
         <Badge variant={statusVariant(status)}>{status}</Badge>
@@ -140,15 +138,18 @@ export function App() {
           }}
         />
       ) : openedItemId !== null ? (
-        <Panel title="Surface">
-          <text>
-            {entries.find(({ node }) => node.id === openedItemId)?.node.label ?? "Terminal"}
-          </text>
-          <Badge variant={statusVariant(processStatus ?? "starting")}>
-            {processStatus ?? "starting"}
-          </Badge>
-          <text fg="#9CA3AF">Escape returns to work navigation</text>
-        </Panel>
+        snapshot === null || surface === undefined ? (
+          <text>Opening surface...</text>
+        ) : (
+          <SurfaceView
+            controlsEnabled={prompt === null}
+            snapshot={snapshot}
+            stream={stream}
+            surface={surface}
+            terminals={terminals}
+            onCommand={(next) => void run(next)}
+          />
+        )
       ) : snapshot === null ? (
         <text>Connecting to daemon...</text>
       ) : (

@@ -3,16 +3,30 @@ import {
   type StreamConnection,
   type WorkCraftClient,
 } from "@work-craft/server/client";
-import type { Command, CommandResponse, ServerMessage, Snapshot } from "@work-craft/server";
+import {
+  decodeBytes,
+  type Command,
+  type CommandResponse,
+  type ServerMessage,
+  type Snapshot,
+} from "@work-craft/server";
 import { useEffect, useSyncExternalStore } from "react";
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected";
+
+export type TerminalBuffer = {
+  epoch: string;
+  history: Uint8Array;
+  historyCursor: number;
+  chunks: { cursor: number; data: Uint8Array }[];
+};
 
 export type WorkCraftState = {
   snapshot: Snapshot | null;
   status: ConnectionStatus;
   command(command: Command): Promise<CommandResponse>;
   stream: StreamConnection | null;
+  terminals: ReadonlyMap<string, TerminalBuffer>;
 };
 
 export type WorkCraftStore = {
@@ -25,6 +39,51 @@ export type WorkCraftStore = {
 };
 
 const RETRY_DELAYS = [100, 250, 500, 1000, 2000] as const;
+const MAX_TERMINAL_BYTES = 1024 * 1024;
+
+function snapshotTerminals(
+  snapshot: Snapshot,
+  current: ReadonlyMap<string, TerminalBuffer>,
+): ReadonlyMap<string, TerminalBuffer> {
+  return new Map(
+    snapshot.terminalHistories.map((history) => {
+      const previous = current.get(history.paneId);
+      if (previous?.epoch === snapshot.epoch) {
+        return [history.paneId, previous];
+      }
+      return [
+        history.paneId,
+        {
+          epoch: snapshot.epoch,
+          history: decodeBytes(history.data),
+          historyCursor: history.cursor,
+          chunks: [],
+        },
+      ];
+    }),
+  );
+}
+
+function appendTerminalChunk(
+  buffer: TerminalBuffer,
+  cursor: number,
+  data: Uint8Array,
+): TerminalBuffer {
+  const chunks = [...buffer.chunks, { cursor, data }];
+  let excess =
+    chunks.reduce((total, chunk) => total + chunk.data.byteLength, 0) - MAX_TERMINAL_BYTES;
+  while (excess > 0) {
+    const first = chunks[0]!;
+    if (first.data.byteLength <= excess) {
+      excess -= first.data.byteLength;
+      chunks.shift();
+    } else {
+      chunks[0] = { ...first, data: first.data.slice(excess) };
+      excess = 0;
+    }
+  }
+  return { ...buffer, chunks };
+}
 
 export function createWorkCraftStore(client: WorkCraftClient): WorkCraftStore {
   const listeners = new Set<() => void>();
@@ -35,6 +94,7 @@ export function createWorkCraftStore(client: WorkCraftClient): WorkCraftStore {
     status: "connecting",
     command: (command) => client.command(command),
     stream: null,
+    terminals: new Map(),
   };
 
   function update(patch: Partial<WorkCraftState>): void {
@@ -51,7 +111,7 @@ export function createWorkCraftStore(client: WorkCraftClient): WorkCraftStore {
       snapshot.epoch !== current.epoch ||
       snapshot.revision > current.revision
     ) {
-      update({ snapshot });
+      update({ snapshot, terminals: snapshotTerminals(snapshot, state.terminals) });
     }
   }
 
@@ -60,15 +120,37 @@ export function createWorkCraftStore(client: WorkCraftClient): WorkCraftStore {
   }
 
   async function applyMessage(message: ServerMessage): Promise<void> {
+    if (message.type === "terminal.output") {
+      if (message.epoch !== state.snapshot?.epoch) {
+        return;
+      }
+      const current = state.terminals.get(message.paneId) ?? {
+        epoch: message.epoch,
+        history: new Uint8Array(),
+        historyCursor: 0,
+        chunks: [],
+      };
+      const lastCursor = current.chunks.at(-1)?.cursor ?? current.historyCursor;
+      if (message.cursor <= lastCursor) {
+        return;
+      }
+      const terminals = new Map(state.terminals);
+      terminals.set(
+        message.paneId,
+        appendTerminalChunk(current, message.cursor, decodeBytes(message.data)),
+      );
+      update({ terminals });
+      return;
+    }
     if (message.type !== "snapshot") {
       return;
     }
     const current = state.snapshot;
     const next = message.snapshot;
     if (current === null || next.epoch !== current.epoch) {
-      update({ snapshot: next });
+      update({ snapshot: next, terminals: snapshotTerminals(next, state.terminals) });
     } else if (next.revision === current.revision + 1) {
-      update({ snapshot: next });
+      update({ snapshot: next, terminals: snapshotTerminals(next, state.terminals) });
     } else if (next.revision > current.revision + 1) {
       await refresh();
     }
