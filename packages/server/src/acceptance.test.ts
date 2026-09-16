@@ -169,20 +169,20 @@ async function runCli(home: string, args: string[]): Promise<CliResult> {
 test.serial(
   "proves the first vertical slice end to end",
   async () => {
-    const home = await mkdtemp(join(tmpdir(), "work-craft-acceptance-"));
-    const paths = resolvePaths({ WORK_CRAFT_HOME: home });
-    const shellPath = join(home, "acceptance-shell");
-    const shellPidsPath = join(home, "shell.pids");
     const daemons: Daemon[] = [];
     const streams: StreamConnection[] = [];
-    await writeFile(
-      shellPath,
-      '#!/bin/sh\nprintf "%s\\n" "$$" >> "$WORK_CRAFT_TEST_SHELL_PIDS"\nexec /bin/sh\n',
-    );
-    await chmod(shellPath, 0o755);
-
     let failure: unknown;
+    const home = await mkdtemp(join(tmpdir(), "work-craft-acceptance-"));
     try {
+      const paths = resolvePaths({ WORK_CRAFT_HOME: home });
+      const shellPath = join(home, "acceptance-shell");
+      const shellPidsPath = join(home, "shell.pids");
+      await writeFile(
+        shellPath,
+        '#!/bin/sh\nprintf "%s\\n" "$$" >> "$WORK_CRAFT_TEST_SHELL_PIDS"\nexec /bin/sh\n',
+      );
+      await chmod(shellPath, 0o755);
+
       const firstDaemon = spawnDaemon(home, shellPath, shellPidsPath);
       daemons.push(firstDaemon);
       await waitForHealth(home, firstDaemon);
@@ -236,7 +236,7 @@ test.serial(
       });
       const stream = await client.stream({ onMessage() {}, onClose: closed });
       streams.push(stream);
-      stream.sendInput(paneId, new TextEncoder().encode("printf acceptance-marker\n"));
+      stream.sendInput(paneId, new TextEncoder().encode("printf 'acceptance-%s' marker\n"));
       await waitFor(
         () => client.snapshot(),
         (snapshot) => history(snapshot, paneId).includes("acceptance-marker"),
@@ -357,7 +357,7 @@ test.serial(
         }
       }
       try {
-        await stopPids(await readShellPids(shellPidsPath));
+        await stopPids(await readShellPids(join(home, "shell.pids")));
       } catch (error) {
         cleanupErrors.push(error);
       }
