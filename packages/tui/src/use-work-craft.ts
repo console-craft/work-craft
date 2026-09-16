@@ -49,7 +49,7 @@ export function createWorkCraftStore(client: WorkCraftClient): WorkCraftStore {
     if (
       current === null ||
       snapshot.epoch !== current.epoch ||
-      snapshot.revision >= current.revision
+      snapshot.revision > current.revision
     ) {
       update({ snapshot });
     }
@@ -75,9 +75,10 @@ export function createWorkCraftStore(client: WorkCraftClient): WorkCraftStore {
   }
 
   async function connect(activeRun: number): Promise<void> {
-    const stream = await client.stream({
+    let stream: StreamConnection | undefined;
+    stream = await client.stream({
       onMessage(message) {
-        void apply(message).catch(() => {});
+        void apply(message).catch(() => stream?.close());
       },
       onClose() {
         if (run === activeRun) {

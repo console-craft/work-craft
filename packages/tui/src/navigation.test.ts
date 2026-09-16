@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { WorkCraftClient } from "@work-craft/server/client";
+import type { StreamHandlers, WorkCraftClient } from "@work-craft/server/client";
 import type { Snapshot } from "@work-craft/server";
 import { buildNavigation } from "./navigation.ts";
 import { createWorkCraftStore } from "./use-work-craft.ts";
@@ -106,6 +106,22 @@ test("a revision gap requests a replacement snapshot", async () => {
   expect(client.refreshCount()).toBe(1);
 });
 
+test("a gap refresh ignores an equal same-epoch snapshot", async () => {
+  const original = snapshotFixture({ revision: 4 });
+  const store = createWorkCraftStore(fakeClient(snapshotFixture({ revision: 4 })));
+  await store.apply({ type: "snapshot", snapshot: original });
+  let updates = 0;
+  const unsubscribe = store.subscribe(() => {
+    updates += 1;
+  });
+
+  await store.apply({ type: "snapshot", snapshot: snapshotFixture({ revision: 6 }) });
+
+  expect(store.snapshot()).toBe(original);
+  expect(updates).toBe(0);
+  unsubscribe();
+});
+
 test("snapshots apply only in order unless the daemon epoch changes", async () => {
   const store = createWorkCraftStore(fakeClient(snapshotFixture()));
   await store.apply({ type: "snapshot", snapshot: snapshotFixture({ revision: 4 }) });
@@ -136,4 +152,41 @@ test("a failed refresh does not prevent later snapshots", async () => {
   await store.apply({ type: "snapshot", snapshot: snapshotFixture({ revision: 5 }) });
 
   expect(store.snapshot()?.revision).toBe(5);
+});
+
+test("a failed stream gap refresh closes the connection and starts reconnecting", async () => {
+  const client = fakeClient(snapshotFixture({ revision: 4 }));
+  const initialSnapshot = client.snapshot;
+  let snapshots = 0;
+  client.snapshot = async () => {
+    snapshots += 1;
+    if (snapshots === 1) {
+      return initialSnapshot();
+    }
+    throw new Error("refresh failed");
+  };
+  let handlers: StreamHandlers | undefined;
+  let closes = 0;
+  client.stream = async (nextHandlers) => {
+    handlers = nextHandlers;
+    return {
+      close() {
+        closes += 1;
+        nextHandlers.onClose?.();
+      },
+      sendInput() {},
+      resize() {},
+    };
+  };
+  const store = createWorkCraftStore(client);
+  await store.start();
+  try {
+    handlers?.onMessage({ type: "snapshot", snapshot: snapshotFixture({ revision: 6 }) });
+    await Bun.sleep(0);
+
+    expect(closes).toBe(1);
+    expect(store.getState().status).toBe("disconnected");
+  } finally {
+    store.stop();
+  }
 });
