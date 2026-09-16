@@ -21,6 +21,25 @@ export function snapshotCounts(snapshot: Snapshot): Counts {
   };
 }
 
+export async function readStatus(
+  client: Pick<WorkCraftClient, "health" | "snapshot">,
+): Promise<Status> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const snapshot = await client.snapshot();
+    const health = await client.health();
+    if (snapshot.epoch === health.epoch && snapshot.revision === health.revision) {
+      return {
+        running: true,
+        pid: health.pid,
+        epoch: snapshot.epoch,
+        revision: snapshot.revision,
+        counts: snapshotCounts(snapshot),
+      };
+    }
+  }
+  throw new Error("could not read coherent daemon status");
+}
+
 export function formatList(snapshot: Snapshot): string {
   const lines: string[] = [];
   for (const session of snapshot.sessions) {

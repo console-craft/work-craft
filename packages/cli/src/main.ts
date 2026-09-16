@@ -2,7 +2,7 @@
 
 import { createClient } from "@work-craft/server/client";
 import { parseArgs, USAGE, UsageError } from "./args.ts";
-import { formatList, formatStatus, snapshotCounts } from "./format.ts";
+import { formatList, formatStatus, readStatus } from "./format.ts";
 
 function printJson(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value)}\n`);
@@ -39,13 +39,20 @@ async function main(argv: string[]): Promise<number> {
       if (args.json) {
         printJson(response.result);
       } else {
-        process.stdout.write(
-          `Surface: ${response.result.surfaceId}\nPane: ${response.result.paneId}\n`,
-        );
+        const surfaceId = response.result.surfaceId;
+        const paneId =
+          response.result.paneId ??
+          (await client.snapshot()).panes
+            .filter((pane) => pane.surfaceId === surfaceId)
+            .map((pane) => pane.id)
+            .sort()[0];
+        if (surfaceId === undefined || paneId === undefined) {
+          throw new Error("open result did not include a surface and pane");
+        }
+        process.stdout.write(`Surface: ${surfaceId}\nPane: ${paneId}\n`);
       }
     } else if (args.command === "status") {
-      const [health, snapshot] = await Promise.all([client.health(), client.snapshot()]);
-      const status = { running: true as const, ...health, counts: snapshotCounts(snapshot) };
+      const status = await readStatus(client);
       if (args.json) {
         printJson(status);
       } else {

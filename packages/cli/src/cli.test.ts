@@ -1,23 +1,15 @@
-import { expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { expect, spyOn, test } from "bun:test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createClient } from "@work-craft/server/client";
+import { createClient, type WorkCraftClient } from "@work-craft/server/client";
 import { USAGE } from "./args.ts";
+import { readStatus } from "./format.ts";
 
 const ROOT = join(import.meta.dir, "../../..");
 const CLI_PATH = join(import.meta.dir, "main.ts");
 
 type CliResult = { exitCode: number; stdout: string; stderr: string };
-
-function isAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 async function tempHome(): Promise<string> {
   return mkdtemp(join(tmpdir(), "work-craft-cli-"));
@@ -68,34 +60,65 @@ async function seedItems(home: string): Promise<{ first: string; second: string 
   return { first: first.result.id, second: second.result.id };
 }
 
-async function waitForExit(pid: number): Promise<void> {
-  const deadline = Date.now() + 3_000;
-  while (isAlive(pid) && Date.now() < deadline) {
+async function waitForOwnedFiles(home: string, timeout = 3_000): Promise<boolean> {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const [lock, socket] = await Promise.all([
+      Bun.file(join(home, "daemon.lock")).exists(),
+      Bun.file(join(home, "work-craft.sock")).exists(),
+    ]);
+    if (!lock && !socket) {
+      return true;
+    }
     await Bun.sleep(20);
   }
-  if (isAlive(pid)) {
-    throw new Error(`PID ${pid} did not exit`);
+  return false;
+}
+
+async function readLockPid(home: string): Promise<number | undefined> {
+  let value: string;
+  try {
+    value = await Bun.file(join(home, "daemon.lock")).text();
+  } catch {
+    return undefined;
   }
+  if (!/^[1-9]\d*\n?$/.test(value)) {
+    return undefined;
+  }
+  const pid = Number(value.trim());
+  return Number.isSafeInteger(pid) ? pid : undefined;
 }
 
 async function cleanup(home: string): Promise<void> {
-  const lockPath = join(home, "daemon.lock");
-  let pid: number | undefined;
+  const client = createClient({ socketPath: join(home, "work-craft.sock") });
+  let stopAccepted = false;
   try {
-    pid = Number((await Bun.file(lockPath).text()).trim());
+    await client.command({ type: "daemon.stop" });
+    stopAccepted = true;
   } catch {}
 
-  if (pid !== undefined && isAlive(pid)) {
-    const client = createClient({ socketPath: join(home, "work-craft.sock") });
-    await client.command({ type: "daemon.stop" }).catch(() => {});
-    const deadline = Date.now() + 1_000;
-    while (isAlive(pid) && Date.now() < deadline) {
-      await Bun.sleep(20);
-    }
-    if (isAlive(pid)) {
+  if (!stopAccepted || !(await waitForOwnedFiles(home, 1_000))) {
+    const health = await client.health().catch(() => undefined);
+    const pid = await readLockPid(home);
+    const confirmed = await client.health().catch(() => undefined);
+    if (
+      pid !== undefined &&
+      health?.pid === pid &&
+      confirmed?.pid === pid &&
+      health.epoch === confirmed.epoch
+    ) {
       process.kill(pid, "SIGKILL");
+      const deadline = Date.now() + 3_000;
+      while (Date.now() < deadline) {
+        if ((await client.health().catch(() => undefined)) === undefined) {
+          break;
+        }
+        await Bun.sleep(20);
+      }
+      if ((await client.health().catch(() => undefined)) !== undefined) {
+        throw new Error(`PID ${pid} did not stop`);
+      }
     }
-    await waitForExit(pid);
   }
   await rm(home, { recursive: true, force: true });
 }
@@ -176,6 +199,11 @@ test("starts, lists, opens, reports status, and stops", async () => {
     expect((await client.snapshot()).panes.find(({ id }) => id === openResult.paneId)?.cwd).toBe(
       home,
     );
+    expect(await runCli(home, ["open", items.first])).toEqual({
+      exitCode: 0,
+      stderr: "",
+      stdout: `Surface: ${openResult.surfaceId}\nPane: ${openResult.paneId}\n`,
+    });
 
     const opened = await runCli(home, ["open", items.second]);
     expect(opened.exitCode).toBe(0);
@@ -208,7 +236,7 @@ test("starts, lists, opens, reports status, and stops", async () => {
       stderr: "",
       stdout: '{"id":"daemon","stopping":true}\n',
     });
-    await waitForExit(statusJson.pid);
+    expect(await waitForOwnedFiles(home)).toBe(true);
 
     expect(await runCli(home, ["stop"])).toEqual({
       exitCode: 0,
@@ -263,3 +291,100 @@ test("reports command failures without usage or a stack", async () => {
     await cleanup(home);
   }
 }, 10_000);
+
+test("cleanup never signals PIDs from empty, malformed, or stale locks", async () => {
+  const kill = spyOn(process, "kill").mockImplementation(() => {
+    throw new Error("signal blocked by test");
+  });
+  try {
+    for (const contents of ["", "not-a-pid\n", `${process.pid}\n`]) {
+      const home = await tempHome();
+      await writeFile(join(home, "daemon.lock"), contents);
+      await cleanup(home);
+    }
+    expect(kill).not.toHaveBeenCalled();
+  } finally {
+    kill.mockRestore();
+  }
+});
+
+test("retries status reads until snapshot and health revisions match", async () => {
+  const emptySnapshot = {
+    epoch: "epoch",
+    revision: 1,
+    sessions: [],
+    workspaces: [],
+    categories: [],
+    projects: [],
+    items: [],
+    surfaces: [],
+    tabs: [],
+    panes: [],
+    terminalHistories: [],
+  };
+  const snapshots = [
+    emptySnapshot,
+    {
+      ...emptySnapshot,
+      revision: 2,
+      sessions: [{ id: "session", name: "Main", position: 0 }],
+    },
+  ];
+  let snapshotCalls = 0;
+  let healthCalls = 0;
+  const client = {
+    async snapshot() {
+      return snapshots[snapshotCalls++]!;
+    },
+    async health() {
+      healthCalls += 1;
+      return { epoch: "epoch", revision: 2, pid: 42 };
+    },
+  } satisfies Pick<WorkCraftClient, "health" | "snapshot">;
+
+  expect(await readStatus(client)).toEqual({
+    running: true,
+    pid: 42,
+    epoch: "epoch",
+    revision: 2,
+    counts: {
+      sessions: 1,
+      workspaces: 0,
+      categories: 0,
+      projects: 0,
+      items: 0,
+      surfaces: 0,
+      tabs: 0,
+      panes: 0,
+    },
+  });
+  expect([snapshotCalls, healthCalls]).toEqual([2, 2]);
+});
+
+test("bounds incoherent status reads", async () => {
+  let calls = 0;
+  const client = {
+    async snapshot() {
+      calls += 1;
+      return {
+        epoch: "old",
+        revision: calls,
+        sessions: [],
+        workspaces: [],
+        categories: [],
+        projects: [],
+        items: [],
+        surfaces: [],
+        tabs: [],
+        panes: [],
+        terminalHistories: [],
+      };
+    },
+    async health() {
+      return { epoch: "new", revision: calls, pid: 42 };
+    },
+  } satisfies Pick<WorkCraftClient, "health" | "snapshot">;
+
+  await expect(readStatus(client)).rejects.toThrow("could not read coherent daemon status");
+  expect(calls).toBe(3);
+});
