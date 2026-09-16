@@ -1,3 +1,4 @@
+export * from "./commands.ts";
 export * from "./database.ts";
 export * from "./paths.ts";
 export * from "./protocol.ts";
