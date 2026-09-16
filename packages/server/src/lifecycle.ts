@@ -22,7 +22,7 @@ import { openDatabase } from "./database.ts";
 import { startHttpServer } from "./http.ts";
 import type { WorkCraftPaths } from "./paths.ts";
 
-type FileIdentity = { dev: number | bigint; ino: number | bigint };
+type FileIdentity = { dev: bigint; ino: bigint; ctimeNs: bigint };
 type Lock = { fd: number; identity: FileIdentity };
 type TakeoverClaim = Lock & { path: string; ticket: number; token: string };
 type ClaimSnapshot = {
@@ -37,8 +37,8 @@ const HTTP_DRAIN_MS = 250;
 
 function fileIdentity(path: string): FileIdentity | undefined {
   try {
-    const { dev, ino } = statSync(path, { bigint: true });
-    return { dev, ino };
+    const { dev, ino, ctimeNs } = statSync(path, { bigint: true });
+    return { dev, ino, ctimeNs };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return undefined;
@@ -47,8 +47,17 @@ function fileIdentity(path: string): FileIdentity | undefined {
   }
 }
 
-function sameFile(left: FileIdentity, right: FileIdentity | undefined): boolean {
+function descriptorIdentity(fd: number): FileIdentity {
+  const { dev, ino, ctimeNs } = fstatSync(fd, { bigint: true });
+  return { dev, ino, ctimeNs };
+}
+
+function sameInode(left: FileIdentity, right: FileIdentity | undefined): boolean {
   return right !== undefined && left.dev === right.dev && left.ino === right.ino;
+}
+
+function sameFile(left: FileIdentity, right: FileIdentity | undefined): boolean {
+  return right !== undefined && sameInode(left, right) && left.ctimeNs === right.ctimeNs;
 }
 
 function processIsAlive(pid: number): boolean {
@@ -80,16 +89,18 @@ function createLock(path: string, label = "daemon lock"): Lock {
   const fd = openSync(path, "wx", 0o600);
   let identity: FileIdentity | undefined;
   try {
-    const { dev, ino } = fstatSync(fd, { bigint: true });
-    identity = { dev, ino };
     fchmodSync(fd, 0o600);
     writeSync(fd, `${process.pid}\n`);
     fsyncSync(fd);
+    identity = descriptorIdentity(fd);
     if (!sameFile(identity, fileIdentity(path))) {
       throw new Error(`Lost ${label} ownership while publishing PID`);
     }
     return { fd, identity };
   } catch (error) {
+    try {
+      identity = descriptorIdentity(fd);
+    } catch {}
     closeSync(fd);
     if (identity === undefined) {
       rmSync(path, { force: true });
@@ -142,7 +153,7 @@ function takeoverClaims(prefix: string): ClaimSnapshot[] {
       throw error;
     }
 
-    const identity = { dev: stats.dev, ino: stats.ino };
+    const identity = { dev: stats.dev, ino: stats.ino, ctimeNs: stats.ctimeNs };
     const pid = lockPid(path);
     const details = claimDetails(prefix, path);
     if (!sameFile(identity, fileIdentity(path))) {
@@ -215,6 +226,7 @@ function createTakeoverClaim(prefix: string): TakeoverClaim {
     const ticketPath = `${prefix}ticket-${ticket}-${token}`;
     renameSync(path, ticketPath);
     path = ticketPath;
+    claim.identity = descriptorIdentity(claim.fd);
     if (!sameFile(claim.identity, fileIdentity(path))) {
       throw new Error("Lost daemon lock takeover claim ownership while publishing ticket");
     }
@@ -249,6 +261,7 @@ async function acquireLock(lockPath: string): Promise<Lock> {
     const claim = createTakeoverClaim(takeoverPrefix);
     let lock: Lock | undefined;
     let stalePath: string | undefined;
+    let staleIdentity: FileIdentity | undefined;
     try {
       await waitForClaimTurn(takeoverPrefix, claim);
       const identity = fileIdentity(lockPath);
@@ -272,13 +285,14 @@ async function acquireLock(lockPath: string): Promise<Lock> {
 
       stalePath = `${lockPath}.stale-${process.pid}-${crypto.randomUUID()}`;
       renameSync(lockPath, stalePath);
-      if (!sameFile(identity, fileIdentity(stalePath))) {
+      staleIdentity = fileIdentity(stalePath);
+      if (!sameInode(identity, staleIdentity)) {
         continue;
       }
       lock = createLock(lockPath);
     } finally {
       if (stalePath !== undefined) {
-        rmSync(stalePath, { force: true });
+        removeOwned(stalePath, staleIdentity);
       }
       releaseOwned(claim.path, claim);
     }
