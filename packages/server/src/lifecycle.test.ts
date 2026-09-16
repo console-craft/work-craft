@@ -349,6 +349,151 @@ test("stale claim cleanup cannot remove a concurrent recoverer's claim", async (
     expect(secondClaim.mode & 0o777).toBe(0o600);
 
     await writeFile(firstReleasePath, "release");
+    expect((await stat(secondClaimPath!)).ino).toBe(secondClaim.ino);
+    expect(Number(await Bun.file(paths.lockPath).text())).toBe(2147483647);
+    expect(await Bun.file(paths.databasePath).exists()).toBe(false);
+    expect(await Bun.file(paths.socketPath).exists()).toBe(false);
+
+    await writeFile(secondReleasePath, "release");
+    expect(await waitForExit(second)).not.toBe(0);
+    expect((await waitForHealth(paths.socketPath, [first, second])).pid).toBe(first.pid);
+    expect(Number(await Bun.file(paths.lockPath).text())).toBe(first.pid);
+    expect((await readdir(paths.stateDir)).filter((name) => name.includes(".takeover"))).toEqual(
+      [],
+    );
+
+    await createClient({ socketPath: paths.socketPath }).command({ type: "daemon.stop" });
+    expect(await waitForExit(first)).toBe(0);
+  } finally {
+    await writeFile(firstReleasePath, "release").catch(() => {});
+    await writeFile(secondReleasePath, "release").catch(() => {});
+    await cleanup(home, second === undefined ? [first] : [first, second]);
+  }
+});
+
+test("a late equal-time takeover claim cannot replace the elected contender's lock", async () => {
+  const home = await mkdtemp(join(tmpdir(), "work-craft-lifecycle-"));
+  const paths = resolvePaths({ WORK_CRAFT_HOME: home });
+  const firstPreloadPath = join(home, "pause-elected-contender.ts");
+  const firstPausedPath = join(home, "first.paused");
+  const firstReleasePath = join(home, "first.release");
+  const firstReplacePath = join(home, "first.replacing");
+  const secondPreloadPath = join(home, "force-late-tie.ts");
+  const secondWaitingPath = join(home, "second.waiting");
+  const secondReplacePath = join(home, "second.replacing");
+  const secondReleasePath = join(home, "second.release");
+  await mkdir(paths.stateDir, { recursive: true, mode: 0o700 });
+  await writeFile(paths.lockPath, "2147483647\n", { mode: 0o600 });
+  await writeFile(
+    firstPreloadPath,
+    `
+      import { spyOn } from "bun:test";
+      import * as fs from "node:fs";
+      const originalRead = fs.readFileSync;
+      const originalRename = fs.renameSync;
+      const wait = new Int32Array(new SharedArrayBuffer(4));
+      let paused = false;
+      spyOn(fs, "readFileSync").mockImplementation((path, options) => {
+        const value = originalRead(path, options as never);
+        if (!paused && path === process.env.WORK_CRAFT_TEST_LOCK_PATH) {
+          paused = true;
+          fs.writeFileSync(process.env.WORK_CRAFT_TEST_PAUSED_PATH!, "paused");
+          while (!fs.existsSync(process.env.WORK_CRAFT_TEST_RELEASE_PATH!)) {
+            Atomics.wait(wait, 0, 0, 10);
+          }
+        }
+        return value;
+      });
+      spyOn(fs, "renameSync").mockImplementation((oldPath, newPath) => {
+        if (oldPath === process.env.WORK_CRAFT_TEST_LOCK_PATH) {
+          fs.writeFileSync(process.env.WORK_CRAFT_TEST_REPLACE_PATH!, "replacing");
+        }
+        return originalRename(oldPath, newPath);
+      });
+    `,
+  );
+  await writeFile(
+    secondPreloadPath,
+    `
+      import { spyOn } from "bun:test";
+      import * as fs from "node:fs";
+      const originalLocaleCompare = String.prototype.localeCompare;
+      const originalReaddir = fs.readdirSync;
+      const originalRename = fs.renameSync;
+      const originalStat = fs.statSync;
+      const wait = new Int32Array(new SharedArrayBuffer(4));
+      let scans = 0;
+      spyOn(fs, "statSync").mockImplementation((path, options) => {
+        const stats = originalStat(path, options as never);
+        if (typeof path === "string" && path.startsWith(process.env.WORK_CRAFT_TEST_CLAIM_PREFIX!)) {
+          return { ...stats, mtimeNs: 1n } as never;
+        }
+        return stats;
+      });
+      String.prototype.localeCompare = function (other, ...args) {
+        const left = String(this);
+        const right = String(other);
+        const prefix = process.env.WORK_CRAFT_TEST_CLAIM_PREFIX!;
+        const ownPrefix = prefix + process.pid + "-";
+        if (left.startsWith(ownPrefix) && right.startsWith(prefix) && !right.startsWith(ownPrefix)) {
+          return -1;
+        }
+        if (right.startsWith(ownPrefix) && left.startsWith(prefix) && !left.startsWith(ownPrefix)) {
+          return 1;
+        }
+        return originalLocaleCompare.call(left, right, ...args);
+      };
+      spyOn(fs, "readdirSync").mockImplementation((path, options) => {
+        const entries = originalReaddir(path, options as never);
+        if (path === process.env.WORK_CRAFT_TEST_STATE_DIR && ++scans === 3) {
+          fs.writeFileSync(process.env.WORK_CRAFT_TEST_WAITING_PATH!, "waiting");
+        }
+        return entries;
+      });
+      spyOn(fs, "renameSync").mockImplementation((oldPath, newPath) => {
+        if (oldPath === process.env.WORK_CRAFT_TEST_LOCK_PATH) {
+          fs.writeFileSync(process.env.WORK_CRAFT_TEST_REPLACE_PATH!, "replacing");
+          while (!fs.existsSync(process.env.WORK_CRAFT_TEST_RELEASE_PATH!)) {
+            Atomics.wait(wait, 0, 0, 10);
+          }
+        }
+        return originalRename(oldPath, newPath);
+      });
+    `,
+  );
+  const first = spawnDaemon(home, {
+    BUN_OPTIONS: `--preload=${firstPreloadPath}`,
+    WORK_CRAFT_TEST_LOCK_PATH: paths.lockPath,
+    WORK_CRAFT_TEST_PAUSED_PATH: firstPausedPath,
+    WORK_CRAFT_TEST_RELEASE_PATH: firstReleasePath,
+    WORK_CRAFT_TEST_REPLACE_PATH: firstReplacePath,
+  });
+  let second: ReturnType<typeof spawnDaemon> | undefined;
+  try {
+    await waitForFile(firstPausedPath);
+    second = spawnDaemon(home, {
+      BUN_OPTIONS: `--preload=${secondPreloadPath}`,
+      WORK_CRAFT_TEST_CLAIM_PREFIX: `${paths.lockPath}.takeover-`,
+      WORK_CRAFT_TEST_LOCK_PATH: paths.lockPath,
+      WORK_CRAFT_TEST_RELEASE_PATH: secondReleasePath,
+      WORK_CRAFT_TEST_REPLACE_PATH: secondReplacePath,
+      WORK_CRAFT_TEST_STATE_DIR: paths.stateDir,
+      WORK_CRAFT_TEST_WAITING_PATH: secondWaitingPath,
+    });
+
+    const coordinationDeadline = Date.now() + 3_000;
+    while (
+      !(await Bun.file(secondReplacePath).exists()) &&
+      !(await Bun.file(secondWaitingPath).exists()) &&
+      Date.now() < coordinationDeadline
+    ) {
+      await Bun.sleep(10);
+    }
+    expect(
+      (await Bun.file(secondReplacePath).exists()) || (await Bun.file(secondWaitingPath).exists()),
+    ).toBe(true);
+
+    await writeFile(firstReleasePath, "release");
     const lockDeadline = Date.now() + 3_000;
     while (Date.now() < lockDeadline) {
       try {
@@ -358,15 +503,14 @@ test("stale claim cleanup cannot remove a concurrent recoverer's claim", async (
       } catch {}
       await Bun.sleep(10);
     }
-    expect((await stat(secondClaimPath!)).ino).toBe(secondClaim.ino);
     expect(Number(await Bun.file(paths.lockPath).text())).toBe(first.pid);
-    expect(await Bun.file(paths.databasePath).exists()).toBe(false);
-    expect(await Bun.file(paths.socketPath).exists()).toBe(false);
+    expect(await Bun.file(firstReplacePath).exists()).toBe(true);
 
     await writeFile(secondReleasePath, "release");
     expect(await waitForExit(second)).not.toBe(0);
     expect((await waitForHealth(paths.socketPath, [first, second])).pid).toBe(first.pid);
     expect(Number(await Bun.file(paths.lockPath).text())).toBe(first.pid);
+    expect(await Bun.file(secondReplacePath).exists()).toBe(false);
     expect((await readdir(paths.stateDir)).filter((name) => name.includes(".takeover"))).toEqual(
       [],
     );

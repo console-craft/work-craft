@@ -24,8 +24,15 @@ import type { WorkCraftPaths } from "./paths.ts";
 
 type FileIdentity = { dev: number | bigint; ino: number | bigint };
 type Lock = { fd: number; identity: FileIdentity };
-type TakeoverClaim = Lock & { path: string };
-type ClaimSnapshot = { path: string; identity: FileIdentity; publishedAt: bigint; pid?: number };
+type TakeoverClaim = Lock & { path: string; ticket: number; token: string };
+type ClaimSnapshot = {
+  path: string;
+  identity: FileIdentity;
+  phase: "choosing" | "ticket";
+  token: string;
+  pid?: number;
+  ticket?: number;
+};
 const HTTP_DRAIN_MS = 250;
 
 function fileIdentity(path: string): FileIdentity | undefined {
@@ -98,6 +105,25 @@ function releaseOwned(path: string, owner: Lock): void {
   closeSync(owner.fd);
 }
 
+function claimDetails(
+  prefix: string,
+  path: string,
+): Pick<ClaimSnapshot, "phase" | "ticket" | "token"> {
+  const suffix = basename(path).slice(basename(prefix).length);
+  if (suffix.startsWith("choosing-")) {
+    return { phase: "choosing", token: suffix.slice("choosing-".length) };
+  }
+  const match = /^ticket-(\d+)-(.+)$/.exec(suffix);
+  if (match !== null) {
+    const ticket = Number(match[1]);
+    if (Number.isSafeInteger(ticket) && ticket > 0) {
+      return { phase: "ticket", ticket, token: match[2]! };
+    }
+  }
+  // Claims from an older daemon must drain before this process can enter.
+  return { phase: "choosing", token: suffix };
+}
+
 function takeoverClaims(prefix: string): ClaimSnapshot[] {
   const claims: ClaimSnapshot[] = [];
   for (const name of readdirSync(dirname(prefix))) {
@@ -118,51 +144,85 @@ function takeoverClaims(prefix: string): ClaimSnapshot[] {
 
     const identity = { dev: stats.dev, ino: stats.ino };
     const pid = lockPid(path);
+    const details = claimDetails(prefix, path);
     if (!sameFile(identity, fileIdentity(path))) {
       continue;
     }
     if (pid !== undefined && processIsAlive(pid)) {
-      claims.push({ path, identity, publishedAt: stats.mtimeNs, pid });
+      claims.push({ path, identity, pid, ...details });
     } else if (pid === undefined && Date.now() - Number(stats.mtimeNs / 1_000_000n) < 250) {
-      claims.push({ path, identity, publishedAt: stats.mtimeNs });
+      claims.push({ path, identity, phase: "choosing", token: details.token });
     } else {
       removeOwned(path, identity);
     }
   }
-
-  // Filesystem publication time provides stable election order; the unique path breaks ties.
-  return claims.sort((left, right) => {
-    if (left.publishedAt !== right.publishedAt) {
-      return left.publishedAt < right.publishedAt ? -1 : 1;
-    }
-    return left.path.localeCompare(right.path);
-  });
+  return claims;
 }
 
-async function waitForClaims(prefix: string, own?: TakeoverClaim): Promise<void> {
+function takeoverWaitError(claims: ClaimSnapshot[]): Error {
+  const pid = claims[0]?.pid;
+  if (pid === undefined) {
+    return new Error("Daemon lock takeover is already in progress");
+  }
+  return new Error(`Daemon lock takeover is already in progress (PID ${pid})`);
+}
+
+async function waitForClaims(prefix: string): Promise<void> {
   const deadline = Date.now() + 1_000;
   for (;;) {
     const claims = takeoverClaims(prefix);
-    if (own !== undefined && !sameFile(own.identity, fileIdentity(own.path))) {
-      throw new Error("Lost daemon lock takeover claim ownership");
-    }
-    if (claims.length === 0 || claims[0]?.path === own?.path) {
+    if (claims.length === 0) {
       return;
     }
     if (Date.now() >= deadline) {
-      const pid = claims[0]?.pid;
-      if (pid === undefined) {
-        throw new Error("Daemon lock takeover is already in progress");
-      }
-      throw new Error(`Daemon lock takeover is already in progress (PID ${pid})`);
+      throw takeoverWaitError(claims);
+    }
+    await Bun.sleep(10);
+  }
+}
+
+async function waitForClaimTurn(prefix: string, own: TakeoverClaim): Promise<void> {
+  const deadline = Date.now() + 1_000;
+  for (;;) {
+    const claims = takeoverClaims(prefix);
+    if (!sameFile(own.identity, fileIdentity(own.path))) {
+      throw new Error("Lost daemon lock takeover claim ownership");
+    }
+    const tickets = claims
+      .filter((claim) => claim.phase === "ticket")
+      .sort((left, right) => left.ticket! - right.ticket! || left.token.localeCompare(right.token));
+    const choosing = claims.some((claim) => claim.phase === "choosing" && claim.path !== own.path);
+    if (!choosing && tickets[0]?.path === own.path) {
+      return;
+    }
+    if (Date.now() >= deadline) {
+      throw takeoverWaitError(claims);
     }
     await Bun.sleep(10);
   }
 }
 
 function createTakeoverClaim(prefix: string): TakeoverClaim {
-  const path = `${prefix}${process.pid}-${crypto.randomUUID()}`;
-  return { ...createLock(path, "daemon lock takeover claim"), path };
+  const token = `${process.pid}-${crypto.randomUUID()}`;
+  let path = `${prefix}choosing-${token}`;
+  const claim = createLock(path, "daemon lock takeover claim");
+  try {
+    const ticket =
+      Math.max(
+        0,
+        ...takeoverClaims(prefix).map((other) => (other.phase === "ticket" ? other.ticket! : 0)),
+      ) + 1;
+    const ticketPath = `${prefix}ticket-${ticket}-${token}`;
+    renameSync(path, ticketPath);
+    path = ticketPath;
+    if (!sameFile(claim.identity, fileIdentity(path))) {
+      throw new Error("Lost daemon lock takeover claim ownership while publishing ticket");
+    }
+    return { ...claim, path, ticket, token };
+  } catch (error) {
+    releaseOwned(path, claim);
+    throw error;
+  }
 }
 
 async function acquireLock(lockPath: string): Promise<Lock> {
@@ -190,7 +250,7 @@ async function acquireLock(lockPath: string): Promise<Lock> {
     let lock: Lock | undefined;
     let stalePath: string | undefined;
     try {
-      await waitForClaims(takeoverPrefix, claim);
+      await waitForClaimTurn(takeoverPrefix, claim);
       const identity = fileIdentity(lockPath);
       if (identity === undefined) {
         continue;
