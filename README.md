@@ -1,6 +1,8 @@
 # Work Craft
 
-A Bun workspace for the Work Craft server, terminal UI, and CLI.
+A local-first terminal application shell for organizing work and opening persistent execution surfaces containing terminal and built-in panes.
+
+Work Craft is currently an architecture and workspace scaffold. See the [architecture design](docs/superpowers/specs/2026-09-16-work-craft-architecture-design.md) for the product model, persistence contract, and first implementation slice.
 
 ## Requirements
 
@@ -14,9 +16,9 @@ bun install
 
 ## Workspace
 
-- `packages/server` - server package
-- `packages/tui` - terminal UI package
-- `packages/cli` - command-line package
+- `packages/server` - authoritative Bun daemon, persistence, PTYs, and local API
+- `packages/tui` - disposable React/OpenTUI client
+- `packages/cli` - non-interactive Unix-style client
 
 ## Development
 
