@@ -84,13 +84,36 @@ export function createApp(options: { db: Database; history?: TerminalHistory }):
     snapshot,
     async execute(value) {
       const command = parseCommand(value);
-      const { result } = applyCommand(options.db, command);
+      const { result, effects } = applyCommand(options.db, command);
       if (command.type === "daemon.stop") {
         return { ok: true, revision, result };
       }
 
-      revision += 1;
-      broadcast({ type: "snapshot", snapshot: snapshot() });
+      for (const effect of effects) {
+        if (effect.type !== "spawn-pane" || runtime.isLive(effect.paneId)) {
+          continue;
+        }
+        const pane = snapshot().panes.find(({ id }) => id === effect.paneId);
+        if (pane === undefined) {
+          throw new Error(`Pane not found after commit: ${effect.paneId}`);
+        }
+        try {
+          await runtime.start(pane);
+        } catch {
+          // RuntimeRegistry has already persisted and broadcast the failed status.
+        }
+      }
+
+      const changed =
+        command.type !== "process.restart" &&
+        !(
+          (command.type === "surface.open" || command.type === "surface.openHere") &&
+          effects.length === 0
+        );
+      if (changed) {
+        revision += 1;
+        broadcast({ type: "snapshot", snapshot: snapshot() });
+      }
       return { ok: true, revision, result };
     },
     receive(message) {
