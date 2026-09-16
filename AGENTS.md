@@ -11,3 +11,12 @@
 - Run `bun run check` before completing work.
 - Use Conventional Commits for commit messages.
 - Do not stage or commit changes unless explicitly requested or when required when running some skill that requires it.
+
+## Coding Style and Conventions
+
+- Keep modules and functions focused and easy to scan. Treat roughly 200 lines per file and 50 lines per function as review signals, not hard limits; do not split cohesive code merely to satisfy a counter.
+- Prefer small, local duplication over speculative abstractions. Extract shared code when the duplicated behavior must evolve together.
+- Use explicit return types for exported APIs and functions whose contract is not obvious. Allow inference for simple local functions.
+- Use braces and newlines for control-flow blocks.
+- Prefer named function declarations for top-level functions. Use function expressions where they are idiomatic or clearer, including callbacks.
+- Add comments or JSDoc for public contracts, invariants, and non-obvious behavior. Do not restate TypeScript signatures or obvious implementation details.
