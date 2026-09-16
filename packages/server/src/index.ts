@@ -5,4 +5,6 @@ export * from "./database.ts";
 export * from "./http.ts";
 export * from "./paths.ts";
 export * from "./protocol.ts";
+export * from "./restore.ts";
+export * from "./runtime.ts";
 export * from "./snapshot.ts";
