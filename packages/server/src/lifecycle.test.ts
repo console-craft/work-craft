@@ -266,6 +266,120 @@ test("serializes a stale contender paused after classifying the lock", async () 
   }
 });
 
+test("stale claim cleanup cannot remove a concurrent recoverer's claim", async () => {
+  const home = await mkdtemp(join(tmpdir(), "work-craft-lifecycle-"));
+  const paths = resolvePaths({ WORK_CRAFT_HOME: home });
+  const staleClaimPath = `${paths.lockPath}.takeover-2147483647-stale`;
+  const firstPreloadPath = join(home, "pause-stale-claim-cleanup.ts");
+  const firstPausedPath = join(home, "first.paused");
+  const firstReleasePath = join(home, "first.release");
+  const secondPreloadPath = join(home, "pause-published-claim.ts");
+  const secondPausedPath = join(home, "second.paused");
+  const secondReleasePath = join(home, "second.release");
+  await mkdir(paths.stateDir, { recursive: true, mode: 0o700 });
+  await writeFile(paths.lockPath, "2147483647\n", { mode: 0o600 });
+  await writeFile(staleClaimPath, "2147483647\n", { mode: 0o600 });
+  await writeFile(
+    firstPreloadPath,
+    `
+      import { spyOn } from "bun:test";
+      import * as fs from "node:fs";
+      const originalUnlink = fs.unlinkSync;
+      const wait = new Int32Array(new SharedArrayBuffer(4));
+      let paused = false;
+      function pause() {
+        if (paused) return;
+        paused = true;
+        fs.writeFileSync(process.env.WORK_CRAFT_TEST_PAUSED_PATH!, "paused");
+        while (!fs.existsSync(process.env.WORK_CRAFT_TEST_RELEASE_PATH!)) {
+          Atomics.wait(wait, 0, 0, 10);
+        }
+      }
+      spyOn(fs, "unlinkSync").mockImplementation((path) => {
+        if (path === process.env.WORK_CRAFT_TEST_STALE_CLAIM_PATH) pause();
+        return originalUnlink(path);
+      });
+    `,
+  );
+  await writeFile(
+    secondPreloadPath,
+    `
+      import { spyOn } from "bun:test";
+      import * as fs from "node:fs";
+      const originalFsync = fs.fsyncSync;
+      const wait = new Int32Array(new SharedArrayBuffer(4));
+      spyOn(fs, "fsyncSync").mockImplementationOnce((fd) => {
+        originalFsync(fd);
+        fs.writeFileSync(process.env.WORK_CRAFT_TEST_PAUSED_PATH!, "paused");
+        while (!fs.existsSync(process.env.WORK_CRAFT_TEST_RELEASE_PATH!)) {
+          Atomics.wait(wait, 0, 0, 10);
+        }
+      });
+    `,
+  );
+  const first = spawnDaemon(home, {
+    BUN_OPTIONS: `--preload=${firstPreloadPath}`,
+    WORK_CRAFT_TEST_STALE_CLAIM_PATH: staleClaimPath,
+    WORK_CRAFT_TEST_PAUSED_PATH: firstPausedPath,
+    WORK_CRAFT_TEST_RELEASE_PATH: firstReleasePath,
+  });
+  let second: ReturnType<typeof spawnDaemon> | undefined;
+  try {
+    await waitForFile(firstPausedPath);
+    second = spawnDaemon(home, {
+      BUN_OPTIONS: `--preload=${secondPreloadPath}`,
+      WORK_CRAFT_TEST_PAUSED_PATH: secondPausedPath,
+      WORK_CRAFT_TEST_RELEASE_PATH: secondReleasePath,
+    });
+    await waitForFile(secondPausedPath);
+
+    let secondClaimPath: string | undefined;
+    for (const name of await readdir(paths.stateDir)) {
+      const path = join(paths.stateDir, name);
+      if (
+        name.startsWith("daemon.lock.takeover") &&
+        (await Bun.file(path).text()).trim() === String(second.pid)
+      ) {
+        secondClaimPath = path;
+        break;
+      }
+    }
+    expect(secondClaimPath).toBeDefined();
+    const secondClaim = await stat(secondClaimPath!);
+    expect(secondClaim.mode & 0o777).toBe(0o600);
+
+    await writeFile(firstReleasePath, "release");
+    const lockDeadline = Date.now() + 3_000;
+    while (Date.now() < lockDeadline) {
+      try {
+        if (Number(await Bun.file(paths.lockPath).text()) === first.pid) {
+          break;
+        }
+      } catch {}
+      await Bun.sleep(10);
+    }
+    expect((await stat(secondClaimPath!)).ino).toBe(secondClaim.ino);
+    expect(Number(await Bun.file(paths.lockPath).text())).toBe(first.pid);
+    expect(await Bun.file(paths.databasePath).exists()).toBe(false);
+    expect(await Bun.file(paths.socketPath).exists()).toBe(false);
+
+    await writeFile(secondReleasePath, "release");
+    expect(await waitForExit(second)).not.toBe(0);
+    expect((await waitForHealth(paths.socketPath, [first, second])).pid).toBe(first.pid);
+    expect(Number(await Bun.file(paths.lockPath).text())).toBe(first.pid);
+    expect((await readdir(paths.stateDir)).filter((name) => name.includes(".takeover"))).toEqual(
+      [],
+    );
+
+    await createClient({ socketPath: paths.socketPath }).command({ type: "daemon.stop" });
+    expect(await waitForExit(first)).toBe(0);
+  } finally {
+    await writeFile(firstReleasePath, "release").catch(() => {});
+    await writeFile(secondReleasePath, "release").catch(() => {});
+    await cleanup(home, second === undefined ? [first] : [first, second]);
+  }
+});
+
 test("client starts one daemon on demand for concurrent callers", async () => {
   const home = await mkdtemp(join(tmpdir(), "work-craft-lifecycle-"));
   const previousHome = process.env.WORK_CRAFT_HOME;
