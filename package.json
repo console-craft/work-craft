@@ -1,6 +1,21 @@
 {
   "name": "work-craft",
+  "version": "0.0.0",
   "private": true,
+  "description": "A Bun workspace for the Work Craft server, terminal UI, and CLI.",
+  "homepage": "https://github.com/console-craft/work-craft#readme",
+  "bugs": {
+    "url": "https://github.com/console-craft/work-craft/issues"
+  },
+  "license": "MIT",
+  "author": {
+    "name": "Ovi Ispas",
+    "email": "ovi@console-craft.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/console-craft/work-craft.git"
+  },
   "workspaces": [
     "packages/*"
   ],
@@ -21,5 +36,6 @@
     "oxfmt": "^0.68.0",
     "oxlint": "^1.83.0",
     "typescript": "^7.0.2"
-  }
+  },
+  "packageManager": "bun@1.4.2"
 }
