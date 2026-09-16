@@ -59,9 +59,9 @@ export class TerminalHistory {
       if (pane.timer !== undefined) {
         clearTimeout(pane.timer);
       }
-      pane.timer = setTimeout(() => void this.flush(paneId), 0);
+      pane.timer = setTimeout(() => void this.flush(paneId).catch(() => {}), 0);
     } else if (pane.timer === undefined) {
-      pane.timer = setTimeout(() => void this.flush(paneId), this.flushIntervalMs);
+      pane.timer = setTimeout(() => void this.flush(paneId).catch(() => {}), this.flushIntervalMs);
     }
     return pane.cursor;
   }
@@ -82,8 +82,6 @@ export class TerminalHistory {
       }
 
       const chunks = pane.chunks;
-      pane.chunks = [];
-      pane.queuedBytes = 0;
       this.db.transaction(() => {
         const insert = this.db.query(
           "INSERT INTO terminal_chunks (pane_id, cursor_start, cursor_end, data) VALUES (?, ?, ?, ?)",
@@ -93,6 +91,8 @@ export class TerminalHistory {
         }
         this.retainNewest(id);
       })();
+      pane.chunks = [];
+      pane.queuedBytes = 0;
     }
   }
 

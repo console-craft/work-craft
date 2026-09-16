@@ -22,6 +22,7 @@ export type WorkCraftApp = {
   receive(message: ClientMessage): void;
   subscribe(socket: Bun.ServerWebSocket): void;
   unsubscribe(socket: Bun.ServerWebSocket): void;
+  history: TerminalHistory;
   runtime: RuntimeRegistry;
 };
 
@@ -75,6 +76,7 @@ export function createApp(options: { db: Database; history?: TerminalHistory }):
   const runtime = new RuntimeRegistry({ onOutput, onStatus });
 
   return {
+    history,
     runtime,
     health() {
       return { epoch, revision, pid: process.pid };

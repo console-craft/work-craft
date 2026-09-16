@@ -45,11 +45,31 @@ export function createClient(options: { socketPath?: string } = {}): WorkCraftCl
       let opened = false;
       let closeError: Error | undefined;
       let current: Pick<Snapshot, "epoch" | "revision"> | undefined;
-      let refreshing = false;
+      let snapshots = Promise.resolve();
 
       function applySnapshot(snapshot: Snapshot): void {
+        if (current?.epoch === snapshot.epoch && snapshot.revision <= current.revision) {
+          return;
+        }
         current = { epoch: snapshot.epoch, revision: snapshot.revision };
         handlers.onMessage({ type: "snapshot", snapshot });
+      }
+
+      async function handleSnapshot(next: Snapshot): Promise<void> {
+        if (
+          current === undefined ||
+          next.epoch !== current.epoch ||
+          next.revision === current.revision + 1
+        ) {
+          applySnapshot(next);
+        } else if (next.revision > current.revision + 1) {
+          applySnapshot((await requestJson(socketPath, "/snapshot")) as Snapshot);
+        }
+      }
+
+      function closeWith(error: unknown): void {
+        closeError = error instanceof Error ? error : new Error(String(error));
+        socket.close();
       }
 
       socket.on("message", (data) => {
@@ -59,26 +79,9 @@ export function createClient(options: { socketPath?: string } = {}): WorkCraftCl
             handlers.onMessage(message);
             return;
           }
-          const next = message.snapshot;
-          if (current === undefined || next.epoch !== current.epoch) {
-            applySnapshot(next);
-          } else if (next.revision === current.revision + 1) {
-            applySnapshot(next);
-          } else if (next.revision > current.revision + 1 && !refreshing) {
-            refreshing = true;
-            void requestJson(socketPath, "/snapshot")
-              .then((snapshot) => applySnapshot(snapshot as Snapshot))
-              .catch((error) => {
-                closeError = error instanceof Error ? error : new Error(String(error));
-                socket.close();
-              })
-              .finally(() => {
-                refreshing = false;
-              });
-          }
+          snapshots = snapshots.then(() => handleSnapshot(message.snapshot)).catch(closeWith);
         } catch (error) {
-          closeError = error instanceof Error ? error : new Error(String(error));
-          socket.close();
+          closeWith(error);
         }
       });
       socket.once("open", () => {

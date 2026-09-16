@@ -138,3 +138,62 @@ test("flushes queued output on its timer and on close", async () => {
   reopened.close();
   await rm(directory, { recursive: true, force: true });
 });
+
+test("keeps a failed batch queued for an exact retry", async () => {
+  const db = databaseWithPane();
+  const history = new TerminalHistory(db, { flushBytes: 100, flushIntervalMs: 1_000 });
+  db.exec(`
+    CREATE TRIGGER fail_terminal_history BEFORE INSERT ON terminal_chunks
+    BEGIN SELECT RAISE(FAIL, 'forced history failure'); END;
+  `);
+  expect(history.append("pane-1", new TextEncoder().encode("abc"))).toBe(3);
+
+  await expect(history.flush()).rejects.toThrow("forced history failure");
+  expect(
+    db.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM terminal_chunks").get()?.count,
+  ).toBe(0);
+  expect(new TextDecoder().decode(history.read("pane-1").data)).toBe("abc");
+
+  db.exec("DROP TRIGGER fail_terminal_history");
+  await history.flush();
+  await history.flush();
+  expect(
+    db
+      .query<{ cursorStart: number; cursorEnd: number; data: Uint8Array }, []>(
+        "SELECT cursor_start AS cursorStart, cursor_end AS cursorEnd, data FROM terminal_chunks",
+      )
+      .all(),
+  ).toEqual([{ cursorStart: 0, cursorEnd: 3, data: new TextEncoder().encode("abc") }]);
+  await history.close();
+  db.close();
+});
+
+test("timer flush failures stay queued without an unhandled rejection", async () => {
+  const db = databaseWithPane();
+  const history = new TerminalHistory(db, { flushBytes: 100, flushIntervalMs: 5 });
+  const unhandled: unknown[] = [];
+  const onUnhandled = (error: unknown) => unhandled.push(error);
+  process.on("unhandledRejection", onUnhandled);
+  db.exec(`
+    CREATE TRIGGER fail_terminal_history BEFORE INSERT ON terminal_chunks
+    BEGIN SELECT RAISE(FAIL, 'forced timer failure'); END;
+  `);
+
+  try {
+    history.append("pane-1", new TextEncoder().encode("timer"));
+    await Bun.sleep(20);
+    expect(unhandled).toEqual([]);
+    expect(new TextDecoder().decode(history.read("pane-1").data)).toBe("timer");
+
+    db.exec("DROP TRIGGER fail_terminal_history");
+    await history.flush();
+    expect(
+      db.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM terminal_chunks").get()?.count,
+    ).toBe(1);
+  } finally {
+    process.off("unhandledRejection", onUnhandled);
+    db.exec("DROP TRIGGER IF EXISTS fail_terminal_history");
+    await history.close();
+    db.close();
+  }
+});

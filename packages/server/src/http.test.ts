@@ -9,7 +9,7 @@ import { createClient } from "./client.ts";
 import { openDatabase } from "./database.ts";
 import { TerminalHistory } from "./history.ts";
 import { startHttpServer } from "./http.ts";
-import { decodeBytes, type ServerMessage } from "./protocol.ts";
+import { decodeBytes, type ServerMessage, type Snapshot } from "./protocol.ts";
 
 function seedPane(db: ReturnType<typeof openDatabase>): void {
   db.exec(`
@@ -173,6 +173,20 @@ test("only successful durable commands advance and broadcast snapshots", async (
   }
 });
 
+test("exposes owned history for shutdown flushing", async () => {
+  const db = openDatabase(":memory:");
+  seedPane(db);
+  const app = createApp({ db });
+
+  app.history.append("pane-1", new TextEncoder().encode("shutdown"));
+  await app.history.close();
+
+  expect(
+    db.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM terminal_chunks").get()?.count,
+  ).toBe(1);
+  db.close();
+});
+
 test("streams runtime input, output, status, and queued history", async () => {
   const fixture = await startTestServer({ withPane: true });
   const messages: ServerMessage[] = [];
@@ -247,5 +261,103 @@ test("closes malformed stream peers with policy violation", async () => {
     expect(code).toBe(1008);
   } finally {
     await fixture.close();
+  }
+});
+
+test("applies a newer snapshot frame after a pending gap refresh", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "work-craft-client-order-"));
+  const socketPath = join(directory, "work-craft.sock");
+  const snapshot = (revision: number): Snapshot => ({
+    epoch: "epoch-1",
+    revision,
+    sessions: [],
+    workspaces: [],
+    categories: [],
+    projects: [],
+    items: [],
+    surfaces: [],
+    tabs: [],
+    panes: [],
+    terminalHistories: [],
+  });
+  let streamSocket: Bun.ServerWebSocket | undefined;
+  let markRefreshStarted!: () => void;
+  const refreshStarted = new Promise<void>((resolve) => (markRefreshStarted = resolve));
+  let releaseRefresh!: () => void;
+  const server = Bun.serve({
+    unix: socketPath,
+    fetch(request, server) {
+      const { pathname } = new URL(request.url);
+      if (pathname === "/stream" && server.upgrade(request)) {
+        return;
+      }
+      if (pathname === "/snapshot") {
+        markRefreshStarted();
+        return new Promise<Response>((resolve) => {
+          releaseRefresh = () => resolve(Response.json(snapshot(2)));
+        });
+      }
+      return new Response(null, { status: 404 });
+    },
+    websocket: {
+      open(socket) {
+        streamSocket = socket;
+        socket.send(JSON.stringify({ type: "snapshot", snapshot: snapshot(0) }));
+      },
+      message() {},
+    },
+  });
+  const revisions: number[] = [];
+  let receiveInitial!: () => void;
+  const initial = new Promise<void>((resolve) => (receiveInitial = resolve));
+  let receiveRefresh!: () => void;
+  const refreshed = new Promise<void>((resolve) => (receiveRefresh = resolve));
+  let receiveNewest!: () => void;
+  const newest = new Promise<void>((resolve) => (receiveNewest = resolve));
+  let receiveMarker!: () => void;
+  const marker = new Promise<void>((resolve) => (receiveMarker = resolve));
+  let connection;
+
+  try {
+    connection = await createClient({ socketPath }).stream({
+      onMessage(message) {
+        if (message.type === "snapshot") {
+          revisions.push(message.snapshot.revision);
+          if (message.snapshot.revision === 0) {
+            receiveInitial();
+          } else if (message.snapshot.revision === 2) {
+            receiveRefresh();
+          } else if (message.snapshot.revision === 3) {
+            receiveNewest();
+          }
+        } else if (message.type === "process.status") {
+          receiveMarker();
+        }
+      },
+    });
+    await initial;
+    streamSocket!.send(JSON.stringify({ type: "snapshot", snapshot: snapshot(2) }));
+    await refreshStarted;
+    streamSocket!.send(JSON.stringify({ type: "snapshot", snapshot: snapshot(3) }));
+    streamSocket!.send(
+      JSON.stringify({
+        type: "process.status",
+        epoch: "epoch-1",
+        paneId: "pane-1",
+        status: "running",
+      }),
+    );
+    await marker;
+    releaseRefresh();
+    await refreshed;
+    expect(await Promise.race([newest.then(() => true), Bun.sleep(100).then(() => false)])).toBe(
+      true,
+    );
+
+    expect(revisions).toEqual([0, 2, 3]);
+  } finally {
+    connection?.close();
+    await server.stop(true);
+    await rm(directory, { recursive: true, force: true });
   }
 });
