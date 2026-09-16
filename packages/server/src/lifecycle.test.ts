@@ -1,5 +1,6 @@
 import { expect, spyOn, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { createConnection, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createClient } from "./client.ts";
@@ -76,6 +77,19 @@ async function waitForExit(child: ReturnType<typeof spawnDaemon>): Promise<numbe
   return result;
 }
 
+async function openHungRequest(socketPath: string): Promise<Socket> {
+  const socket = createConnection(socketPath);
+  await new Promise<void>((resolve, reject) => {
+    socket.once("connect", resolve);
+    socket.once("error", reject);
+  });
+  socket.write(
+    "POST /command HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{",
+  );
+  await Bun.sleep(20);
+  return socket;
+}
+
 async function cleanup(
   directory: string,
   children: ReturnType<typeof spawnDaemon>[],
@@ -136,6 +150,119 @@ test("rejects lock ownership lost between PID sync and startup", async () => {
     }
     await child.exited;
     await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("serializes a stale contender paused after classifying the lock", async () => {
+  const home = await mkdtemp(join(tmpdir(), "work-craft-lifecycle-"));
+  const paths = resolvePaths({ WORK_CRAFT_HOME: home });
+  const preloadPath = join(home, "pause-stale-contender.ts");
+  const pausedPath = join(home, "contender.paused");
+  const releasePath = join(home, "contender.release");
+  const ownerPreloadPath = join(home, "pause-fresh-owner.ts");
+  const ownerPausedPath = join(home, "owner.paused");
+  const ownerReleasePath = join(home, "owner.release");
+  await mkdir(paths.stateDir, { recursive: true, mode: 0o700 });
+  await writeFile(paths.lockPath, "2147483647\n", { mode: 0o600 });
+  await writeFile(
+    preloadPath,
+    `
+      import { spyOn } from "bun:test";
+      import * as fs from "node:fs";
+      const originalRead = fs.readFileSync;
+      const wait = new Int32Array(new SharedArrayBuffer(4));
+      let paused = false;
+      spyOn(fs, "readFileSync").mockImplementation((path, options) => {
+        const value = originalRead(path, options as never);
+        if (!paused && path === process.env.WORK_CRAFT_TEST_LOCK_PATH) {
+          paused = true;
+          fs.writeFileSync(process.env.WORK_CRAFT_TEST_PAUSED_PATH!, "paused");
+          while (!fs.existsSync(process.env.WORK_CRAFT_TEST_RELEASE_PATH!)) {
+            Atomics.wait(wait, 0, 0, 10);
+          }
+        }
+        return value;
+      });
+    `,
+  );
+  await writeFile(
+    ownerPreloadPath,
+    `
+      import { spyOn } from "bun:test";
+      import * as fs from "node:fs";
+      const originalExists = fs.existsSync;
+      const wait = new Int32Array(new SharedArrayBuffer(4));
+      let paused = false;
+      spyOn(fs, "existsSync").mockImplementation((path) => {
+        if (!paused && path === process.env.WORK_CRAFT_TEST_SOCKET_PATH) {
+          paused = true;
+          fs.writeFileSync(process.env.WORK_CRAFT_TEST_OWNER_PAUSED_PATH!, "paused");
+          while (!originalExists(process.env.WORK_CRAFT_TEST_OWNER_RELEASE_PATH!)) {
+            Atomics.wait(wait, 0, 0, 10);
+          }
+        }
+        return originalExists(path);
+      });
+    `,
+  );
+  const contender = Bun.spawn([process.execPath, "--preload", preloadPath, MAIN_PATH], {
+    cwd: join(import.meta.dir, "../../.."),
+    env: {
+      ...process.env,
+      WORK_CRAFT_HOME: home,
+      WORK_CRAFT_TEST_LOCK_PATH: paths.lockPath,
+      WORK_CRAFT_TEST_PAUSED_PATH: pausedPath,
+      WORK_CRAFT_TEST_RELEASE_PATH: releasePath,
+    },
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  let owner: ReturnType<typeof spawnDaemon> | undefined;
+  try {
+    await waitForFile(pausedPath);
+    await rm(paths.lockPath, { force: true });
+    owner = Bun.spawn([process.execPath, "--preload", ownerPreloadPath, MAIN_PATH], {
+      cwd: join(import.meta.dir, "../../.."),
+      env: {
+        ...process.env,
+        WORK_CRAFT_HOME: home,
+        WORK_CRAFT_TEST_SOCKET_PATH: paths.socketPath,
+        WORK_CRAFT_TEST_OWNER_PAUSED_PATH: ownerPausedPath,
+        WORK_CRAFT_TEST_OWNER_RELEASE_PATH: ownerReleasePath,
+      },
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const ownerDeadline = Date.now() + 3_000;
+    while (Date.now() < ownerDeadline) {
+      try {
+        if (Number(await Bun.file(paths.lockPath).text()) === owner.pid) {
+          break;
+        }
+      } catch {}
+      await Bun.sleep(10);
+    }
+    expect(Number(await Bun.file(paths.lockPath).text())).toBe(owner.pid);
+    await writeFile(releasePath, "release");
+    await waitForFile(ownerPausedPath);
+    expect(await waitForExit(contender)).not.toBe(0);
+    await writeFile(ownerReleasePath, "release");
+
+    expect((await waitForHealth(paths.socketPath, [owner, contender])).pid).toBe(owner.pid);
+    expect(isAlive(owner.pid)).toBe(true);
+    expect(Number(await Bun.file(paths.lockPath).text())).toBe(owner.pid);
+    expect(
+      (await readdir(paths.stateDir)).filter((name) => name.startsWith("daemon.lock.")),
+    ).toEqual([]);
+
+    await createClient({ socketPath: paths.socketPath }).command({ type: "daemon.stop" });
+    expect(await waitForExit(owner)).toBe(0);
+  } finally {
+    await writeFile(releasePath, "release").catch(() => {});
+    await writeFile(ownerReleasePath, "release").catch(() => {});
+    await cleanup(home, owner === undefined ? [contender] : [contender, owner]);
   }
 });
 
@@ -268,6 +395,60 @@ test("drains the daemon.stop request before force-closing streams", async () => 
     }
     await daemon;
     await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("bounds graceful shutdown when an unrelated request is hung", async () => {
+  const home = await mkdtemp(join(tmpdir(), "work-craft-lifecycle-"));
+  const paths = resolvePaths({ WORK_CRAFT_HOME: home });
+  const child = spawnDaemon(home);
+  let hung: Socket | undefined;
+  try {
+    await waitForHealth(paths.socketPath, [child]);
+    hung = await openHungRequest(paths.socketPath);
+    expect(
+      await createClient({ socketPath: paths.socketPath }).command({ type: "daemon.stop" }),
+    ).toMatchObject({ ok: true, result: { stopping: true } });
+
+    const exitCode = await Promise.race([child.exited, Bun.sleep(1_000).then(() => undefined)]);
+    if (exitCode === undefined) {
+      hung.destroy();
+      await child.exited;
+    }
+
+    expect(exitCode).toBe(0);
+    expect(await Bun.file(paths.lockPath).exists()).toBe(false);
+    await expect(stat(paths.socketPath)).rejects.toThrow();
+  } finally {
+    hung?.destroy();
+    await cleanup(home, [child]);
+  }
+});
+
+test("SIGTERM escalates an in-progress graceful drain", async () => {
+  const home = await mkdtemp(join(tmpdir(), "work-craft-lifecycle-"));
+  const paths = resolvePaths({ WORK_CRAFT_HOME: home });
+  const child = spawnDaemon(home);
+  let hung: Socket | undefined;
+  try {
+    await waitForHealth(paths.socketPath, [child]);
+    hung = await openHungRequest(paths.socketPath);
+    await createClient({ socketPath: paths.socketPath }).command({ type: "daemon.stop" });
+
+    const closed = new Promise<boolean>((resolve) => hung!.once("close", () => resolve(true)));
+    child.kill("SIGTERM");
+    const escalated = await Promise.race([closed, Bun.sleep(100).then(() => false)]);
+    if (!escalated) {
+      hung.destroy();
+    }
+    const exitCode = await waitForExit(child);
+
+    expect(escalated).toBe(true);
+    expect(exitCode).toBe(0);
+    expect(await Bun.file(paths.lockPath).exists()).toBe(false);
+  } finally {
+    hung?.destroy();
+    await cleanup(home, [child]);
   }
 });
 

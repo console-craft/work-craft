@@ -22,6 +22,7 @@ import type { WorkCraftPaths } from "./paths.ts";
 
 type FileIdentity = { dev: number | bigint; ino: number | bigint };
 type Lock = { fd: number; identity: FileIdentity };
+const HTTP_DRAIN_MS = 250;
 
 function fileIdentity(path: string): FileIdentity | undefined {
   try {
@@ -64,8 +65,8 @@ function lockPid(lockPath: string): number | undefined {
   }
 }
 
-function createLock(lockPath: string): Lock {
-  const fd = openSync(lockPath, "wx", 0o600);
+function createLock(path: string, label = "daemon lock"): Lock {
+  const fd = openSync(path, "wx", 0o600);
   let identity: FileIdentity | undefined;
   try {
     const { dev, ino } = fstatSync(fd, { bigint: true });
@@ -73,69 +74,137 @@ function createLock(lockPath: string): Lock {
     fchmodSync(fd, 0o600);
     writeSync(fd, `${process.pid}\n`);
     fsyncSync(fd);
-    if (!sameFile(identity, fileIdentity(lockPath))) {
-      throw new Error("Lost daemon lock ownership while publishing PID");
+    if (!sameFile(identity, fileIdentity(path))) {
+      throw new Error(`Lost ${label} ownership while publishing PID`);
     }
     return { fd, identity };
   } catch (error) {
     closeSync(fd);
     if (identity === undefined) {
-      rmSync(lockPath, { force: true });
+      rmSync(path, { force: true });
     } else {
-      removeOwned(lockPath, identity);
+      removeOwned(path, identity);
     }
     throw error;
   }
 }
 
-async function acquireLock(lockPath: string): Promise<Lock> {
+function releaseOwned(path: string, owner: Lock): void {
+  removeOwned(path, owner.identity);
+  closeSync(owner.fd);
+}
+
+async function waitForTakeover(takeoverPath: string): Promise<void> {
+  const deadline = Date.now() + 1_000;
   for (;;) {
-    try {
-      return createLock(lockPath);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
-        throw error;
-      }
+    const identity = fileIdentity(takeoverPath);
+    if (identity === undefined) {
+      return;
     }
-
-    const pid = lockPid(lockPath);
+    const pid = lockPid(takeoverPath);
+    if (!sameFile(identity, fileIdentity(takeoverPath))) {
+      continue;
+    }
     if (pid !== undefined && processIsAlive(pid)) {
-      throw new Error(`Work Craft daemon is already starting or running (PID ${pid})`);
-    }
-    if (pid === undefined) {
-      let age: number;
-      try {
-        age = Date.now() - statSync(lockPath).mtimeMs;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-          continue;
-        }
-        throw error;
+      if (Date.now() >= deadline) {
+        throw new Error(`Daemon lock takeover is already in progress (PID ${pid})`);
       }
-      if (age < 250) {
-        // open("wx") makes the name visible just before the owner can write its PID.
-        await Bun.sleep(Math.min(20, 250 - age));
-        continue;
-      }
+      await Bun.sleep(10);
+      continue;
     }
-
-    const stalePath = `${lockPath}.stale-${process.pid}-${crypto.randomUUID()}`;
+    if (pid === undefined && Date.now() - statSync(takeoverPath).mtimeMs < 250) {
+      await Bun.sleep(10);
+      continue;
+    }
+    const stalePath = `${takeoverPath}.stale-${process.pid}-${crypto.randomUUID()}`;
     try {
-      renameSync(lockPath, stalePath);
+      renameSync(takeoverPath, stalePath);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         continue;
       }
       throw error;
     }
+    rmSync(stalePath, { force: true });
+  }
+}
+
+async function acquireTakeover(takeoverPath: string): Promise<Lock> {
+  for (;;) {
     try {
-      return createLock(lockPath);
+      return createLock(takeoverPath, "daemon lock takeover");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
         throw error;
       }
+      await waitForTakeover(takeoverPath);
+    }
+  }
+}
+
+async function acquireLock(lockPath: string): Promise<Lock> {
+  const takeoverPath = `${lockPath}.takeover`;
+  // Stale classification happens only under this marker; fresh creators wait for it and revalidate.
+  for (;;) {
+    try {
+      const lock = createLock(lockPath);
+      try {
+        await waitForTakeover(takeoverPath);
+        if (!sameFile(lock.identity, fileIdentity(lockPath))) {
+          throw new Error("Lost daemon lock ownership during takeover");
+        }
+        return lock;
+      } catch (error) {
+        releaseOwned(lockPath, lock);
+        throw error;
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+        throw error;
+      }
+    }
+
+    const takeover = await acquireTakeover(takeoverPath);
+    let lock: Lock | undefined;
+    let stalePath: string | undefined;
+    try {
+      const identity = fileIdentity(lockPath);
+      if (identity === undefined) {
+        continue;
+      }
+      const pid = lockPid(lockPath);
+      if (
+        !sameFile(takeover.identity, fileIdentity(takeoverPath)) ||
+        !sameFile(identity, fileIdentity(lockPath))
+      ) {
+        continue;
+      }
+      if (pid !== undefined && processIsAlive(pid)) {
+        throw new Error(`Work Craft daemon is already starting or running (PID ${pid})`);
+      }
+      if (pid === undefined && Date.now() - statSync(lockPath).mtimeMs < 250) {
+        await Bun.sleep(20);
+        continue;
+      }
+
+      stalePath = `${lockPath}.stale-${process.pid}-${crypto.randomUUID()}`;
+      renameSync(lockPath, stalePath);
+      if (!sameFile(identity, fileIdentity(stalePath))) {
+        continue;
+      }
+      lock = createLock(lockPath);
     } finally {
-      rmSync(stalePath, { force: true });
+      if (stalePath !== undefined) {
+        rmSync(stalePath, { force: true });
+      }
+      releaseOwned(takeoverPath, takeover);
+    }
+    if (lock !== undefined) {
+      if (!sameFile(lock.identity, fileIdentity(lockPath))) {
+        releaseOwned(lockPath, lock);
+        throw new Error("Lost daemon lock ownership after takeover");
+      }
+      return lock;
     }
   }
 }
@@ -172,6 +241,7 @@ export async function runDaemon(paths: WorkCraftPaths): Promise<void> {
   let server: Bun.Server<undefined> | undefined;
   let socketIdentity: FileIdentity | undefined;
   let shutdownPromise: Promise<void> | undefined;
+  let forceShutdown = false;
   let startupComplete = false;
   let stopRequested = false;
   let resolveStopped!: () => void;
@@ -189,6 +259,9 @@ export async function runDaemon(paths: WorkCraftPaths): Promise<void> {
   };
 
   function shutdown(drainStopRequest: boolean): Promise<void> {
+    if (!drainStopRequest) {
+      forceShutdown = true;
+    }
     shutdownPromise ??= (async () => {
       let failure: unknown;
       async function attempt(action: () => void | Promise<void>): Promise<void> {
@@ -208,8 +281,9 @@ export async function runDaemon(paths: WorkCraftPaths): Promise<void> {
           return;
         }
         const stopped = server.stop(false);
-        while (server.pendingRequests > 0) {
-          await Bun.sleep(1);
+        const deadline = Date.now() + HTTP_DRAIN_MS;
+        while (server.pendingRequests > 0 && !forceShutdown && Date.now() < deadline) {
+          await Bun.sleep(5);
         }
         await server.stop(true);
         await stopped;
@@ -252,6 +326,9 @@ export async function runDaemon(paths: WorkCraftPaths): Promise<void> {
     lock = await acquireLock(paths.lockPath);
     if (await stopStartupIfRequested()) {
       return;
+    }
+    if (!sameFile(lock.identity, fileIdentity(paths.lockPath))) {
+      throw new Error("Lost daemon lock ownership before startup");
     }
     if (existsSync(paths.socketPath)) {
       const healthy = await socketIsHealthy(paths.socketPath);
