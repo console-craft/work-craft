@@ -25,6 +25,7 @@ export class RuntimeRegistry {
 
     this.callbacks.onStatus(pane.id, "starting");
     let terminal: Bun.Terminal | undefined;
+    let runtime: LiveRuntime | undefined;
     try {
       const spec = resolveShellSpawn(pane);
       const spawnedTerminal = (terminal = new Bun.Terminal({
@@ -45,17 +46,26 @@ export class RuntimeRegistry {
         }
         return code;
       });
-      this.runtimes.set(pane.id, {
+      runtime = {
         terminal: spawnedTerminal,
         process,
         exited,
         preserveStatus() {
           publishExit = false;
         },
-      });
+      };
+      this.runtimes.set(pane.id, runtime);
       this.callbacks.onStatus(pane.id, "running");
     } catch (cause) {
-      terminal?.close();
+      if (runtime === undefined) {
+        terminal?.close();
+      } else {
+        runtime.preserveStatus();
+        if (runtime.process.exitCode === null) {
+          runtime.process.kill();
+        }
+        await runtime.exited;
+      }
       this.runtimes.delete(pane.id);
       const error = cause instanceof Error ? cause.message : String(cause);
       this.callbacks.onStatus(pane.id, "failed", error);
@@ -86,10 +96,10 @@ export class RuntimeRegistry {
   async stopAll(options: { preserveStatus?: boolean } = {}): Promise<void> {
     const runtimes = [...this.runtimes.values()];
     for (const runtime of runtimes) {
-      if (options.preserveStatus) {
-        runtime.preserveStatus();
-      }
       if (runtime.process.exitCode === null) {
+        if (options.preserveStatus) {
+          runtime.preserveStatus();
+        }
         runtime.process.kill();
       }
     }

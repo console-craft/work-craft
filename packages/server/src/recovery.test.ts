@@ -58,6 +58,12 @@ async function persistentAppFixture() {
       }
       return owner.app;
     },
+    get db() {
+      if (owner === undefined) {
+        throw new Error("Fixture app is not running");
+      }
+      return owner.db;
+    },
     async openShellAndWrite(command: string): Promise<string> {
       const app = this.app;
       const session = await app.execute({ type: "session.create", name: "Main" });
@@ -153,12 +159,16 @@ async function persistentAppFixture() {
       ]);
       return nextPaneId;
     },
-    async restart(): Promise<AppOwner> {
+    reopen(): AppOwner {
       const db = openDatabase(databasePath);
       const app = createApp({ db });
       owner = { app, db };
-      await app.recover();
       return owner;
+    },
+    async restart(): Promise<AppOwner> {
+      const reopened = this.reopen();
+      await reopened.app.recover();
+      return reopened;
     },
     async startCount(): Promise<number> {
       try {
@@ -241,6 +251,68 @@ test("restores hierarchy, history, layout, and one shell after restart", async (
     await restarted.app.recover();
     expect(await fixture.startCount()).toBe(1);
   } finally {
+    await fixture.close();
+  }
+});
+
+test("returns the same rejected recovery promise to every caller", async () => {
+  const fixture = await persistentAppFixture();
+  try {
+    await fixture.openShellAndWrite("printf before-restart");
+    await fixture.crash();
+    const restarted = fixture.reopen();
+    restarted.db.run("UPDATE items SET data_json = 'invalid-json'");
+
+    const first = restarted.app.recover();
+    const rejection = first.then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    const concurrent = restarted.app.recover();
+
+    expect(concurrent).toBe(first);
+    expect(await rejection).toEqual(
+      expect.objectContaining({ message: "Invalid items.data_json" }),
+    );
+    expect(restarted.app.recover()).toBe(first);
+    await expect(restarted.app.recover()).rejects.toThrow("Invalid items.data_json");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("normalizes interrupted metadata before a pre-spawn recovery failure", async () => {
+  const fixture = await persistentAppFixture();
+  const staleExitedAt = "2000-01-01T00:00:00.000Z";
+  try {
+    const paneId = await fixture.openShellAndWrite("printf before-restart");
+    const nextPaneId = fixture.addRunningPaneAfter(paneId);
+    fixture.db.run(
+      "UPDATE panes SET error_text = 'stale error', exited_at = ? WHERE id IN (?, ?)",
+      [staleExitedAt, paneId, nextPaneId],
+    );
+    await fixture.crash();
+    const restarted = fixture.reopen();
+    restarted.db.exec(`
+      CREATE TRIGGER fail_recovery_flush BEFORE INSERT ON terminal_chunks
+      BEGIN
+        SELECT RAISE(ABORT, 'forced recovery flush failure');
+      END;
+    `);
+
+    await expect(restarted.app.recover()).rejects.toThrow("forced recovery flush failure");
+    const panes = restarted.app
+      .snapshot()
+      .panes.filter(({ id }) => [paneId, nextPaneId].includes(id));
+
+    expect(panes).toHaveLength(2);
+    expect(panes.every(({ processStatus }) => processStatus === "interrupted")).toBe(true);
+    expect(panes.every(({ errorText }) => errorText === null)).toBe(true);
+    expect(panes[0]?.exitedAt).toEqual(expect.any(String));
+    expect(panes[0]?.exitedAt).not.toBe(staleExitedAt);
+    expect(panes[1]?.exitedAt).toBe(panes[0]?.exitedAt);
+  } finally {
+    fixture.db.exec("DROP TRIGGER IF EXISTS fail_recovery_flush");
     await fixture.close();
   }
 });

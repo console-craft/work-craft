@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -114,6 +115,55 @@ test("cleans up and reports a synchronous spawn failure", async () => {
   expect(statuses[1]?.error).toBeTruthy();
 });
 
+test("terminates a spawned shell when the running callback throws", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "work-craft-runtime-failure-"));
+  const pidPath = join(directory, "pid");
+  const stoppedPath = join(directory, "stopped");
+  let pid: number | undefined;
+  const statuses: PaneStatus[] = [];
+  const registry = runtime({
+    onStatus: (_paneId, status) => {
+      statuses.push(status);
+      if (status !== "running") {
+        return;
+      }
+      const deadline = Date.now() + 1_000;
+      while (!existsSync(pidPath) && Date.now() < deadline) {}
+      if (!existsSync(pidPath)) {
+        throw new Error("shell did not start");
+      }
+      throw new Error("running status failed");
+    },
+  });
+
+  try {
+    await expect(
+      registry.start(
+        shellPane("pane-1", process.cwd(), "/bin/sh", [
+          "-c",
+          'trap "" HUP; trap \'printf stopped > "$2"; exit 0\' TERM; printf "$$" > "$1"; while :; do sleep 0.1; done',
+          "runtime-test",
+          pidPath,
+          stoppedPath,
+        ]),
+      ),
+    ).rejects.toThrow("running status failed");
+    pid = Number(await Bun.file(pidPath).text());
+
+    expect(() => process.kill(pid!, 0)).toThrow();
+    expect(await Bun.file(stoppedPath).text()).toBe("stopped");
+    expect(registry.isLive("pane-1")).toBe(false);
+    expect(statuses).toEqual(["starting", "running", "failed"]);
+  } finally {
+    if (pid !== undefined) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {}
+    }
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("stops all live runtimes", async () => {
   const registry = runtime();
   await registry.start(shellPane("pane-1", process.cwd()));
@@ -123,6 +173,40 @@ test("stops all live runtimes", async () => {
 
   expect(registry.isLive("pane-1")).toBe(false);
   expect(registry.isLive("pane-2")).toBe(false);
+});
+
+test("preserving shutdown still publishes a natural exit", async () => {
+  const statuses: PaneStatus[] = [];
+  let publishExit = true;
+  let killed = false;
+  const registry = runtime();
+  const runtimes = (
+    registry as unknown as {
+      runtimes: Map<string, unknown>;
+    }
+  ).runtimes;
+  runtimes.set("pane-1", {
+    process: {
+      exitCode: 0,
+      kill() {
+        killed = true;
+      },
+    },
+    exited: Promise.resolve(0).then((code) => {
+      if (publishExit) {
+        statuses.push("exited");
+      }
+      return code;
+    }),
+    preserveStatus() {
+      publishExit = false;
+    },
+  });
+
+  await registry.stopAll({ preserveStatus: true });
+
+  expect(killed).toBe(false);
+  expect(statuses).toEqual(["exited"]);
 });
 
 test("persists shell output after the process exits", async () => {

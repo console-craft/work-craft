@@ -32,7 +32,7 @@ export function createApp(options: { db: Database; history?: TerminalHistory }):
   const subscribers = new Set<Bun.ServerWebSocket>();
   const history = options.history ?? new TerminalHistory(options.db);
   let revision = 0;
-  let recovered = false;
+  let recovery: Promise<void> | undefined;
 
   function snapshot(): Snapshot {
     return readSnapshot(options.db, epoch, revision, history);
@@ -77,12 +77,7 @@ export function createApp(options: { db: Database; history?: TerminalHistory }):
 
   const runtime = new RuntimeRegistry({ onOutput, onStatus });
 
-  async function recover(): Promise<void> {
-    if (recovered) {
-      return;
-    }
-    recovered = true;
-
+  async function recoverOnce(): Promise<void> {
     const panes = new Map(snapshot().panes.map((pane) => [pane.id, pane]));
     const interrupted = options.db.transaction(() => {
       const rows = options.db
@@ -90,9 +85,13 @@ export function createApp(options: { db: Database; history?: TerminalHistory }):
           "SELECT id FROM panes WHERE process_status IN ('running', 'starting') ORDER BY id",
         )
         .all();
-      options.db.run(
-        "UPDATE panes SET process_status = 'interrupted' WHERE process_status IN ('running', 'starting')",
+      const update = options.db.query(
+        "UPDATE panes SET process_status = 'interrupted', error_text = NULL, exited_at = ? WHERE id = ?",
       );
+      const exitedAt = new Date().toISOString();
+      for (const { id } of rows) {
+        update.run(exitedAt, id);
+      }
       return rows;
     })();
 
@@ -119,6 +118,11 @@ export function createApp(options: { db: Database; history?: TerminalHistory }):
         }
       }
     }
+  }
+
+  function recover(): Promise<void> {
+    recovery ??= recoverOnce();
+    return recovery;
   }
 
   return {
