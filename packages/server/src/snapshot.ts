@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import type { TerminalHistory } from "./history.ts";
 import { encodeBytes } from "./protocol.ts";
 import type {
   CategoryKind,
@@ -93,7 +94,12 @@ function parsePaneStatus(value: string): PaneStatus {
   return value as PaneStatus;
 }
 
-export function readSnapshot(db: Database, epoch: string, revision: number): Snapshot {
+export function readSnapshot(
+  db: Database,
+  epoch: string,
+  revision: number,
+  history?: TerminalHistory,
+): Snapshot {
   const sessions = db
     .query<{ id: string; name: string; position: number }, []>(
       "SELECT id, name, position FROM sessions ORDER BY position, id",
@@ -203,6 +209,10 @@ export function readSnapshot(db: Database, epoch: string, revision: number): Sna
       processStatus: parsePaneStatus(processStatus),
     })),
     terminalHistories: paneRows.map(({ id }) => {
+      if (history !== undefined) {
+        const retained = history.read(id);
+        return { ...retained, data: encodeBytes(retained.data) };
+      }
       const chunks = chunksByPane.get(id) ?? [];
       const bytes = new Uint8Array(
         chunks.reduce((total, chunk) => total + chunk.data.byteLength, 0),

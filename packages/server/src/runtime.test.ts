@@ -1,6 +1,9 @@
 import { afterEach, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { openDatabase } from "./database.ts";
+import { TerminalHistory } from "./history.ts";
 import type { PaneStatus } from "./protocol.ts";
 import { resolveShellSpawn, type RuntimePane } from "./restore.ts";
 import { RuntimeRegistry, type RuntimeCallbacks } from "./runtime.ts";
@@ -120,4 +123,40 @@ test("stops all live runtimes", async () => {
 
   expect(registry.isLive("pane-1")).toBe(false);
   expect(registry.isLive("pane-2")).toBe(false);
+});
+
+test("persists shell output after the process exits", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "work-craft-runtime-"));
+  const path = join(directory, "work-craft.db");
+  const db = openDatabase(path);
+  db.exec(`
+    INSERT INTO sessions VALUES ('session-1', 'Main', 0);
+    INSERT INTO workspaces VALUES ('workspace-1', 'session-1', 'Work', 0);
+    INSERT INTO projects VALUES ('project-1', 'workspace-1', 'implementation', 'Work Craft', 0);
+    INSERT INTO items VALUES ('item-1', 'project-1', 'surface', 'Build', 0, '{}', NULL);
+    INSERT INTO surfaces VALUES ('surface-1', 'item-1', NULL);
+    INSERT INTO panes VALUES ('pane-1', 'surface-1', 'terminal', 'Shell', '/tmp', '{"type":"shell","executable":"/bin/sh","args":[]}', 'running', NULL, NULL, NULL);
+  `);
+  const history = new TerminalHistory(db);
+  const registry = runtime({
+    onOutput: (paneId, bytes) => {
+      history.append(paneId, bytes);
+    },
+  });
+
+  try {
+    await registry.start(
+      shellPane("pane-1", process.cwd(), "/bin/sh", ["-c", "printf persisted-output"]),
+    );
+    expect(await registry.waitForExit("pane-1")).toBe(0);
+    await history.flush();
+    db.close();
+
+    const reopened = openDatabase(path);
+    const persisted = new TerminalHistory(reopened).read("pane-1");
+    expect(new TextDecoder().decode(persisted.data)).toContain("persisted-output");
+    reopened.close();
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });

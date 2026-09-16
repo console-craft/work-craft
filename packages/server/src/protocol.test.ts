@@ -13,10 +13,10 @@ test("parses protocol messages and rejects invalid boundaries", () => {
     itemId: "item-1",
     cwd: "/tmp",
   });
-  expect(parseClientMessage({ type: "terminal.input", paneId: "pane-1", data: "ls\n" })).toEqual({
+  expect(parseClientMessage({ type: "terminal.input", paneId: "pane-1", data: "bHMK" })).toEqual({
     type: "terminal.input",
     paneId: "pane-1",
-    data: "ls\n",
+    data: "bHMK",
   });
 
   const invalidValues = [
@@ -24,6 +24,7 @@ test("parses protocol messages and rejects invalid boundaries", () => {
     () => parseCommand({ type: "tab.create", surfaceId: "surface-1", title: "" }),
     () => parseCommand({ type: "pane.split", direction: "horizontal" }),
     () => parseCommand({ type: "not-a-command" }),
+    () => parseClientMessage({ type: "terminal.input", paneId: "pane-1", data: "not base64" }),
     () => parseClientMessage({ type: "terminal.resize", paneId: "pane-1", cols: 0, rows: 24 }),
   ];
   for (const parse of invalidValues) {

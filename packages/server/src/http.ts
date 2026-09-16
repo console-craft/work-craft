@@ -1,6 +1,6 @@
 import { chmodSync } from "node:fs";
 import type { WorkCraftApp } from "./app.ts";
-import { ProtocolError } from "./protocol.ts";
+import { parseClientMessage, ProtocolError } from "./protocol.ts";
 import type { Command } from "./protocol.ts";
 
 async function commandBody(request: Request): Promise<unknown> {
@@ -47,7 +47,16 @@ export function startHttpServer(app: WorkCraftApp, socketPath: string): Bun.Serv
       close(socket) {
         app.unsubscribe(socket);
       },
-      message() {},
+      message(socket, data) {
+        let message;
+        try {
+          message = parseClientMessage(JSON.parse(data.toString()));
+        } catch {
+          socket.close(1008, "invalid client message");
+          return;
+        }
+        app.receive(message);
+      },
       backpressureLimit: 1024 * 1024,
       closeOnBackpressureLimit: true,
     },

@@ -1,5 +1,6 @@
 import WebSocket from "ws";
 import { resolvePaths } from "./paths.ts";
+import { encodeBytes } from "./protocol.ts";
 import type { Command, CommandResponse, ServerMessage, Snapshot } from "./protocol.ts";
 import type { Health } from "./app.ts";
 
@@ -10,6 +11,8 @@ export type StreamHandlers = {
 
 export type StreamConnection = {
   close(): void;
+  sendInput(paneId: string, bytes: Uint8Array): void;
+  resize(paneId: string, cols: number, rows: number): void;
 };
 
 export type WorkCraftClient = {
@@ -41,10 +44,38 @@ export function createClient(options: { socketPath?: string } = {}): WorkCraftCl
       const socket = new WebSocket(`ws+unix:${socketPath}:/stream`);
       let opened = false;
       let closeError: Error | undefined;
+      let current: Pick<Snapshot, "epoch" | "revision"> | undefined;
+      let refreshing = false;
+
+      function applySnapshot(snapshot: Snapshot): void {
+        current = { epoch: snapshot.epoch, revision: snapshot.revision };
+        handlers.onMessage({ type: "snapshot", snapshot });
+      }
 
       socket.on("message", (data) => {
         try {
-          handlers.onMessage(JSON.parse(data.toString()) as ServerMessage);
+          const message = JSON.parse(data.toString()) as ServerMessage;
+          if (message.type !== "snapshot") {
+            handlers.onMessage(message);
+            return;
+          }
+          const next = message.snapshot;
+          if (current === undefined || next.epoch !== current.epoch) {
+            applySnapshot(next);
+          } else if (next.revision === current.revision + 1) {
+            applySnapshot(next);
+          } else if (next.revision > current.revision + 1 && !refreshing) {
+            refreshing = true;
+            void requestJson(socketPath, "/snapshot")
+              .then((snapshot) => applySnapshot(snapshot as Snapshot))
+              .catch((error) => {
+                closeError = error instanceof Error ? error : new Error(String(error));
+                socket.close();
+              })
+              .finally(() => {
+                refreshing = false;
+              });
+          }
         } catch (error) {
           closeError = error instanceof Error ? error : new Error(String(error));
           socket.close();
@@ -52,7 +83,15 @@ export function createClient(options: { socketPath?: string } = {}): WorkCraftCl
       });
       socket.once("open", () => {
         opened = true;
-        resolve({ close: () => socket.close() });
+        resolve({
+          close: () => socket.close(),
+          sendInput: (paneId, bytes) =>
+            socket.send(
+              JSON.stringify({ type: "terminal.input", paneId, data: encodeBytes(bytes) }),
+            ),
+          resize: (paneId, cols, rows) =>
+            socket.send(JSON.stringify({ type: "terminal.resize", paneId, cols, rows })),
+        });
       });
       socket.once("error", (error) => {
         closeError = error;

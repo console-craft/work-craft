@@ -138,6 +138,14 @@ function idValue(value: unknown, field: string): string {
   return stringValue(value, field, true);
 }
 
+function base64Value(value: unknown, field: string): string {
+  const encoded = stringValue(value, field);
+  if (Buffer.from(encoded, "base64").toString("base64") !== encoded) {
+    throw new ProtocolError(`${field} must be base64`);
+  }
+  return encoded;
+}
+
 function optionalString(value: unknown, field: string): string | undefined {
   return value === undefined ? undefined : stringValue(value, field);
 }
@@ -233,7 +241,7 @@ export function parseClientMessage(value: unknown): ClientMessage {
       return {
         type,
         paneId: idValue(input.paneId, "paneId"),
-        data: stringValue(input.data, "data"),
+        data: base64Value(input.data, "data"),
       };
     case "terminal.resize": {
       const cols = input.cols;
