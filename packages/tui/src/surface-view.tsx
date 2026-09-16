@@ -24,6 +24,28 @@ export function projectLayout(layout: LayoutNode): ProjectedLayout {
   };
 }
 
+export function terminalPaneKey(
+  paneId: string,
+  buffer: Pick<TerminalBuffer, "epoch" | "historyCursor"> | undefined,
+): string {
+  return `${paneId}:${buffer?.epoch ?? "pending"}:${buffer?.historyCursor ?? 0}`;
+}
+
+export function tabSelectionCommand(
+  key: "[" | "]",
+  surfaceId: string,
+  tabs: { id: string }[],
+  activeTabId: string,
+): Extract<Command, { type: "surface.selectTab" }> | undefined {
+  const activeIndex = tabs.findIndex(({ id }) => id === activeTabId);
+  if (activeIndex === -1) {
+    return undefined;
+  }
+  const offset = key === "[" ? -1 : 1;
+  const index = (activeIndex + offset + tabs.length) % tabs.length;
+  return { type: "surface.selectTab", surfaceId, tabId: tabs[index]!.id };
+}
+
 type SurfaceViewProps = {
   controlsEnabled: boolean;
   snapshot: Snapshot;
@@ -53,13 +75,14 @@ function LayoutView({
 }: LayoutViewProps) {
   if ("paneId" in layout) {
     const pane = snapshot.panes.find(({ id }) => id === layout.paneId);
+    const buffer = terminals.get(layout.paneId);
     return pane === undefined ? (
       <text fg="#EF4444">Missing pane: {layout.paneId}</text>
     ) : (
       <TerminalPane
-        key={pane.id}
+        key={terminalPaneKey(pane.id, buffer)}
         active={pane.id === activePaneId}
-        buffer={terminals.get(pane.id)}
+        buffer={buffer}
         pane={pane}
         stream={stream}
         onActivate={() => onActivate(pane.id)}
@@ -112,10 +135,8 @@ export function SurfaceView({
       return;
     }
     let command: Command | undefined;
-    if ((key.name === "[" || key.name === "]") && tabs.length > 1) {
-      const offset = key.name === "[" ? -1 : 1;
-      const index = (tabs.indexOf(activeTab) + offset + tabs.length) % tabs.length;
-      command = { type: "surface.selectTab", surfaceId: surface.id, tabId: tabs[index]!.id };
+    if (key.name === "[" || key.name === "]") {
+      command = tabSelectionCommand(key.name, surface.id, tabs, activeTab.id);
     } else if (key.name === "t") {
       command = { type: "tab.create", surfaceId: surface.id, title: "Shell" };
     } else if ((key.name === "\\" || key.name === "-") && activePaneId !== undefined) {

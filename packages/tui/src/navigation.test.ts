@@ -261,3 +261,77 @@ test("current-session terminal output is bounded to one MiB per pane", async () 
   expect(chunks.reduce((total, chunk) => total + chunk.data.byteLength, 0)).toBe(1_048_576);
   expect(chunks[0]?.data[0]).toBe(2);
 });
+
+test("a same-revision reconnect snapshot appends output missed while disconnected", async () => {
+  const store = createWorkCraftStore(fakeClient(snapshotFixture()));
+  await store.apply({
+    type: "snapshot",
+    snapshot: snapshotFixture({
+      terminalHistories: [
+        {
+          paneId: "pane-1",
+          cursor: 3,
+          data: Buffer.from("old").toString("base64"),
+          truncated: false,
+        },
+      ],
+    }),
+  });
+
+  await store.apply({
+    type: "snapshot",
+    snapshot: snapshotFixture({
+      terminalHistories: [
+        {
+          paneId: "pane-1",
+          cursor: 9,
+          data: Buffer.from("oldmissed").toString("base64"),
+          truncated: false,
+        },
+      ],
+    }),
+  });
+
+  const terminal = store.getState().terminals.get("pane-1");
+  expect(new TextDecoder().decode(terminal?.history)).toBe("old");
+  expect(
+    terminal?.chunks.map(({ cursor, data }) => [cursor, new TextDecoder().decode(data)]),
+  ).toEqual([[9, "missed"]]);
+});
+
+test("a reconnect snapshot requests a clean replay when its retained suffix starts too late", async () => {
+  const store = createWorkCraftStore(fakeClient(snapshotFixture()));
+  await store.apply({
+    type: "snapshot",
+    snapshot: snapshotFixture({
+      terminalHistories: [
+        {
+          paneId: "pane-1",
+          cursor: 1,
+          data: Buffer.from("a").toString("base64"),
+          truncated: false,
+        },
+      ],
+    }),
+  });
+  const retained = new Uint8Array(1_048_576).fill(2);
+
+  await store.apply({
+    type: "snapshot",
+    snapshot: snapshotFixture({
+      terminalHistories: [
+        {
+          paneId: "pane-1",
+          cursor: 1_048_578,
+          data: Buffer.from(retained).toString("base64"),
+          truncated: true,
+        },
+      ],
+    }),
+  });
+
+  const terminal = store.getState().terminals.get("pane-1");
+  expect(terminal?.historyCursor).toBe(1_048_578);
+  expect(terminal?.history).toEqual(retained);
+  expect(terminal?.chunks).toEqual([]);
+});

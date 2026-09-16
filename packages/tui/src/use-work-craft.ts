@@ -45,23 +45,43 @@ function snapshotTerminals(
   snapshot: Snapshot,
   current: ReadonlyMap<string, TerminalBuffer>,
 ): ReadonlyMap<string, TerminalBuffer> {
-  return new Map(
-    snapshot.terminalHistories.map((history) => {
-      const previous = current.get(history.paneId);
-      if (previous?.epoch === snapshot.epoch) {
-        return [history.paneId, previous];
+  const terminals = new Map<string, TerminalBuffer>();
+  let changed = current.size !== snapshot.terminalHistories.length;
+  for (const history of snapshot.terminalHistories) {
+    const previous = current.get(history.paneId);
+    let next = previous;
+    if (previous?.epoch !== snapshot.epoch) {
+      next = {
+        epoch: snapshot.epoch,
+        history: decodeBytes(history.data),
+        historyCursor: history.cursor,
+        chunks: [],
+      };
+    } else {
+      const latestCursor = previous.chunks.at(-1)?.cursor ?? previous.historyCursor;
+      if (history.cursor > latestCursor) {
+        const data = decodeBytes(history.data);
+        const missingBytes = history.cursor - latestCursor;
+        const retainedStart = history.cursor - Math.min(history.cursor, MAX_TERMINAL_BYTES);
+        next =
+          latestCursor >= retainedStart && missingBytes <= data.byteLength
+            ? appendTerminalChunk(
+                previous,
+                history.cursor,
+                data.slice(data.byteLength - missingBytes),
+              )
+            : {
+                epoch: snapshot.epoch,
+                history: data,
+                historyCursor: history.cursor,
+                chunks: [],
+              };
       }
-      return [
-        history.paneId,
-        {
-          epoch: snapshot.epoch,
-          history: decodeBytes(history.data),
-          historyCursor: history.cursor,
-          chunks: [],
-        },
-      ];
-    }),
-  );
+    }
+    changed ||= next !== previous;
+    terminals.set(history.paneId, next!);
+  }
+  return changed ? terminals : current;
 }
 
 function appendTerminalChunk(
@@ -112,6 +132,11 @@ export function createWorkCraftStore(client: WorkCraftClient): WorkCraftStore {
       snapshot.revision > current.revision
     ) {
       update({ snapshot, terminals: snapshotTerminals(snapshot, state.terminals) });
+    } else if (snapshot.epoch === current.epoch && snapshot.revision === current.revision) {
+      const terminals = snapshotTerminals(snapshot, state.terminals);
+      if (terminals !== state.terminals) {
+        update({ terminals });
+      }
     }
   }
 
@@ -147,10 +172,8 @@ export function createWorkCraftStore(client: WorkCraftClient): WorkCraftStore {
     }
     const current = state.snapshot;
     const next = message.snapshot;
-    if (current === null || next.epoch !== current.epoch) {
-      update({ snapshot: next, terminals: snapshotTerminals(next, state.terminals) });
-    } else if (next.revision === current.revision + 1) {
-      update({ snapshot: next, terminals: snapshotTerminals(next, state.terminals) });
+    if (current === null || next.epoch !== current.epoch || next.revision <= current.revision + 1) {
+      replaceSnapshot(next);
     } else if (next.revision > current.revision + 1) {
       await refresh();
     }
