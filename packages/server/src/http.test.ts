@@ -264,6 +264,38 @@ test("closes malformed stream peers with policy violation", async () => {
   }
 });
 
+test("closes stream peers whose terminal input targets no live pane", async () => {
+  const fixture = await startTestServer();
+  const socket = new WebSocket(`ws+unix:${fixture.socketPath}:/stream`);
+  try {
+    const closed = new Promise<number>((resolve, reject) => {
+      socket.once("open", () =>
+        socket.send(
+          JSON.stringify({
+            type: "terminal.input",
+            paneId: "missing-pane",
+            data: Buffer.from("input").toString("base64"),
+          }),
+        ),
+      );
+      socket.once("close", resolve);
+      socket.once("error", reject);
+    });
+    const code = await Promise.race([
+      closed,
+      Bun.sleep(250).then(() => {
+        throw new Error("Timed out waiting for invalid stream peer to close");
+      }),
+    ]);
+
+    expect(code).toBe(1008);
+    expect((await fixture.client.health()).pid).toBe(process.pid);
+  } finally {
+    socket.terminate();
+    await fixture.close();
+  }
+});
+
 test("applies a newer snapshot frame after a pending gap refresh", async () => {
   const directory = await mkdtemp(join(tmpdir(), "work-craft-client-order-"));
   const socketPath = join(directory, "work-craft.sock");

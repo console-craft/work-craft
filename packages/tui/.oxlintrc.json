@@ -1,0 +1,16 @@
+{
+  "$schema": "../../node_modules/oxlint/configuration_schema.json",
+  "rules": {
+    "no-restricted-imports": [
+      "error",
+      {
+        "paths": [
+          {
+            "name": "@work-craft/server",
+            "message": "Import client-safe APIs from @work-craft/server/client."
+          }
+        ]
+      }
+    ]
+  }
+}

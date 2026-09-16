@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
-import type { StreamHandlers, WorkCraftClient } from "@work-craft/server/client";
-import type { Snapshot } from "@work-craft/server";
+import type { Snapshot, StreamHandlers, WorkCraftClient } from "@work-craft/server/client";
 import { buildNavigation } from "./navigation.ts";
 import { createWorkCraftStore } from "./use-work-craft.ts";
 

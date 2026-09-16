@@ -8,6 +8,16 @@ import { encodeBytes } from "./protocol.ts";
 import type { Command, CommandResponse, ServerMessage, Snapshot } from "./protocol.ts";
 import type { Health } from "./app.ts";
 
+export { decodeBytes } from "./protocol.ts";
+export type {
+  CategoryKind,
+  Command,
+  CommandResponse,
+  LayoutNode,
+  ServerMessage,
+  Snapshot,
+} from "./protocol.ts";
+
 export type StreamHandlers = {
   onMessage(message: ServerMessage): void;
   onClose?(error?: Error): void;
