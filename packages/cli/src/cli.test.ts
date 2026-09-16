@@ -8,6 +8,9 @@ import { readStatus } from "./format.ts";
 
 const ROOT = join(import.meta.dir, "../../..");
 const CLI_PATH = join(import.meta.dir, "main.ts");
+const SERVER_COMMAND = `${process.execPath} ${join(ROOT, "packages/server/src/main.ts")}`;
+const CLEANUP_TIMEOUT = 3_000;
+const PROBE_TIMEOUT = 100;
 
 type CliResult = { exitCode: number; stdout: string; stderr: string };
 
@@ -61,7 +64,10 @@ async function seedItems(home: string): Promise<{ first: string; second: string 
 }
 
 async function waitForOwnedFiles(home: string, timeout = 3_000): Promise<boolean> {
-  const deadline = Date.now() + timeout;
+  return waitForOwnedFilesUntil(home, Date.now() + timeout);
+}
+
+async function waitForOwnedFilesUntil(home: string, deadline: number): Promise<boolean> {
   while (Date.now() < deadline) {
     const [lock, socket] = await Promise.all([
       Bun.file(join(home, "daemon.lock")).exists(),
@@ -89,73 +95,187 @@ async function readLockPid(home: string): Promise<number | undefined> {
   return Number.isSafeInteger(pid) ? pid : undefined;
 }
 
-async function processCommand(pid: number): Promise<string | undefined> {
-  const child = Bun.spawn(["ps", "-p", String(pid), "-o", "command="], {
+type ProcessObservation =
+  | { status: "matching"; command: string }
+  | { status: "absent" }
+  | { status: "mismatch"; command: string }
+  | { status: "error"; reason: string };
+
+type ObserverProcess = {
+  exited: Promise<number>;
+  exitCode: number | null;
+  stdout: ReadableStream<Uint8Array>;
+  kill(signal?: NodeJS.Signals | number): void;
+};
+
+function spawnProcessObserver(pid: number): ObserverProcess {
+  return Bun.spawn(["ps", "-p", String(pid), "-o", "command="], {
+    stdin: "ignore",
     stdout: "pipe",
     stderr: "ignore",
   });
-  const [exitCode, output] = await Promise.all([child.exited, new Response(child.stdout).text()]);
-  const command = output.trim();
-  return exitCode === 0 && command !== "" ? command : undefined;
+}
+
+async function processCommand(
+  pid: number,
+  expectedCommand: string,
+  options: { timeout?: number; spawn?: () => ObserverProcess } = {},
+): Promise<ProcessObservation> {
+  const child = (options.spawn ?? (() => spawnProcessObserver(pid)))();
+  const output = new Response(child.stdout).text();
+  const completed = await Promise.race([
+    Promise.all([child.exited, output]),
+    Bun.sleep(options.timeout ?? PROBE_TIMEOUT).then(() => undefined),
+  ]);
+  if (completed === undefined) {
+    if (child.exitCode === null) {
+      child.kill("SIGKILL");
+    }
+    await child.exited;
+    await output.catch(() => "");
+    return { status: "error", reason: "process observer timed out" };
+  }
+
+  const [exitCode, rawOutput] = completed;
+  const command = rawOutput.trim();
+  if (exitCode === 1) {
+    return command === ""
+      ? { status: "absent" }
+      : { status: "error", reason: "ps reported absence with output" };
+  }
+  if (exitCode !== 0) {
+    return { status: "error", reason: `unexpected ps exit ${exitCode}` };
+  }
+  if (command === "" || command.includes("\n")) {
+    return { status: "error", reason: "malformed ps output" };
+  }
+  return command === expectedCommand
+    ? { status: "matching", command }
+    : { status: "mismatch", command };
 }
 
 async function waitForProcessExit(
   pid: number,
   expectedCommand: string,
-  timeout = 3_000,
-): Promise<boolean> {
-  const deadline = Date.now() + timeout;
+  deadline: number,
+): Promise<void> {
   while (Date.now() < deadline) {
-    if ((await processCommand(pid)) !== expectedCommand) {
-      return true;
+    const observation = await processCommand(pid, expectedCommand, {
+      timeout: Math.max(1, Math.min(PROBE_TIMEOUT, deadline - Date.now())),
+    });
+    if (observation.status === "absent") {
+      return;
+    }
+    if (observation.status !== "matching") {
+      throw new Error(
+        observation.status === "error"
+          ? observation.reason
+          : `process command changed to ${observation.command}`,
+      );
     }
     await Bun.sleep(20);
   }
-  return false;
+  throw new Error(`PID ${pid} did not exit before cleanup deadline`);
 }
 
-function cleanupError(home: string): Error {
+function cleanupError(home: string, cause?: unknown): Error {
   return new Error(
     `Work Craft cleanup could not confirm shutdown; preserved ${home} (lock: ${join(home, "daemon.lock")}, socket: ${join(home, "work-craft.sock")})`,
+    cause === undefined ? undefined : { cause },
   );
+}
+
+function cleanupSignal(deadline: number): AbortSignal {
+  return AbortSignal.timeout(Math.max(1, Math.min(PROBE_TIMEOUT, deadline - Date.now())));
+}
+
+async function cleanupRequest(
+  socketPath: string,
+  path: string,
+  deadline: number,
+  init?: RequestInit,
+): Promise<unknown> {
+  if (Date.now() >= deadline) {
+    throw new Error("cleanup deadline exceeded");
+  }
+  const response = await fetch(`http://localhost${path}`, {
+    ...init,
+    unix: socketPath,
+    signal: cleanupSignal(deadline),
+  });
+  if (!response.ok) {
+    throw new Error(`cleanup request failed with status ${response.status}`);
+  }
+  return response.json();
+}
+
+async function cleanupHealth(
+  socketPath: string,
+  deadline: number,
+): Promise<{ epoch: string; pid: number } | undefined> {
+  try {
+    const value = await cleanupRequest(socketPath, "/health", deadline);
+    if (typeof value !== "object" || value === null) {
+      return undefined;
+    }
+    const health = value as Record<string, unknown>;
+    if (
+      typeof health.epoch !== "string" ||
+      !Number.isSafeInteger(health.pid) ||
+      (health.pid as number) <= 0
+    ) {
+      return undefined;
+    }
+    return { epoch: health.epoch, pid: health.pid as number };
+  } catch {
+    return undefined;
+  }
 }
 
 async function cleanup(home: string): Promise<void> {
   const lockPath = join(home, "daemon.lock");
   const socketPath = join(home, "work-craft.sock");
-  const client = createClient({ socketPath });
+  const deadline = Date.now() + CLEANUP_TIMEOUT;
   try {
-    await client.command({ type: "daemon.stop" });
+    await cleanupRequest(socketPath, "/command", deadline, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ type: "daemon.stop" }),
+    });
   } catch {}
 
-  if (await waitForOwnedFiles(home, 1_000)) {
+  if (await waitForOwnedFilesUntil(home, Math.min(deadline, Date.now() + 1_000))) {
     await rm(home, { recursive: true, force: true });
     return;
   }
 
-  const health = await client.health().catch(() => undefined);
+  const health = await cleanupHealth(socketPath, deadline);
   const pid = await readLockPid(home);
-  const confirmed = await client.health().catch(() => undefined);
+  const confirmed = await cleanupHealth(socketPath, deadline);
   if (
     pid !== undefined &&
     health?.pid === pid &&
     confirmed?.pid === pid &&
     health.epoch === confirmed.epoch
   ) {
-    const command = await processCommand(pid);
-    const finalHealth = await client.health().catch(() => undefined);
+    const observation = await processCommand(pid, SERVER_COMMAND, {
+      timeout: Math.max(1, Math.min(PROBE_TIMEOUT, deadline - Date.now())),
+    });
+    const finalHealth = await cleanupHealth(socketPath, deadline);
     if (
-      command?.includes("/packages/server/src/main.ts") &&
+      observation.status === "matching" &&
       finalHealth?.pid === pid &&
       finalHealth.epoch === health.epoch
     ) {
       process.kill(pid, "SIGKILL");
-      if (!(await waitForProcessExit(pid, command))) {
-        throw cleanupError(home);
+      try {
+        await waitForProcessExit(pid, observation.command, deadline);
+      } catch (cause) {
+        throw cleanupError(home, cause);
       }
       await rm(lockPath, { force: true });
       await rm(socketPath, { force: true });
-      if (!(await waitForOwnedFiles(home, 100))) {
+      if (!(await waitForOwnedFilesUntil(home, Math.min(deadline, Date.now() + 100)))) {
         throw cleanupError(home);
       }
       await rm(home, { recursive: true, force: true });
@@ -163,7 +283,7 @@ async function cleanup(home: string): Promise<void> {
     }
   }
 
-  if (await waitForOwnedFiles(home, 2_000)) {
+  if (await waitForOwnedFilesUntil(home, deadline)) {
     await rm(home, { recursive: true, force: true });
     return;
   }
@@ -406,6 +526,112 @@ test("cleanup preserves the home when shutdown cannot be confirmed", async () =>
     kill.mockRestore();
     await server.stop(true);
     await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("cleanup bounds non-responsive HTTP and preserves the home", async () => {
+  const home = await tempHome();
+  const lockPath = join(home, "daemon.lock");
+  const socketPath = join(home, "work-craft.sock");
+  await writeFile(lockPath, `${process.pid}\n`);
+  const server = Bun.serve({
+    unix: socketPath,
+    fetch() {
+      return new Promise<Response>(() => {});
+    },
+  });
+  const kill = spyOn(process, "kill").mockImplementation(() => {
+    throw new Error("signal blocked by test");
+  });
+  const startedAt = performance.now();
+  const result = cleanup(home).then(
+    () => ({ status: "resolved" as const }),
+    (error: unknown) => ({ status: "rejected" as const, error }),
+  );
+  try {
+    const settled = await Promise.race([
+      result,
+      Bun.sleep(3_500).then(() => ({ status: "timed-out" as const })),
+    ]);
+    expect(settled.status).toBe("rejected");
+    expect(performance.now() - startedAt).toBeLessThan(3_500);
+    expect(kill).not.toHaveBeenCalled();
+    expect((await stat(home)).isDirectory()).toBe(true);
+    expect(await Bun.file(lockPath).exists()).toBe(true);
+    expect((await stat(socketPath)).isSocket()).toBe(true);
+  } finally {
+    kill.mockRestore();
+    await server.stop(true);
+    await result;
+    await rm(home, { recursive: true, force: true });
+  }
+}, 10_000);
+
+test("process observer distinguishes timeout, errors, absence, and mismatch", async () => {
+  let timeoutChild: ObserverProcess | undefined;
+  try {
+    const timeout = await processCommand(42, "expected", {
+      timeout: 50,
+      spawn: () =>
+        (timeoutChild = Bun.spawn([process.execPath, "-e", "await Bun.sleep(10_000)"], {
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "ignore",
+        })),
+    });
+    const unexpectedExit = await processCommand(42, "expected", {
+      timeout: 100,
+      spawn: () =>
+        Bun.spawn([process.execPath, "-e", "process.exit(2)"], {
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "ignore",
+        }),
+    });
+    const malformedAbsence = await processCommand(42, "expected", {
+      timeout: 100,
+      spawn: () =>
+        Bun.spawn([process.execPath, "-e", 'process.stdout.write("noise"); process.exit(1)'], {
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "ignore",
+        }),
+    });
+    const absent = await processCommand(42, "expected", {
+      timeout: 100,
+      spawn: () =>
+        Bun.spawn([process.execPath, "-e", "process.exit(1)"], {
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "ignore",
+        }),
+    });
+    const mismatch = await processCommand(42, "expected", {
+      timeout: 100,
+      spawn: () =>
+        Bun.spawn([process.execPath, "-e", 'process.stdout.write("other\\n")'], {
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "ignore",
+        }),
+    });
+
+    expect(timeout).toEqual({ status: "error", reason: "process observer timed out" });
+    expect(
+      await Promise.race([timeoutChild!.exited.then(() => true), Bun.sleep(100).then(() => false)]),
+    ).toBe(true);
+    expect(unexpectedExit).toEqual({ status: "error", reason: "unexpected ps exit 2" });
+    expect(malformedAbsence).toEqual({
+      status: "error",
+      reason: "ps reported absence with output",
+    });
+    expect(absent).toEqual({ status: "absent" });
+    expect(mismatch).toEqual({ status: "mismatch", command: "other" });
+  } finally {
+    if (timeoutChild?.exitCode === null) {
+      timeoutChild.kill("SIGKILL");
+      await timeoutChild.exited;
+    }
   }
 });
 
