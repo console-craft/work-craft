@@ -226,7 +226,20 @@ test("serializes a stale contender paused after classifying the lock", async () 
     await waitForFile(ownerPausedPath);
     expect(Number(await Bun.file(paths.lockPath).text())).toBe(owner.pid);
     await writeFile(releasePath, "release");
-    expect(await waitForExit(contender)).not.toBe(0);
+    const contenderExit = await Promise.race([
+      contender.exited,
+      Bun.sleep(3_000).then(() => undefined),
+    ]);
+    if (contenderExit === undefined) {
+      const files = await readdir(paths.stateDir);
+      const lockPid = await Bun.file(paths.lockPath).text();
+      contender.kill("SIGKILL");
+      await contender.exited;
+      throw new Error(
+        `Contender did not exit; lock=${lockPid.trim()} files=${files.join(",")} stderr=${await new Response(contender.stderr).text()}`,
+      );
+    }
+    expect(contenderExit).not.toBe(0);
     await writeFile(ownerReleasePath, "release");
 
     expect((await waitForHealth(paths.socketPath, [owner, contender])).pid).toBe(owner.pid);
