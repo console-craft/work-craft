@@ -103,6 +103,12 @@ export class RuntimeRegistry {
         runtime.process.kill();
       }
     }
+    await Promise.race([Promise.all(runtimes.map(({ exited }) => exited)), Bun.sleep(250)]);
+    for (const runtime of runtimes) {
+      if (runtime.process.exitCode === null) {
+        runtime.process.kill("SIGKILL");
+      }
+    }
     await Promise.all(runtimes.map(({ exited }) => exited));
     this.runtimes.clear();
   }

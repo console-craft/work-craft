@@ -41,15 +41,32 @@ async function requestJson(socketPath: string, path: string, init?: RequestInit)
   return body;
 }
 
+function healthSignal(deadline: number): AbortSignal {
+  return AbortSignal.timeout(Math.max(1, Math.min(250, deadline - Date.now())));
+}
+
+async function requestHealth(socketPath: string, deadline: number): Promise<Health> {
+  return (await requestJson(socketPath, "/health", { signal: healthSignal(deadline) })) as Health;
+}
+
+function isConnectionFailure(error: unknown): boolean {
+  return (
+    error instanceof TypeError ||
+    (error instanceof DOMException &&
+      (error.name === "AbortError" || error.name === "TimeoutError"))
+  );
+}
+
 export function createClient(options: { socketPath?: string } = {}): WorkCraftClient {
   const socketPath = options.socketPath ?? resolvePaths().socketPath;
 
   async function ensureDaemon(): Promise<void> {
+    const deadline = Date.now() + 3_000;
     try {
-      await requestJson(socketPath, "/health");
+      await requestHealth(socketPath, deadline);
       return;
     } catch (error) {
-      if (!(error instanceof TypeError)) {
+      if (!isConnectionFailure(error)) {
         throw error;
       }
     }
@@ -73,11 +90,10 @@ export function createClient(options: { socketPath?: string } = {}): WorkCraftCl
       closeSync(stderr);
     }
 
-    const deadline = Date.now() + 3_000;
     let delay = 20;
     while (Date.now() < deadline) {
       try {
-        const health = (await requestJson(socketPath, "/health")) as Health;
+        const health = await requestHealth(socketPath, deadline);
         if (health.pid !== child.pid && child.exitCode === null) {
           await Promise.race([
             child.exited,

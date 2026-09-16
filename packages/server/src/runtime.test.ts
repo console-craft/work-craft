@@ -175,6 +175,56 @@ test("stops all live runtimes", async () => {
   expect(registry.isLive("pane-2")).toBe(false);
 });
 
+test("escalates to SIGKILL when a shell ignores SIGTERM", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "work-craft-runtime-stop-"));
+  const pidPath = join(directory, "pid");
+  const statuses: PaneStatus[] = [];
+  const registry = runtime({
+    onStatus: (_paneId, status) => statuses.push(status),
+  });
+  let pid: number | undefined;
+  let stopping: Promise<void> | undefined;
+  try {
+    await registry.start(
+      shellPane("pane-1", directory, "/bin/sh", [
+        "-c",
+        'trap "" TERM; printf "$$" > "$1"; while :; do sleep 0.1; done',
+        "runtime-stop-test",
+        pidPath,
+      ]),
+    );
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      if (existsSync(pidPath)) {
+        break;
+      }
+      await Bun.sleep(10);
+    }
+    pid = Number(await Bun.file(pidPath).text());
+
+    stopping = registry.stopAll({ preserveStatus: true });
+    const stopped = await Promise.race([
+      stopping.then(() => true),
+      Bun.sleep(1_000).then(() => false),
+    ]);
+    if (!stopped && isFinite(pid)) {
+      process.kill(pid, "SIGKILL");
+      await stopping;
+    }
+
+    expect(stopped).toBe(true);
+    expect(() => process.kill(pid!, 0)).toThrow();
+    expect(statuses).toEqual(["starting", "running"]);
+  } finally {
+    if (pid !== undefined) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {}
+    }
+    await stopping?.catch(() => {});
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("preserving shutdown still publishes a natural exit", async () => {
   const statuses: PaneStatus[] = [];
   let publishExit = true;

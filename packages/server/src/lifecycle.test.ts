@@ -1,9 +1,10 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { chmod, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createClient } from "./client.ts";
 import { openDatabase } from "./database.ts";
+import { runDaemon } from "./lifecycle.ts";
 import { resolvePaths } from "./paths.ts";
 
 const MAIN_PATH = join(import.meta.dir, "main.ts");
@@ -88,6 +89,56 @@ async function cleanup(
   await rm(directory, { recursive: true, force: true });
 }
 
+test("rejects lock ownership lost between PID sync and startup", async () => {
+  const home = await mkdtemp(join(tmpdir(), "work-craft-lifecycle-"));
+  const paths = resolvePaths({ WORK_CRAFT_HOME: home });
+  const displacedPath = `${paths.lockPath}.displaced`;
+  const preloadPath = join(home, "replace-lock.ts");
+  await writeFile(
+    preloadPath,
+    `
+    import { spyOn } from "bun:test";
+    import * as fs from "node:fs";
+    const originalFsync = fs.fsyncSync;
+    spyOn(fs, "fsyncSync").mockImplementationOnce((fd) => {
+      originalFsync(fd);
+      fs.renameSync(process.env.WORK_CRAFT_TEST_LOCK_PATH!, process.env.WORK_CRAFT_TEST_DISPLACED_PATH!);
+      fs.writeFileSync(process.env.WORK_CRAFT_TEST_LOCK_PATH!, process.pid + "\\n", { mode: 0o600 });
+    });
+  `,
+  );
+  const child = Bun.spawn([process.execPath, "--preload", preloadPath, MAIN_PATH], {
+    cwd: join(import.meta.dir, "../../.."),
+    env: {
+      ...process.env,
+      WORK_CRAFT_HOME: home,
+      WORK_CRAFT_TEST_LOCK_PATH: paths.lockPath,
+      WORK_CRAFT_TEST_DISPLACED_PATH: displacedPath,
+    },
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  try {
+    const exitCode = await Promise.race([child.exited, Bun.sleep(1_000).then(() => undefined)]);
+    if (exitCode === undefined) {
+      child.kill("SIGKILL");
+      await child.exited;
+    }
+
+    expect(exitCode).not.toBeUndefined();
+    expect(exitCode).not.toBe(0);
+    expect(await Bun.file(paths.databasePath).exists()).toBe(false);
+    expect(await Bun.file(paths.lockPath).text()).toBe(`${child.pid}\n`);
+  } finally {
+    if (child.exitCode === null) {
+      child.kill("SIGKILL");
+    }
+    await child.exited;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test("client starts one daemon on demand for concurrent callers", async () => {
   const home = await mkdtemp(join(tmpdir(), "work-craft-lifecycle-"));
   const previousHome = process.env.WORK_CRAFT_HOME;
@@ -132,6 +183,117 @@ test("client starts one daemon on demand for concurrent callers", async () => {
       process.env.WORK_CRAFT_HOME = previousHome;
     }
     await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("bounds startup when an existing Unix server never answers health", async () => {
+  const home = await mkdtemp(join(tmpdir(), "work-craft-lifecycle-"));
+  const paths = resolvePaths({ WORK_CRAFT_HOME: home });
+  await mkdir(paths.stateDir, { recursive: true, mode: 0o700 });
+  const hanging = Bun.serve({
+    unix: paths.socketPath,
+    fetch() {
+      return new Promise<Response>(() => {});
+    },
+  });
+  const previousHome = process.env.WORK_CRAFT_HOME;
+  process.env.WORK_CRAFT_HOME = home;
+  const client = createClient();
+  let daemonPid: number | undefined;
+  const fallback = setTimeout(() => void hanging.stop(true), 3_300);
+  try {
+    const startedAt = performance.now();
+    await client.ensureDaemon();
+    const elapsed = performance.now() - startedAt;
+    daemonPid = (await client.health()).pid;
+
+    expect(elapsed).toBeLessThan(3_100);
+    expect(daemonPid).not.toBe(process.pid);
+    await client.command({ type: "daemon.stop" });
+    const deadline = Date.now() + 3_000;
+    while (isAlive(daemonPid) && Date.now() < deadline) {
+      await Bun.sleep(20);
+    }
+    expect(isAlive(daemonPid)).toBe(false);
+  } finally {
+    clearTimeout(fallback);
+    await hanging.stop(true);
+    let lockPid: number | undefined;
+    try {
+      lockPid = Number(await Bun.file(paths.lockPath).text());
+    } catch {}
+    for (const pid of new Set([daemonPid, lockPid])) {
+      if (pid !== undefined && isAlive(pid)) {
+        process.kill(pid, "SIGKILL");
+      }
+    }
+    if (previousHome === undefined) {
+      delete process.env.WORK_CRAFT_HOME;
+    } else {
+      process.env.WORK_CRAFT_HOME = previousHome;
+    }
+    await rm(home, { recursive: true, force: true });
+  }
+}, 10_000);
+
+test("drains the daemon.stop request before force-closing streams", async () => {
+  const home = await mkdtemp(join(tmpdir(), "work-craft-lifecycle-"));
+  const paths = resolvePaths({ WORK_CRAFT_HOME: home });
+  const serveSpy = spyOn(Bun, "serve");
+  const daemon = runDaemon(paths);
+  const calls: { force: boolean; pendingRequests: number }[] = [];
+  try {
+    await waitForHealth(paths.socketPath, []);
+    const server = serveSpy.mock.results[0]!.value as Bun.Server<undefined>;
+    const stop = server.stop.bind(server);
+    Object.defineProperty(server, "stop", {
+      configurable: true,
+      value(force = false) {
+        calls.push({ force, pendingRequests: server.pendingRequests });
+        return stop(force);
+      },
+    });
+
+    expect(
+      await createClient({ socketPath: paths.socketPath }).command({ type: "daemon.stop" }),
+    ).toMatchObject({ ok: true, result: { stopping: true } });
+    await daemon;
+
+    expect(calls[0]?.force).toBe(false);
+    expect(calls.at(-1)).toEqual({ force: true, pendingRequests: 0 });
+  } finally {
+    serveSpy.mockRestore();
+    if (await Bun.file(paths.socketPath).exists()) {
+      await createClient({ socketPath: paths.socketPath }).command({ type: "daemon.stop" });
+    }
+    await daemon;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("SIGTERM during startup uses owned cleanup and does not continue", async () => {
+  const home = await mkdtemp(join(tmpdir(), "work-craft-lifecycle-"));
+  const paths = resolvePaths({ WORK_CRAFT_HOME: home });
+  await mkdir(paths.stateDir, { recursive: true, mode: 0o700 });
+  const hanging = Bun.serve({
+    unix: paths.socketPath,
+    fetch() {
+      return new Promise<Response>(() => {});
+    },
+  });
+  const child = spawnDaemon(home);
+  try {
+    expect(Number(await waitForFile(paths.lockPath))).toBe(child.pid);
+    child.kill("SIGTERM");
+    await waitForExit(child);
+
+    expect(isAlive(child.pid)).toBe(false);
+    expect(await Bun.file(paths.lockPath).exists()).toBe(false);
+    expect((await stat(paths.socketPath)).isSocket()).toBe(true);
+    expect(await Bun.file(paths.databasePath).exists()).toBe(false);
+  } finally {
+    await hanging.stop(true);
+    await cleanup(home, [child]);
   }
 });
 

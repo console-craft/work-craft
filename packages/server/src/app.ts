@@ -141,9 +141,7 @@ export function createApp(options: {
       const command = parseCommand(value);
       const { result, effects } = applyCommand(options.db, command);
       if (command.type === "daemon.stop") {
-        if (options.onStop !== undefined) {
-          setTimeout(options.onStop, 0);
-        }
+        options.onStop?.();
         return { ok: true, revision, result };
       }
 

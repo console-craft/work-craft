@@ -73,6 +73,9 @@ function createLock(lockPath: string): Lock {
     fchmodSync(fd, 0o600);
     writeSync(fd, `${process.pid}\n`);
     fsyncSync(fd);
+    if (!sameFile(identity, fileIdentity(lockPath))) {
+      throw new Error("Lost daemon lock ownership while publishing PID");
+    }
     return { fd, identity };
   } catch (error) {
     closeSync(fd);
@@ -145,7 +148,10 @@ function removeOwned(path: string, identity: FileIdentity | undefined): void {
 
 async function socketIsHealthy(socketPath: string): Promise<boolean> {
   try {
-    const response = await fetch("http://localhost/health", { unix: socketPath });
+    const response = await fetch("http://localhost/health", {
+      unix: socketPath,
+      signal: AbortSignal.timeout(250),
+    });
     if (!response.ok) {
       return false;
     }
@@ -166,6 +172,8 @@ export async function runDaemon(paths: WorkCraftPaths): Promise<void> {
   let server: Bun.Server<undefined> | undefined;
   let socketIdentity: FileIdentity | undefined;
   let shutdownPromise: Promise<void> | undefined;
+  let startupComplete = false;
+  let stopRequested = false;
   let resolveStopped!: () => void;
   let rejectStopped!: (error: unknown) => void;
   const stopped = new Promise<void>((resolve, reject) => {
@@ -173,9 +181,14 @@ export async function runDaemon(paths: WorkCraftPaths): Promise<void> {
     rejectStopped = reject;
   });
 
-  const signalHandler = () => requestShutdown();
+  const signalHandler = () => {
+    stopRequested = true;
+    if (startupComplete) {
+      requestShutdown(false);
+    }
+  };
 
-  function shutdown(): Promise<void> {
+  function shutdown(drainStopRequest: boolean): Promise<void> {
     shutdownPromise ??= (async () => {
       let failure: unknown;
       async function attempt(action: () => void | Promise<void>): Promise<void> {
@@ -186,7 +199,21 @@ export async function runDaemon(paths: WorkCraftPaths): Promise<void> {
         }
       }
 
-      await attempt(async () => server?.stop(true));
+      await attempt(async () => {
+        if (server === undefined) {
+          return;
+        }
+        if (!drainStopRequest) {
+          await server.stop(true);
+          return;
+        }
+        const stopped = server.stop(false);
+        while (server.pendingRequests > 0) {
+          await Bun.sleep(1);
+        }
+        await server.stop(true);
+        await stopped;
+      });
       await attempt(async () => app?.history.flush());
       await attempt(async () => app?.runtime.stopAll({ preserveStatus: true }));
       await attempt(async () => app?.history.close());
@@ -207,30 +234,52 @@ export async function runDaemon(paths: WorkCraftPaths): Promise<void> {
     return shutdownPromise;
   }
 
-  function requestShutdown(): void {
-    void shutdown().then(resolveStopped, rejectStopped);
+  function requestShutdown(drainStopRequest: boolean): void {
+    void shutdown(drainStopRequest).then(resolveStopped, rejectStopped);
+  }
+
+  async function stopStartupIfRequested(): Promise<boolean> {
+    if (!stopRequested) {
+      return false;
+    }
+    await shutdown(false);
+    return true;
   }
 
   try {
+    process.on("SIGINT", signalHandler);
+    process.on("SIGTERM", signalHandler);
     lock = await acquireLock(paths.lockPath);
+    if (await stopStartupIfRequested()) {
+      return;
+    }
     if (existsSync(paths.socketPath)) {
-      if (await socketIsHealthy(paths.socketPath)) {
+      const healthy = await socketIsHealthy(paths.socketPath);
+      if (await stopStartupIfRequested()) {
+        return;
+      }
+      if (healthy) {
         throw new Error("A healthy Work Craft daemon already owns the Unix socket");
       }
       unlinkSync(paths.socketPath);
     }
 
     db = openDatabase(paths.databasePath);
-    app = createApp({ db, onStop: requestShutdown });
+    app = createApp({ db, onStop: () => requestShutdown(true) });
     await app.recover();
+    if (await stopStartupIfRequested()) {
+      return;
+    }
     server = startHttpServer(app, paths.socketPath);
     socketIdentity = fileIdentity(paths.socketPath);
-    process.on("SIGINT", signalHandler);
-    process.on("SIGTERM", signalHandler);
+    startupComplete = true;
+    if (stopRequested) {
+      requestShutdown(false);
+    }
     await stopped;
   } catch (error) {
     try {
-      await shutdown();
+      await shutdown(false);
     } catch (cleanupError) {
       throw new AggregateError([error, cleanupError], "Daemon startup and cleanup failed");
     }
