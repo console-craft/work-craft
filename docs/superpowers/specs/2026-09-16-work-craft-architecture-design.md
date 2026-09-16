@@ -35,12 +35,12 @@ A workspace is a high-level context such as Personal, Work, or a client. It is a
 
 Every workspace has the same six fixed top-level categories:
 
-- **Inbox:** loose capture for data of any shape.
-- **Today:** processed, activity-oriented work such as priorities and todo-like items.
-- **Design:** design-specific projects and items.
-- **Implementation:** implementation work such as repositories and worktrees.
-- **Collaboration:** pull requests, reviews, discussions, and similar shared work.
-- **Operations:** deployments, pipelines, environments, and operational work.
+- **Inbox:** unstructured intake of notes, links, ideas, commands, or imported data awaiting triage.
+- **Today:** current attention and activity, selected manually or automatically from captured and categorized work.
+- **Design:** exploration and shaping of things that may be built, changed, or decided.
+- **Implementation:** active execution contexts for making changes, including repositories and worktrees.
+- **Collaboration:** work involving other people or shared systems, such as requests, reviews, and discussions.
+- **Operations:** ongoing responsibility for systems and environments, including maintenance, deployments, and monitoring.
 
 All six are real categories, but they intentionally do not share one uniform item schema.
 
@@ -61,7 +61,7 @@ type Item = {
 
 This avoids both an oversized universal task schema and a plugin framework with separate storage models.
 
-Processing an Inbox item is an explicit server operation. It creates a category-specific item, archives the Inbox source, and retains a provenance link between them. This is a focused transition, not a general workflow engine.
+Processing an Inbox item is an explicit triage operation. It may archive the item, select it for Today, or turn it into category-specific work while retaining a provenance link to the original source. These are a small set of deliberate transitions, not a general workflow engine.
 
 ### Execution Surfaces
 
