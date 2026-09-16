@@ -28,19 +28,28 @@ export class RuntimeRegistry {
     let runtime: LiveRuntime | undefined;
     try {
       const spec = resolveShellSpawn(pane);
-      const spawnedTerminal = (terminal = new Bun.Terminal({
-        cols: 80,
-        rows: 24,
-        data: (_terminal, bytes) => this.callbacks.onOutput(pane.id, bytes),
-      }));
+      let resolveTerminalExit!: () => void;
+      const terminalExit = new Promise<void>((resolve) => {
+        resolveTerminalExit = resolve;
+      });
       const process = Bun.spawn(spec.cmd, {
         cwd: spec.cwd,
         env: spec.env,
-        terminal: spawnedTerminal,
+        terminal: {
+          cols: 80,
+          rows: 24,
+          data: (_terminal, bytes) => this.callbacks.onOutput(pane.id, bytes),
+          exit: resolveTerminalExit,
+        },
       });
+      const spawnedTerminal = (terminal = process.terminal!);
       let publishExit = true;
-      const exited = process.exited.then((code) => {
-        spawnedTerminal.close();
+      const exited = process.exited.then(async (code) => {
+        await terminalExit;
+        await Bun.sleep(0);
+        if (!spawnedTerminal.closed) {
+          spawnedTerminal.close();
+        }
         if (publishExit) {
           this.callbacks.onStatus(pane.id, "exited");
         }
