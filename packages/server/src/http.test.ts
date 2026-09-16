@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
+import * as fs from "node:fs";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -51,6 +52,28 @@ test("the Unix socket is owner-only", async () => {
     expect((await stat(fixture.socketPath)).mode & 0o777).toBe(0o600);
   } finally {
     await fixture.close();
+  }
+});
+
+test("stops the Unix listener when setting owner-only mode fails", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "work-craft-http-"));
+  const db = openDatabase(join(directory, "work-craft.db"));
+  const socketPath = join(directory, "work-craft.sock");
+  const serveSpy = spyOn(Bun, "serve");
+  const chmodSpy = spyOn(fs, "chmodSync").mockImplementationOnce(() => {
+    throw new Error("chmod failed");
+  });
+
+  try {
+    expect(() => startHttpServer(createApp({ db }), socketPath)).toThrow("chmod failed");
+    await expect(fetch("http://localhost/health", { unix: socketPath })).rejects.toThrow();
+  } finally {
+    chmodSpy.mockRestore();
+    const server = serveSpy.mock.results[0]?.value as Bun.Server<undefined> | undefined;
+    serveSpy.mockRestore();
+    await server?.stop(true);
+    db.close();
+    await rm(directory, { recursive: true, force: true });
   }
 });
 

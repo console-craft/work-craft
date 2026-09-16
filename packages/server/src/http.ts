@@ -52,6 +52,11 @@ export function startHttpServer(app: WorkCraftApp, socketPath: string): Bun.Serv
       closeOnBackpressureLimit: true,
     },
   });
-  chmodSync(socketPath, 0o600);
+  try {
+    chmodSync(socketPath, 0o600);
+  } catch (error) {
+    void server.stop(true);
+    throw error;
+  }
   return server;
 }
