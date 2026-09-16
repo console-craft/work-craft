@@ -1,0 +1,23 @@
+pre-commit:
+  piped: true
+  jobs:
+    - name: format staged files
+      run: bunx oxfmt --write --no-error-on-unmatched-pattern {staged_files}
+      stage_fixed: true
+    - name: lint
+      glob: "*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}"
+      run: bunx oxlint --no-error-on-unmatched-pattern {staged_files}
+    - name: typecheck
+      run: bun run typecheck
+    - name: test
+      run: bun run test
+
+pre-push:
+  jobs:
+    - name: check
+      run: bun run check
+
+commit-msg:
+  jobs:
+    - name: commitlint
+      run: bunx commitlint --edit {1}
