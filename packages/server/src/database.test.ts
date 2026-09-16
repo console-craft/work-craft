@@ -80,6 +80,19 @@ test("reads a deterministic snapshot from persisted rows", () => {
   db.close();
 });
 
+test("preserves empty shell arguments in persisted restore policies", () => {
+  const db = openDatabase(":memory:");
+  seedSnapshot(db);
+  db.exec(`
+    UPDATE panes
+    SET restore_policy_json = '{"type":"shell","executable":"/bin/zsh","args":["-c",""]}'
+    WHERE id = 'pane-1';
+  `);
+
+  expect(readSnapshot(db, "epoch-3", 0).panes[0]?.restorePolicy.args).toEqual(["-c", ""]);
+  db.close();
+});
+
 test("rejects malformed persisted JSON and invalid layout ratios", () => {
   const db = openDatabase(":memory:");
   seedSnapshot(db);

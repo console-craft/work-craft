@@ -72,13 +72,17 @@ function parseRestorePolicy(value: string): ShellRestorePolicy {
     parseJson(value, "panes.restore_policy_json"),
     "panes.restore_policy_json",
   );
-  if (policy.type !== "shell" || !Array.isArray(policy.args)) {
+  if (
+    policy.type !== "shell" ||
+    !Array.isArray(policy.args) ||
+    !policy.args.every((arg) => typeof arg === "string")
+  ) {
     throw new Error("Invalid panes.restore_policy_json: expected a shell policy");
   }
   return {
     type: "shell",
     executable: nonBlankString(policy.executable, "panes.restore_policy_json executable"),
-    args: policy.args.map((arg) => nonBlankString(arg, "panes.restore_policy_json argument")),
+    args: policy.args,
   };
 }
 
