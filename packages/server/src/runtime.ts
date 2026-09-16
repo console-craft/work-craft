@@ -10,6 +10,7 @@ type LiveRuntime = {
   terminal: Bun.Terminal;
   process: Bun.Subprocess;
   exited: Promise<number>;
+  preserveStatus(): void;
 };
 
 export class RuntimeRegistry {
@@ -36,12 +37,22 @@ export class RuntimeRegistry {
         env: spec.env,
         terminal: spawnedTerminal,
       });
+      let publishExit = true;
       const exited = process.exited.then((code) => {
         spawnedTerminal.close();
-        this.callbacks.onStatus(pane.id, "exited");
+        if (publishExit) {
+          this.callbacks.onStatus(pane.id, "exited");
+        }
         return code;
       });
-      this.runtimes.set(pane.id, { terminal: spawnedTerminal, process, exited });
+      this.runtimes.set(pane.id, {
+        terminal: spawnedTerminal,
+        process,
+        exited,
+        preserveStatus() {
+          publishExit = false;
+        },
+      });
       this.callbacks.onStatus(pane.id, "running");
     } catch (cause) {
       terminal?.close();
@@ -72,9 +83,12 @@ export class RuntimeRegistry {
     return runtime.exited;
   }
 
-  async stopAll(): Promise<void> {
+  async stopAll(options: { preserveStatus?: boolean } = {}): Promise<void> {
     const runtimes = [...this.runtimes.values()];
     for (const runtime of runtimes) {
+      if (options.preserveStatus) {
+        runtime.preserveStatus();
+      }
       if (runtime.process.exitCode === null) {
         runtime.process.kill();
       }

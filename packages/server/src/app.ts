@@ -18,6 +18,7 @@ export type Health = { epoch: string; revision: number; pid: number };
 export type WorkCraftApp = {
   health(): Health;
   snapshot(): Snapshot;
+  recover(): Promise<void>;
   execute(command: Command): Promise<CommandResponse>;
   receive(message: ClientMessage): void;
   subscribe(socket: Bun.ServerWebSocket): void;
@@ -31,6 +32,7 @@ export function createApp(options: { db: Database; history?: TerminalHistory }):
   const subscribers = new Set<Bun.ServerWebSocket>();
   const history = options.history ?? new TerminalHistory(options.db);
   let revision = 0;
+  let recovered = false;
 
   function snapshot(): Snapshot {
     return readSnapshot(options.db, epoch, revision, history);
@@ -75,6 +77,50 @@ export function createApp(options: { db: Database; history?: TerminalHistory }):
 
   const runtime = new RuntimeRegistry({ onOutput, onStatus });
 
+  async function recover(): Promise<void> {
+    if (recovered) {
+      return;
+    }
+    recovered = true;
+
+    const panes = new Map(snapshot().panes.map((pane) => [pane.id, pane]));
+    const interrupted = options.db.transaction(() => {
+      const rows = options.db
+        .query<{ id: string }, []>(
+          "SELECT id FROM panes WHERE process_status IN ('running', 'starting') ORDER BY id",
+        )
+        .all();
+      options.db.run(
+        "UPDATE panes SET process_status = 'interrupted' WHERE process_status IN ('running', 'starting')",
+      );
+      return rows;
+    })();
+
+    const separator = new TextEncoder().encode(
+      "\r\n[work-craft: daemon restarted; shell restored]\r\n",
+    );
+    for (const { id } of interrupted) {
+      history.append(id, separator);
+    }
+    await history.flush();
+
+    for (const { id } of interrupted) {
+      const pane = panes.get(id)!;
+      try {
+        await runtime.start(pane);
+      } catch (cause) {
+        const failed = options.db
+          .query<{ status: PaneStatus }, [string]>(
+            "SELECT process_status AS status FROM panes WHERE id = ?",
+          )
+          .get(id)?.status;
+        if (failed !== "failed") {
+          throw cause;
+        }
+      }
+    }
+  }
+
   return {
     history,
     runtime,
@@ -82,6 +128,7 @@ export function createApp(options: { db: Database; history?: TerminalHistory }):
       return { epoch, revision, pid: process.pid };
     },
     snapshot,
+    recover,
     async execute(value) {
       const command = parseCommand(value);
       const { result, effects } = applyCommand(options.db, command);
