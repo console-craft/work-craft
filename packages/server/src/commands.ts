@@ -7,16 +7,20 @@ export type DomainEffect = { type: "spawn-pane"; paneId: string } | { type: "sto
 
 type CommandOutcome = { result: CommandResult; effects: DomainEffect[] };
 
-function createShellPane(db: Database, surfaceId: string, cwd: string): string {
+function createShellPane(
+  db: Database,
+  surfaceId: string,
+  cwd: string,
+  restorePolicyJson = JSON.stringify({
+    type: "shell",
+    executable: process.env.SHELL ?? "/bin/sh",
+    args: [],
+  }),
+): string {
   const paneId = crypto.randomUUID();
   db.query(
     "INSERT INTO panes (id, surface_id, kind, title, cwd, restore_policy_json, process_status) VALUES (?, ?, 'terminal', 'Shell', ?, ?, 'interrupted')",
-  ).run(
-    paneId,
-    surfaceId,
-    cwd,
-    JSON.stringify({ type: "shell", executable: process.env.SHELL ?? "/bin/sh", args: [] }),
-  );
+  ).run(paneId, surfaceId, cwd, restorePolicyJson);
   return paneId;
 }
 
@@ -190,8 +194,8 @@ export function applyCommand(
     case "pane.split":
       return db.transaction(() => {
         const pane = db
-          .query<{ surfaceId: string; cwd: string }, [string]>(
-            "SELECT surface_id AS surfaceId, cwd FROM panes WHERE id = ?",
+          .query<{ surfaceId: string; cwd: string; restorePolicyJson: string }, [string]>(
+            "SELECT surface_id AS surfaceId, cwd, restore_policy_json AS restorePolicyJson FROM panes WHERE id = ?",
           )
           .get(command.paneId);
         if (pane === null) {
@@ -206,7 +210,12 @@ export function applyCommand(
           throw new ProtocolError("pane not found in exactly one tab");
         }
 
-        const paneId = createShellPane(db, pane.surfaceId, command.cwd ?? pane.cwd);
+        const paneId = createShellPane(
+          db,
+          pane.surfaceId,
+          command.cwd ?? pane.cwd,
+          pane.restorePolicyJson,
+        );
         const layout = splitLayout(
           JSON.parse(tabs[0]!.layoutJson) as LayoutNode,
           command.paneId,

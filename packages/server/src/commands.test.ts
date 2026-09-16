@@ -191,13 +191,19 @@ test("creates and selects tabs only within their owning surface", () => {
   ).toBe(first.result.tabId);
 });
 
-test("splits a pane in its tab and inherits cwd unless overridden", () => {
+test("splits a pane with its durable policy and inherits cwd unless overridden", () => {
   const fixture = organizationalFixture();
   const opened = applyCommand(fixture.db, {
     type: "surface.open",
     itemId: fixture.itemId,
     cwd: "/tmp",
   });
+  fixture.db
+    .query("UPDATE panes SET restore_policy_json = ? WHERE id = ?")
+    .run(
+      JSON.stringify({ type: "shell", executable: "/bin/sh", args: ["-l"] }),
+      opened.result.paneId!,
+    );
   const inherited = applyCommand(fixture.db, {
     type: "pane.split",
     paneId: opened.result.paneId!,
@@ -215,8 +221,12 @@ test("splits a pane in its tab and inherits cwd unless overridden", () => {
   expect(snapshot.panes.find(({ id }) => id === inherited.result.paneId)).toMatchObject({
     surfaceId: opened.result.surfaceId,
     cwd: "/tmp",
+    restorePolicy: { type: "shell", executable: "/bin/sh", args: ["-l"] },
   });
-  expect(snapshot.panes.find(({ id }) => id === overridden.result.paneId)?.cwd).toBe(process.cwd());
+  expect(snapshot.panes.find(({ id }) => id === overridden.result.paneId)).toMatchObject({
+    cwd: process.cwd(),
+    restorePolicy: { type: "shell", executable: "/bin/sh", args: ["-l"] },
+  });
   expect(snapshot.tabs[0]?.layout).toEqual({
     type: "split",
     direction: "vertical",
