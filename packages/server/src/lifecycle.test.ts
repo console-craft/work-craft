@@ -159,6 +159,9 @@ test("serializes a stale contender paused after classifying the lock", async () 
   const preloadPath = join(home, "pause-stale-contender.ts");
   const pausedPath = join(home, "contender.paused");
   const releasePath = join(home, "contender.release");
+  const ownerPreloadPath = join(home, "pause-fresh-owner.ts");
+  const ownerPausedPath = join(home, "owner.paused");
+  const ownerReleasePath = join(home, "owner.release");
   await mkdir(paths.stateDir, { recursive: true, mode: 0o700 });
   await writeFile(paths.lockPath, "2147483647\n", { mode: 0o600 });
   await writeFile(
@@ -182,6 +185,22 @@ test("serializes a stale contender paused after classifying the lock", async () 
       });
     `,
   );
+  await writeFile(
+    ownerPreloadPath,
+    `
+      import { spyOn } from "bun:test";
+      import * as fs from "node:fs";
+      const originalFsync = fs.fsyncSync;
+      const wait = new Int32Array(new SharedArrayBuffer(4));
+      spyOn(fs, "fsyncSync").mockImplementationOnce((fd) => {
+        originalFsync(fd);
+        fs.writeFileSync(process.env.WORK_CRAFT_TEST_OWNER_PAUSED_PATH!, "paused");
+        while (!fs.existsSync(process.env.WORK_CRAFT_TEST_OWNER_RELEASE_PATH!)) {
+          Atomics.wait(wait, 0, 0, 10);
+        }
+      });
+    `,
+  );
   const contender = Bun.spawn([process.execPath, "--preload", preloadPath, MAIN_PATH], {
     cwd: join(import.meta.dir, "../../.."),
     env: {
@@ -199,19 +218,16 @@ test("serializes a stale contender paused after classifying the lock", async () 
   try {
     await waitForFile(pausedPath);
     await rm(paths.lockPath, { force: true });
-    owner = spawnDaemon(home);
-    const ownerDeadline = Date.now() + 3_000;
-    while (Date.now() < ownerDeadline) {
-      try {
-        if (Number(await Bun.file(paths.lockPath).text()) === owner.pid) {
-          break;
-        }
-      } catch {}
-      await Bun.sleep(10);
-    }
+    owner = spawnDaemon(home, {
+      BUN_OPTIONS: `--preload=${ownerPreloadPath}`,
+      WORK_CRAFT_TEST_OWNER_PAUSED_PATH: ownerPausedPath,
+      WORK_CRAFT_TEST_OWNER_RELEASE_PATH: ownerReleasePath,
+    });
+    await waitForFile(ownerPausedPath);
     expect(Number(await Bun.file(paths.lockPath).text())).toBe(owner.pid);
     await writeFile(releasePath, "release");
     expect(await waitForExit(contender)).not.toBe(0);
+    await writeFile(ownerReleasePath, "release");
 
     expect((await waitForHealth(paths.socketPath, [owner, contender])).pid).toBe(owner.pid);
     expect(isAlive(owner.pid)).toBe(true);
@@ -224,6 +240,7 @@ test("serializes a stale contender paused after classifying the lock", async () 
     expect(await waitForExit(owner)).toBe(0);
   } finally {
     await writeFile(releasePath, "release").catch(() => {});
+    await writeFile(ownerReleasePath, "release").catch(() => {});
     await cleanup(home, owner === undefined ? [contender] : [contender, owner]);
   }
 });
