@@ -17,11 +17,12 @@ install -m 755 work-craft ~/.local/bin/work-craft
 Run `work-craft` to open the TUI. The same executable provides the non-interactive CLI:
 
 ```sh
-work-craft list
-work-craft ensure <item-id>
-work-craft status --json
-work-craft stop
-work-craft destroy
+work-craft snapshot
+work-craft session create --name Main --json
+work-craft surface ensure --item <item-id>
+work-craft daemon status --json
+work-craft daemon stop
+work-craft daemon destroy --force
 ```
 
 Intel macOS, Linux ARM64, and musl Linux do not currently have supported prebuilt releases.
@@ -35,11 +36,12 @@ Install dependencies and run from source:
 ```sh
 bun install
 bun run tui
-bun run cli -- list
-bun run cli -- ensure <item-id>
-bun run cli -- status --json
-bun run cli -- stop
-bun run cli -- destroy
+bun run cli -- snapshot
+bun run cli -- session create --name Main --json
+bun run cli -- surface ensure --item <item-id>
+bun run cli -- daemon status --json
+bun run cli -- daemon stop
+bun run cli -- daemon destroy --force
 ```
 
 Build a standalone executable for the current machine with:
@@ -50,7 +52,7 @@ bun run build
 
 The executable is written to `dist/work-craft`. Building does not install or copy it outside the repository.
 
-The TUI creates and navigates sessions, workspaces, projects, items, tabs, and terminal splits. The CLI provides non-interactive `list`, `ensure`, `status`, `stop`, and `destroy` commands with plain-text or JSON output.
+The TUI creates and navigates sessions, workspaces, projects, items, tabs, and terminal splits. The CLI exposes snapshot, hierarchy creation, surface/tab/pane operations, and daemon lifecycle operations with plain-text or JSON output.
 
 ## Local State
 
@@ -66,7 +68,7 @@ Set `WORK_CRAFT_HOME` to use a different state directory, including an isolated 
 WORK_CRAFT_HOME=/tmp/work-craft work-craft
 ```
 
-Clients start the daemon on demand when it is not running. Closing the TUI or finishing a CLI command does not stop it or its terminal panes; use `work-craft stop` for a clean shutdown that preserves state. Use `work-craft destroy` to stop all managed runtimes, delete persisted Work Craft state, and stop the daemon.
+Clients start the daemon on demand when it is not running. Closing the TUI or finishing a CLI command does not stop it or its terminal panes; use `work-craft daemon stop` for a clean shutdown that preserves state. Use `work-craft daemon destroy --force` to stop all managed runtimes, delete persisted Work Craft state, and stop the daemon.
 
 After a daemon or machine restart, Work Craft reloads SQLite state, retains bounded terminal output, inserts a visible restart separator, and starts one fresh shell for each eligible pane. This first slice restores shells only; it does not checkpoint arbitrary process memory.
 

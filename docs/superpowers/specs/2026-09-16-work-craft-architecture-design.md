@@ -136,7 +136,7 @@ The server returns structured data; React controls its presentation. Category sc
 
 The CLI is a non-interactive Unix-style API client. It parses arguments, calls the server, emits plain text or JSON, and exits. It contains no TUI framework or duplicate business logic.
 
-Representative commands include `list`, `ensure`, `status`, `stop`, and `destroy`.
+Representative commands include `snapshot`; resource creation and execution commands such as `session create`, `surface ensure`, `tab create`, and `pane split`; and grouped daemon lifecycle commands such as `daemon status`, `daemon stop`, and `daemon destroy`.
 
 ## Server Components
 
@@ -278,7 +278,7 @@ The initial suite stays small and exercises architectural boundaries:
 3. A reconnect test disconnects a client, mutates state, reconnects, and receives a coherent snapshot.
 4. A cold-recovery test creates a hierarchy and pane, stops and restarts the daemon, and verifies layout, history, interruption marker, and restored shell.
 5. A restore-adapter test turns persisted shell metadata into the expected spawn specification; Neovim and OpenCode cases are added with those adapters.
-6. A CLI smoke test exercises the real local API through start, list, inspect, and stop operations.
+6. A CLI smoke test exercises the real local API through resource creation, snapshot, execution-surface operations, and daemon shutdown.
 
 Broad mock infrastructure, exhaustive endpoint permutations, and visual snapshot tests are excluded initially.
 
@@ -293,7 +293,7 @@ The first useful implementation contains:
 - generic projects, items, and surface items;
 - tabs, split layouts, and terminal panes;
 - shell restoration and bounded terminal history;
-- a minimal `list`, `ensure`, `status`, `stop`, and `destroy` CLI;
+- a resource-oriented CLI for snapshots, hierarchy creation, surface/tab/pane operations, and daemon lifecycle operations;
 - a React/OpenTUI shell that reaches and operates those capabilities.
 
 Category-specific screens, `gh` and `az` views, Neovim and OpenCode metadata integration, remote access, and agent automation follow as separate increments. Generic surface items keep the product useful while those richer capabilities are developed.

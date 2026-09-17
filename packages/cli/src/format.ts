@@ -1,4 +1,5 @@
-import type { WorkCraftClient } from "@work-craft/server/client";
+import type { CommandResponse, WorkCraftClient } from "@work-craft/server/client";
+import type { CliArgs } from "./args.ts";
 
 type Snapshot = Awaited<ReturnType<WorkCraftClient["snapshot"]>>;
 type Health = Awaited<ReturnType<WorkCraftClient["health"]>>;
@@ -40,7 +41,7 @@ export async function readStatus(
   throw new Error("could not read coherent daemon status");
 }
 
-export function formatList(snapshot: Snapshot): string {
+export function formatSnapshot(snapshot: Snapshot): string {
   const lines: string[] = [];
   for (const session of snapshot.sessions) {
     lines.push(session.name);
@@ -65,6 +66,34 @@ export function formatList(snapshot: Snapshot): string {
     }
   }
   return lines.length === 0 ? "" : `${lines.join("\n")}\n`;
+}
+
+type Result = CommandResponse["result"];
+
+export function formatResult(command: CliArgs["command"], result: Result): string {
+  switch (command) {
+    case "session.create":
+    case "workspace.create":
+    case "project.create":
+    case "item.create":
+      return `ID: ${result.id}\n`;
+    case "surface.ensure":
+      return `Item: ${result.itemId}\nSurface: ${result.surfaceId}\n`;
+    case "surface.selectTab":
+      return `Surface: ${result.surfaceId}\nTab: ${result.tabId}\n`;
+    case "tab.create":
+      return `Tab: ${result.tabId}\nPane: ${result.paneId}\n`;
+    case "pane.split":
+    case "process.restart":
+      return `Pane: ${result.paneId}\n`;
+    case "daemon.stop":
+      return "Stopped Work Craft\n";
+    case "daemon.destroy":
+      return "Destroyed Work Craft\n";
+    case "snapshot":
+    case "daemon.status":
+      throw new Error(`No mutation result formatter for ${command}`);
+  }
 }
 
 export function formatStatus(status: Status): string {
