@@ -38,6 +38,8 @@ export type WorkCraftClient = {
   streamOnce(): Promise<ServerMessage>;
 };
 
+export const INTERNAL_DAEMON_ARG = "__daemon";
+
 async function requestJson(socketPath: string, path: string, init?: RequestInit): Promise<unknown> {
   const response = await fetch(`http://localhost${path}`, {
     ...init,
@@ -89,7 +91,10 @@ export function createClient(options: { socketPath?: string } = {}): WorkCraftCl
     const stderr = openSync(stderrPath, "wx", 0o600);
     let child: Bun.Subprocess;
     try {
-      child = Bun.spawn([process.execPath, fileURLToPath(new URL("./main.ts", import.meta.url))], {
+      const command = Bun.main.startsWith("/$bunfs/")
+        ? [process.execPath, INTERNAL_DAEMON_ARG]
+        : [process.execPath, fileURLToPath(new URL("./main.ts", import.meta.url))];
+      child = Bun.spawn(command, {
         detached: true,
         env: process.env,
         stdin: "ignore",
