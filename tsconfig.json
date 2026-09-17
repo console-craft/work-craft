@@ -8,6 +8,7 @@
     "moduleDetection": "force",
     "moduleResolution": "Bundler",
     "noEmit": true,
+    "paths": { "@/*": ["./packages/tui/src/*"] },
     "skipLibCheck": true,
     "strict": true,
     "target": "ESNext",
