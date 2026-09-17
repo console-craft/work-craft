@@ -37,6 +37,12 @@ async function readPid(path: string): Promise<number> {
   return pid;
 }
 
+function processIsRunning(pid: number): boolean {
+  const result = Bun.spawnSync(["ps", "-o", "state=", "-p", String(pid)], { stderr: "ignore" });
+  const state = result.stdout.toString().trim();
+  return result.success && state !== "" && !state.startsWith("Z");
+}
+
 afterEach(async () => {
   await Promise.all(runtimes.splice(0).map((registry) => registry.stopAll()));
 });
@@ -225,7 +231,7 @@ test("stops background descendants that outlive their shell", async () => {
 
     await registry.stopAll({ preserveStatus: true });
 
-    expect(() => process.kill(childPid!, 0)).toThrow();
+    expect(processIsRunning(childPid)).toBe(false);
   } finally {
     if (childPid !== undefined) {
       try {
