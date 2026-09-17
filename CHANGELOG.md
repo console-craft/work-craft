@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/console-craft/work-craft/compare/v0.3.0...v0.4.0) (2026-09-17)
+
+
+### Features
+
+* **build:** add local install command ([#14](https://github.com/console-craft/work-craft/issues/14)) ([a7f2c48](https://github.com/console-craft/work-craft/commit/a7f2c487c2f1209a1fa7042a1e3d5d33839a1b0d))
+
 ## [0.3.0](https://github.com/console-craft/work-craft/compare/v0.2.0...v0.3.0) (2026-09-17)
 
 
