@@ -501,6 +501,23 @@ test("destroy removes stopped state without restoring panes", async () => {
   }
 }, 20_000);
 
+test("destroy removes corrupt persisted state", async () => {
+  const home = await tempHome();
+  await writeFile(join(home, "work-craft.sqlite"), new Uint8Array(16));
+  try {
+    expect(await runCli(home, ["destroy"])).toEqual({
+      exitCode: 0,
+      stderr: "",
+      stdout: "Destroyed Work Craft\n",
+    });
+    expect(await Bun.file(join(home, "work-craft.sqlite")).exists()).toBe(false);
+    expect(await Bun.file(join(home, "daemon.lock")).exists()).toBe(false);
+    expect(await Bun.file(join(home, "work-craft.sock")).exists()).toBe(false);
+  } finally {
+    await cleanup(home);
+  }
+}, 20_000);
+
 test("reports command failures without usage or a stack", async () => {
   const home = await tempHome();
   try {

@@ -324,6 +324,12 @@ function removeOwned(path: string, identity: FileIdentity | undefined): void {
   }
 }
 
+function removeDatabase(databasePath: string): void {
+  rmSync(`${databasePath}-wal`, { force: true });
+  rmSync(`${databasePath}-shm`, { force: true });
+  rmSync(databasePath, { force: true });
+}
+
 async function socketIsHealthy(socketPath: string): Promise<boolean> {
   try {
     const response = await fetch("http://localhost/health", {
@@ -410,11 +416,7 @@ export async function runDaemon(
       const historyClosed = await attempt(async () => app?.history.close());
       const databaseClosed = await attempt(() => db?.close());
       if (destroyRequested && runtimesStopped && historyClosed && databaseClosed) {
-        await attempt(() => {
-          rmSync(`${paths.databasePath}-wal`, { force: true });
-          rmSync(`${paths.databasePath}-shm`, { force: true });
-          rmSync(paths.databasePath, { force: true });
-        });
+        await attempt(() => removeDatabase(paths.databasePath));
       }
       await attempt(() => removeOwned(paths.socketPath, socketIdentity));
       await attempt(() => removeOwned(paths.lockPath, lock?.identity));
@@ -465,7 +467,15 @@ export async function runDaemon(
       unlinkSync(paths.socketPath);
     }
 
-    db = openDatabase(paths.databasePath);
+    try {
+      db = openDatabase(paths.databasePath);
+    } catch (error) {
+      if (options.recover !== false) {
+        throw error;
+      }
+      removeDatabase(paths.databasePath);
+      db = openDatabase(paths.databasePath);
+    }
     app = createApp({
       db,
       onStop: (destroy) => {
