@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { createApp, type WorkCraftApp } from "./app.ts";
 import { applyCommand } from "./commands.ts";
 import { openDatabase } from "./database.ts";
-import { ProtocolError } from "./protocol.ts";
+import { ProtocolError } from "./api/protocol.ts";
 import { readSnapshot } from "./snapshot.ts";
 
 const apps: WorkCraftApp[] = [];

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createClient, type StreamConnection } from "./client.ts";
 import { resolvePaths } from "./paths.ts";
-import { decodeBytes, type Snapshot } from "./protocol.ts";
+import { decodeBytes, type Snapshot } from "./api/protocol.ts";
 
 const ROOT = join(import.meta.dir, "../../..");
 const MAIN_PATH = join(import.meta.dir, "main.ts");

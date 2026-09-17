@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { createApp, type WorkCraftApp } from "./app.ts";
 import { applyCommand } from "./commands.ts";
 import { openDatabase } from "./database.ts";
-import { decodeBytes, type Snapshot } from "./protocol.ts";
+import { decodeBytes, type Snapshot } from "./api/protocol.ts";
 
 type AppOwner = { app: WorkCraftApp; db: Database };
 

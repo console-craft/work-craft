@@ -1,13 +1,13 @@
 import type { Database } from "bun:sqlite";
 import type { TerminalHistory } from "./history.ts";
-import { encodeBytes } from "./protocol.ts";
+import { encodeBytes } from "./api/protocol.ts";
 import type {
   CategoryKind,
   LayoutNode,
   PaneStatus,
   ShellRestorePolicy,
   Snapshot,
-} from "./protocol.ts";
+} from "./api/protocol.ts";
 
 export const CATEGORIES: readonly { kind: CategoryKind; title: string; position: number }[] = [
   { kind: "inbox", title: "Inbox", position: 0 },

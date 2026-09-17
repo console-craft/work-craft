@@ -19,7 +19,7 @@ import {
 import { basename, dirname, join } from "node:path";
 import { createApp, type WorkCraftApp } from "./app.ts";
 import { openDatabase } from "./database.ts";
-import { startHttpServer } from "./http.ts";
+import { startHttpServer } from "./api/http.ts";
 import type { WorkCraftPaths } from "./paths.ts";
 
 type FileIdentity = { dev: bigint; ino: bigint; ctimeNs: bigint };
