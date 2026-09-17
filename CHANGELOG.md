@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/console-craft/work-craft/compare/v0.2.0...v0.3.0) (2026-09-17)
+
+
+### Features
+
+* **cli:** expose complete server command surface ([#12](https://github.com/console-craft/work-craft/issues/12)) ([40fcc40](https://github.com/console-craft/work-craft/commit/40fcc40e77e8a4cbb9f16f1e1f0c141ea6e416c3))
+
 ## [0.2.0](https://github.com/console-craft/work-craft/compare/v0.1.1...v0.2.0) (2026-09-17)
 
 
