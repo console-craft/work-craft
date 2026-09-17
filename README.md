@@ -4,12 +4,31 @@ A local-first terminal work organizer with persistent execution surfaces. Work C
 
 One local Bun daemon owns the SQLite database, terminal runtimes, and bounded terminal history. The React/OpenTUI interface and Unix-style CLI are disposable clients connected through an owner-only Unix socket.
 
-## Requirements
+## Install
 
-- [Bun](https://bun.sh/) 1.4 or newer
-- macOS or Linux
+Prebuilt releases support Apple Silicon macOS and x86-64 glibc Linux. Download the archive for your platform from the GitHub release, then install the executable somewhere on your `PATH`:
 
-## Get Started
+```sh
+tar -xzf work-craft-vX.Y.Z-darwin-arm64.tar.gz
+mkdir -p ~/.local/bin
+install -m 755 work-craft ~/.local/bin/work-craft
+```
+
+Run `work-craft` to open the TUI. The same executable provides the non-interactive CLI:
+
+```sh
+work-craft list
+work-craft status --json
+work-craft stop
+```
+
+Intel macOS, Linux ARM64, and musl Linux do not currently have supported prebuilt releases.
+
+## Develop
+
+Development requires [Bun](https://bun.sh/) 1.4 or newer on macOS or Linux.
+
+Install dependencies and run from source:
 
 ```sh
 bun install
@@ -18,6 +37,14 @@ bun run cli -- list
 bun run cli -- status --json
 bun run cli -- stop
 ```
+
+Build a standalone executable for the current machine with:
+
+```sh
+bun run build
+```
+
+The executable is written to `dist/work-craft`. Building does not install or copy it outside the repository.
 
 The TUI creates and navigates sessions, workspaces, projects, items, tabs, and terminal splits. The CLI provides non-interactive `list`, `open`, `status`, and `stop` commands with plain-text or JSON output.
 
@@ -32,10 +59,10 @@ The default state directory is `$XDG_STATE_HOME/work-craft` when `XDG_STATE_HOME
 Set `WORK_CRAFT_HOME` to use a different state directory, including an isolated directory for development or testing:
 
 ```sh
-WORK_CRAFT_HOME=/tmp/work-craft bun run tui
+WORK_CRAFT_HOME=/tmp/work-craft work-craft
 ```
 
-Clients start the daemon on demand when it is not running. Closing the TUI or finishing a CLI command does not stop it or its terminal panes; use `bun run cli -- stop` for a clean shutdown.
+Clients start the daemon on demand when it is not running. Closing the TUI or finishing a CLI command does not stop it or its terminal panes; use `work-craft stop` for a clean shutdown.
 
 After a daemon or machine restart, Work Craft reloads SQLite state, retains bounded terminal output, inserts a visible restart separator, and starts one fresh shell for each eligible pane. This first slice restores shells only; it does not checkpoint arbitrary process memory.
 
@@ -43,11 +70,7 @@ After a daemon or machine restart, Work Craft reloads SQLite state, retains boun
 
 Category-specific screens, `gh`/`az` views, Neovim/OpenCode metadata integration, remote access, and agent automation are outside this slice.
 
-## Development
-
-```sh
-bun run check
-```
+Run the complete correctness gate with `bun run check`. It includes linting, formatting, typechecking, tests, a current-host standalone build, and a packaged daemon smoke test.
 
 To run checks individually, use `bun run lint`, `bun run format:check`, `bun run typecheck`, or `bun run test`.
 
