@@ -29,6 +29,14 @@ function runtime(callbacks: Partial<RuntimeCallbacks> = {}): RuntimeRegistry {
   return registry;
 }
 
+async function readPid(path: string): Promise<number> {
+  const pid = Number(await Bun.file(path).text());
+  if (!Number.isInteger(pid) || pid <= 1) {
+    throw new Error(`Invalid child PID: ${pid}`);
+  }
+  return pid;
+}
+
 afterEach(async () => {
   await Promise.all(runtimes.splice(0).map((registry) => registry.stopAll()));
 });
@@ -101,6 +109,27 @@ test("waits for a fast shell after it has already exited", async () => {
   expect(await registry.waitForExit("pane-1")).toBe(7);
 });
 
+test("an exiting runtime cannot overwrite its replacement status", async () => {
+  const statuses: PaneStatus[] = [];
+  const registry = runtime({
+    onStatus: (_paneId, status) => statuses.push(status),
+  });
+  const paneId = "pane-1";
+  await registry.start(shellPane(paneId, process.cwd(), "/bin/sh", ["-c", "sleep 0.1 &"]));
+  const firstRuntime = (
+    registry as unknown as {
+      runtimes: Map<string, { process: Bun.Subprocess; exited: Promise<number> }>;
+    }
+  ).runtimes.get(paneId)!;
+  await firstRuntime.process.exited;
+
+  await registry.start(shellPane(paneId, process.cwd()));
+  await firstRuntime.exited;
+
+  expect(statuses.at(-1)).toBe("running");
+  expect(registry.isLive(paneId)).toBe(true);
+});
+
 test("cleans up and reports a synchronous spawn failure", async () => {
   const statuses: { status: PaneStatus; error?: string }[] = [];
   const registry = runtime({
@@ -148,7 +177,7 @@ test("terminates a spawned shell when the running callback throws", async () => 
         ]),
       ),
     ).rejects.toThrow("running status failed");
-    pid = Number(await Bun.file(pidPath).text());
+    pid = await readPid(pidPath);
 
     expect(() => process.kill(pid!, 0)).toThrow();
     expect(await Bun.file(stoppedPath).text()).toBe("stopped");
@@ -175,6 +204,72 @@ test("stops all live runtimes", async () => {
   expect(registry.isLive("pane-2")).toBe(false);
 });
 
+test("stops background descendants that outlive their shell", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "work-craft-runtime-tree-"));
+  const pidPath = join(directory, "child.pid");
+  const registry = runtime();
+  let childPid: number | undefined;
+  try {
+    await registry.start(
+      shellPane("pane-1", directory, "/bin/sh", [
+        "-c",
+        'trap "" TERM HUP; sleep 30 </dev/null >/dev/null 2>&1 & printf "$!" > "$1"; wait',
+        "runtime-tree-test",
+        pidPath,
+      ]),
+    );
+    for (let attempt = 0; attempt < 100 && !existsSync(pidPath); attempt += 1) {
+      await Bun.sleep(10);
+    }
+    childPid = await readPid(pidPath);
+
+    await registry.stopAll({ preserveStatus: true });
+
+    expect(() => process.kill(childPid!, 0)).toThrow();
+  } finally {
+    if (childPid !== undefined) {
+      try {
+        process.kill(childPid, "SIGKILL");
+      } catch {}
+    }
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("gives descendants the full grace period after their shell exits", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "work-craft-runtime-grace-"));
+  const pidPath = join(directory, "child.pid");
+  const gracefulPath = join(directory, "graceful");
+  const registry = runtime();
+  let childPid: number | undefined;
+  try {
+    await registry.start(
+      shellPane("pane-1", directory, "/bin/sh", [
+        "-c",
+        `trap 'exit 0' TERM; /bin/sh -c 'trap "" HUP; trap "sleep 0.1; printf graceful > $2; exit 0" TERM; printf "$$" > "$1"; while :; do sleep 1; done' runtime-child "$1" "$2" </dev/null >/dev/null 2>&1 & wait`,
+        "runtime-grace-test",
+        pidPath,
+        gracefulPath,
+      ]),
+    );
+    for (let attempt = 0; attempt < 100 && !existsSync(pidPath); attempt += 1) {
+      await Bun.sleep(10);
+    }
+    childPid = await readPid(pidPath);
+
+    await registry.stopAll({ preserveStatus: true });
+
+    expect(await Bun.file(gracefulPath).text()).toBe("graceful");
+  } finally {
+    if (childPid !== undefined) {
+      try {
+        process.kill(childPid, "SIGKILL");
+      } catch {}
+    }
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("escalates to SIGKILL when a shell ignores SIGTERM", async () => {
   const directory = await mkdtemp(join(tmpdir(), "work-craft-runtime-stop-"));
   const pidPath = join(directory, "pid");
@@ -199,7 +294,7 @@ test("escalates to SIGKILL when a shell ignores SIGTERM", async () => {
       }
       await Bun.sleep(10);
     }
-    pid = Number(await Bun.file(pidPath).text());
+    pid = await readPid(pidPath);
 
     stopping = registry.stopAll({ preserveStatus: true });
     const stopped = await Promise.race([

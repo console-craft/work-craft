@@ -13,6 +13,78 @@ type LiveRuntime = {
   preserveStatus(): void;
 };
 
+type ProcessInfo = { pid: number; parentPid: number; startedAt: string };
+
+function listProcesses(): ProcessInfo[] {
+  const result = Bun.spawnSync(["ps", "-ax", "-o", "pid=,ppid=,lstart="], { stderr: "pipe" });
+  if (!result.success) {
+    throw new Error(`Could not inspect runtime processes: ${result.stderr.toString().trim()}`);
+  }
+
+  return result.stdout
+    .toString()
+    .split("\n")
+    .flatMap((line): ProcessInfo[] => {
+      const match = /^(\d+)\s+(\d+)\s+(.+)$/.exec(line.trim());
+      if (match === null) {
+        return [];
+      }
+      const pid = Number(match[1]);
+      const parentPid = Number(match[2]);
+      return Number.isInteger(pid) && Number.isInteger(parentPid)
+        ? [{ pid, parentPid, startedAt: match[3]! }]
+        : [];
+    });
+}
+
+function processTree(rootPid: number): ProcessInfo[] {
+  const processes = listProcesses();
+  const children = new Map<number, ProcessInfo[]>();
+  for (const process of processes) {
+    children.set(process.parentPid, [...(children.get(process.parentPid) ?? []), process]);
+  }
+
+  const root = processes.find(({ pid }) => pid === rootPid);
+  if (root === undefined) {
+    return [];
+  }
+  const tree = [root];
+  for (let index = 0; index < tree.length; index += 1) {
+    tree.push(...(children.get(tree[index]!.pid) ?? []));
+  }
+  return tree.reverse();
+}
+
+function survivingProcesses(expected: ProcessInfo[]): ProcessInfo[] {
+  if (expected.length === 0) {
+    return [];
+  }
+  const current = new Map(listProcesses().map((process) => [process.pid, process.startedAt]));
+  return expected.filter(({ pid, startedAt }) => current.get(pid) === startedAt);
+}
+
+async function waitForProcesses(processes: ProcessInfo[]): Promise<ProcessInfo[]> {
+  const deadline = Date.now() + 250;
+  let survivors = survivingProcesses(processes);
+  while (survivors.length > 0 && Date.now() < deadline) {
+    await Bun.sleep(Math.min(10, deadline - Date.now()));
+    survivors = survivingProcesses(survivors);
+  }
+  return survivors;
+}
+
+function signalProcesses(expected: ProcessInfo[], signal: NodeJS.Signals): void {
+  for (const { pid } of survivingProcesses(expected)) {
+    try {
+      process.kill(pid, signal);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") {
+        throw error;
+      }
+    }
+  }
+}
+
 export class RuntimeRegistry {
   private readonly runtimes = new Map<string, LiveRuntime>();
 
@@ -50,7 +122,7 @@ export class RuntimeRegistry {
         if (!spawnedTerminal.closed) {
           spawnedTerminal.close();
         }
-        if (publishExit) {
+        if (publishExit && this.runtimes.get(pane.id) === runtime) {
           this.callbacks.onStatus(pane.id, "exited");
         }
         return code;
@@ -104,20 +176,18 @@ export class RuntimeRegistry {
 
   async stopAll(options: { preserveStatus?: boolean } = {}): Promise<void> {
     const runtimes = [...this.runtimes.values()];
+    const processTrees = new Map<LiveRuntime, ProcessInfo[]>();
     for (const runtime of runtimes) {
       if (runtime.process.exitCode === null) {
+        processTrees.set(runtime, processTree(runtime.process.pid));
         if (options.preserveStatus) {
           runtime.preserveStatus();
         }
-        runtime.process.kill();
+        signalProcesses(processTrees.get(runtime)!, "SIGTERM");
       }
     }
-    await Promise.race([Promise.all(runtimes.map(({ exited }) => exited)), Bun.sleep(250)]);
-    for (const runtime of runtimes) {
-      if (runtime.process.exitCode === null) {
-        runtime.process.kill("SIGKILL");
-      }
-    }
+    const survivors = await waitForProcesses([...processTrees.values()].flat());
+    signalProcesses(survivors, "SIGKILL");
     await Promise.all(runtimes.map(({ exited }) => exited));
     this.runtimes.clear();
   }

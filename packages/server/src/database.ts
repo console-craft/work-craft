@@ -17,6 +17,7 @@ export function openDatabase(path: string): Database {
   db.exec("PRAGMA foreign_keys = ON");
   if (path !== ":memory:") {
     db.exec("PRAGMA journal_mode = WAL");
+    db.exec("PRAGMA synchronous = FULL");
   }
 
   const version =

@@ -39,7 +39,11 @@ export type WorkCraftClient = {
 };
 
 async function requestJson(socketPath: string, path: string, init?: RequestInit): Promise<unknown> {
-  const response = await fetch(`http://localhost${path}`, { ...init, unix: socketPath });
+  const response = await fetch(`http://localhost${path}`, {
+    ...init,
+    signal: init?.signal ?? AbortSignal.timeout(3_000),
+    unix: socketPath,
+  });
   const body = await response.json();
   if (!response.ok) {
     const message =
