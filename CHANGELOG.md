@@ -1,0 +1,16 @@
+# Changelog
+
+## 0.1.0 (2026-09-17)
+
+
+### Features
+
+* add standalone distribution build ([1797d26](https://github.com/console-craft/work-craft/commit/1797d2671b3ba9c1fe0410fd70995d77819db471))
+* **cli:** add local work craft commands ([f6acb88](https://github.com/console-craft/work-craft/commit/f6acb88841369b75e144f63e298188dc9ac58a3c))
+* **server:** implement durable local daemon ([031bf41](https://github.com/console-craft/work-craft/commit/031bf4104e77735d1dd8c3ac39a2e1227199f7d3))
+* **tui:** add work navigator and terminal surfaces ([8f522e7](https://github.com/console-craft/work-craft/commit/8f522e79400dc1d74a9b36626c97f978349ae48e))
+
+
+### Bug Fixes
+
+* harden first vertical slice ([ec71021](https://github.com/console-craft/work-craft/commit/ec71021e5c77f18967e772c35dbb228277b52540))
