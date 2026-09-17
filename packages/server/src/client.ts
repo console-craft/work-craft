@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { resolvePaths } from "./paths.ts";
 import { encodeBytes } from "./api/protocol.ts";
 import type { Command, CommandResponse, ServerMessage, Snapshot } from "./api/protocol.ts";
-import type { Health } from "./app.ts";
+import type { Health } from "./application/app.ts";
 
 export { decodeBytes } from "./api/protocol.ts";
 export type {

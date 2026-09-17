@@ -1,6 +1,6 @@
-export * from "./app.ts";
+export * from "./application/app.ts";
 export * from "./client.ts";
-export * from "./commands.ts";
+export * from "./application/commands.ts";
 export * from "./database.ts";
 export * from "./api/http.ts";
 export * from "./history.ts";
@@ -8,4 +8,4 @@ export * from "./paths.ts";
 export * from "./api/protocol.ts";
 export * from "./restore.ts";
 export * from "./runtime.ts";
-export * from "./snapshot.ts";
+export * from "./application/snapshot.ts";

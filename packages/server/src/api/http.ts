@@ -1,5 +1,5 @@
 import { chmodSync } from "node:fs";
-import type { WorkCraftApp } from "../app.ts";
+import type { WorkCraftApp } from "../application/app.ts";
 import { parseClientMessage, ProtocolError } from "./protocol.ts";
 import type { Command } from "./protocol.ts";
 
