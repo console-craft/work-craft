@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -114,8 +114,12 @@ function isAlive(pid: number): boolean {
 
 async function stopPids(pids: number[]): Promise<void> {
   for (const pid of pids) {
-    if (isAlive(pid)) {
+    try {
       process.kill(pid, "SIGKILL");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") {
+        throw error;
+      }
     }
   }
   await waitFor(
@@ -124,6 +128,22 @@ async function stopPids(pids: number[]): Promise<void> {
     `shell PIDs to exit: ${pids.join(", ")}`,
   );
 }
+
+test.serial("cleanup tolerates a process exiting before SIGKILL", async () => {
+  let firstProbe = true;
+  const kill = spyOn(process, "kill").mockImplementation((_pid, signal) => {
+    if (signal === 0 && firstProbe) {
+      firstProbe = false;
+      return true;
+    }
+    throw Object.assign(new Error("process exited"), { code: "ESRCH" });
+  });
+  try {
+    await expect(stopPids([12345])).resolves.toBeUndefined();
+  } finally {
+    kill.mockRestore();
+  }
+});
 
 async function stopDaemon(daemon: Daemon): Promise<void> {
   if (daemon.exitCode !== null) {
