@@ -1,4 +1,16 @@
 {
-  "name": "tui",
-  "private": true
+  "name": "@work-craft/tui",
+  "private": true,
+  "scripts": {
+    "start": "bun src/main.tsx"
+  },
+  "dependencies": {
+    "@opentui/core": "^0.5.11",
+    "@opentui/react": "^0.5.11",
+    "@work-craft/server": "workspace:*",
+    "react": "^19.3.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0"
+  }
 }

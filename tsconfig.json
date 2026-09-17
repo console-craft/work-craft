@@ -1,15 +1,19 @@
 {
   "compilerOptions": {
     "allowImportingTsExtensions": true,
+    "jsx": "react-jsx",
+    "jsxImportSource": "@opentui/react",
+    "lib": ["ESNext", "DOM"],
     "module": "Preserve",
     "moduleDetection": "force",
     "moduleResolution": "Bundler",
     "noEmit": true,
+    "paths": { "@/*": ["./packages/tui/src/*"] },
     "skipLibCheck": true,
     "strict": true,
     "target": "ESNext",
     "types": ["bun"],
     "verbatimModuleSyntax": true
   },
-  "include": ["packages/**/*", "types.d.ts"]
+  "include": ["packages/**/*", "scripts/**/*", "src/**/*", "types.d.ts"]
 }

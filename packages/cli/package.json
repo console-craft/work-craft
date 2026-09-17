@@ -1,4 +1,13 @@
 {
-  "name": "cli",
-  "private": true
+  "name": "@work-craft/cli",
+  "private": true,
+  "bin": {
+    "work-craft": "./src/main.ts"
+  },
+  "scripts": {
+    "start": "bun src/main.ts"
+  },
+  "dependencies": {
+    "@work-craft/server": "workspace:*"
+  }
 }

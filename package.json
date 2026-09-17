@@ -20,12 +20,17 @@
     "packages/*"
   ],
   "scripts": {
-    "check": "bun run lint && bun run format:check && bun run typecheck && bun run test",
+    "build": "mkdir -p dist && bun build --compile src/main.ts --outfile dist/work-craft",
+    "build:smoke": "bun scripts/smoke-build.ts",
+    "check": "bun run lint && bun run format:check && bun run typecheck && bun run test && bun run build && bun run build:smoke",
+    "cli": "bun src/main.ts",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
     "lint": "oxlint --no-error-on-unmatched-pattern .",
     "prepare": "lefthook install",
-    "test": "bun test --pass-with-no-tests",
+    "server": "bun src/main.ts __daemon",
+    "test": "bun test",
+    "tui": "bun src/main.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
