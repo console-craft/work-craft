@@ -543,6 +543,8 @@ test("destroy removes stopped state without restoring panes", async () => {
     expect(await Bun.file(startedPath).exists()).toBe(false);
     expect(await Bun.file(shellPath).exists()).toBe(true);
     expect(await Bun.file(join(home, "work-craft.sqlite")).exists()).toBe(false);
+    expect(await Bun.file(join(home, "work-craft.sqlite-wal")).exists()).toBe(false);
+    expect(await Bun.file(join(home, "work-craft.sqlite-shm")).exists()).toBe(false);
     expect(await Bun.file(join(home, "daemon.lock")).exists()).toBe(false);
     expect(await Bun.file(join(home, "work-craft.sock")).exists()).toBe(false);
   } finally {
@@ -560,6 +562,8 @@ test("destroy removes corrupt persisted state", async () => {
       stdout: "Destroyed Work Craft\n",
     });
     expect(await Bun.file(join(home, "work-craft.sqlite")).exists()).toBe(false);
+    expect(await Bun.file(join(home, "work-craft.sqlite-wal")).exists()).toBe(false);
+    expect(await Bun.file(join(home, "work-craft.sqlite-shm")).exists()).toBe(false);
     expect(await Bun.file(join(home, "daemon.lock")).exists()).toBe(false);
     expect(await Bun.file(join(home, "work-craft.sock")).exists()).toBe(false);
   } finally {

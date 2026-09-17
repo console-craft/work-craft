@@ -99,6 +99,7 @@ test("rejects invalid resource-oriented commands", () => {
     ["status"],
     ["stop"],
     ["destroy"],
+    ["snapshot", "--unknown"],
     ["session", "create"],
     ["session", "create", "--name", "Main", "--name", "Other"],
     ["workspace", "create", "--session", "s1"],
