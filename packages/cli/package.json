@@ -1,4 +1,7 @@
 {
-  "name": "cli",
-  "private": true
+  "name": "@work-craft/cli",
+  "private": true,
+  "dependencies": {
+    "@work-craft/server": "workspace:*"
+  }
 }

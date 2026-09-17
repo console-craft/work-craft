@@ -1,4 +1,7 @@
 {
-  "name": "tui",
-  "private": true
+  "name": "@work-craft/tui",
+  "private": true,
+  "dependencies": {
+    "@work-craft/server": "workspace:*"
+  }
 }
