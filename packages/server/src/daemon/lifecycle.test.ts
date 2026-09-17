@@ -795,7 +795,7 @@ test("daemon.stop flushes final PTY output and releases every owned resource", a
       title: "Shutdown",
     });
     const opened = await client.command({
-      type: "surface.open",
+      type: "surface.ensure",
       itemId: item.result.id,
       cwd: home,
     });
@@ -830,6 +830,64 @@ test("daemon.stop flushes final PTY output and releases every owned resource", a
     } finally {
       db.close();
     }
+  } finally {
+    if (shellPid !== undefined && isAlive(shellPid)) {
+      process.kill(shellPid, "SIGKILL");
+    }
+    await cleanup(home, [child]);
+  }
+});
+
+test("daemon.destroy stops runtimes and removes persisted state", async () => {
+  const home = await mkdtemp(join(tmpdir(), "work-craft-lifecycle-"));
+  const paths = resolvePaths({ WORK_CRAFT_HOME: home });
+  const shellPath = join(home, "test-shell");
+  const shellPidPath = join(home, "shell.pid");
+  await writeFile(
+    shellPath,
+    '#!/bin/sh\nprintf "$$" > "$WORK_CRAFT_TEST_SHELL_PID"\nwhile :; do sleep 0.1; done\n',
+  );
+  await chmod(shellPath, 0o755);
+  const child = spawnDaemon(home, {
+    SHELL: shellPath,
+    WORK_CRAFT_TEST_SHELL_PID: shellPidPath,
+  });
+  let shellPid: number | undefined;
+  try {
+    await waitForHealth(paths.socketPath, [child]);
+    const client = createClient({ socketPath: paths.socketPath });
+    const session = await client.command({ type: "session.create", name: "Main" });
+    const workspace = await client.command({
+      type: "workspace.create",
+      sessionId: session.result.id,
+      name: "Work",
+    });
+    const project = await client.command({
+      type: "project.create",
+      workspaceId: workspace.result.id,
+      category: "implementation",
+      name: "Lifecycle",
+    });
+    const item = await client.command({
+      type: "item.create",
+      projectId: project.result.id,
+      kind: "surface",
+      title: "Destroy",
+    });
+    await client.command({ type: "surface.ensure", itemId: item.result.id, cwd: home });
+    shellPid = Number(await waitForFile(shellPidPath));
+
+    expect(await client.command({ type: "daemon.destroy" })).toMatchObject({
+      ok: true,
+      result: { destroying: true },
+    });
+    expect(await waitForExit(child)).toBe(0);
+    expect(isAlive(shellPid)).toBe(false);
+    expect(await Bun.file(paths.databasePath).exists()).toBe(false);
+    expect(await Bun.file(`${paths.databasePath}-wal`).exists()).toBe(false);
+    expect(await Bun.file(`${paths.databasePath}-shm`).exists()).toBe(false);
+    expect(await Bun.file(paths.lockPath).exists()).toBe(false);
+    expect(await Bun.file(paths.socketPath).exists()).toBe(false);
   } finally {
     if (shellPid !== undefined && isAlive(shellPid)) {
       process.kill(shellPid, "SIGKILL");

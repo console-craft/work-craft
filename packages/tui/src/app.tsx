@@ -105,9 +105,9 @@ export function App() {
     } else if (key.name === "down" && entries.length > 0) {
       setSelectedIndex(Math.min(entries.length - 1, index + 1));
     } else if (key.name === "return" && selected?.node.kind === "item") {
-      void run({ type: "surface.open", itemId: selected.node.id }, selected.node.id);
+      void run({ type: "surface.ensure", itemId: selected.node.id }, selected.node.id);
     } else if (key.name === "o" && selected?.node.kind === "project") {
-      void run({ type: "surface.openHere", projectId: selected.node.id });
+      void run({ type: "surface.ensureHere", projectId: selected.node.id });
     } else {
       const kind = { s: "session", w: "workspace", p: "project", i: "item" }[key.name] as
         | CreateKind

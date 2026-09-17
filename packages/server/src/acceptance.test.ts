@@ -227,7 +227,7 @@ test.serial(
         title: "Acceptance",
       });
       const opened = await client.command({
-        type: "surface.open",
+        type: "surface.ensure",
         itemId: item.result.id,
         cwd: home,
       });

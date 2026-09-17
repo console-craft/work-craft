@@ -30,7 +30,7 @@ export type WorkCraftApp = {
 export function createApp(options: {
   db: Database;
   history?: TerminalHistory;
-  onStop?: () => void;
+  onStop?: (destroy: boolean) => void;
 }): WorkCraftApp {
   const epoch = crypto.randomUUID();
   const subscribers = new Set<Bun.ServerWebSocket>();
@@ -140,8 +140,8 @@ export function createApp(options: {
     async execute(value) {
       const command = parseCommand(value);
       const { result, effects } = applyCommand(options.db, command);
-      if (command.type === "daemon.stop") {
-        options.onStop?.();
+      if (command.type === "daemon.stop" || command.type === "daemon.destroy") {
+        options.onStop?.(command.type === "daemon.destroy");
         return { ok: true, revision, result };
       }
 
@@ -163,7 +163,7 @@ export function createApp(options: {
       const changed =
         command.type !== "process.restart" &&
         !(
-          (command.type === "surface.open" || command.type === "surface.openHere") &&
+          (command.type === "surface.ensure" || command.type === "surface.ensureHere") &&
           effects.length === 0
         );
       if (changed) {

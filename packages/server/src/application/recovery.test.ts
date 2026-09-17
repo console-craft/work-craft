@@ -86,7 +86,7 @@ async function persistentAppFixture() {
         data: { durable: true },
       });
       const opened = applyCommand(owner!.db, {
-        type: "surface.open",
+        type: "surface.ensure",
         itemId: item.result.id,
         cwd: process.cwd(),
       });
@@ -135,7 +135,7 @@ async function persistentAppFixture() {
         title: "Committed shell",
       });
       const opened = applyCommand(owner!.db, {
-        type: "surface.open",
+        type: "surface.ensure",
         itemId: item.result.id,
         cwd: process.cwd(),
       });

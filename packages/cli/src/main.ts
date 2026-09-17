@@ -1,11 +1,30 @@
 #!/usr/bin/env bun
 
-import { createClient } from "@work-craft/server/client";
+import { createClient, resolvePaths } from "@work-craft/server/client";
 import { parseArgs, USAGE, UsageError } from "./args.ts";
 import { formatList, formatStatus, readStatus } from "./format.ts";
 
 function printJson(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value)}\n`);
+}
+
+async function waitForDestroyed(): Promise<void> {
+  const paths = resolvePaths();
+  const files = [
+    paths.databasePath,
+    `${paths.databasePath}-wal`,
+    `${paths.databasePath}-shm`,
+    paths.lockPath,
+    paths.socketPath,
+  ];
+  const deadline = Date.now() + 3_000;
+  while (Date.now() < deadline) {
+    if (!(await Promise.all(files.map((path) => Bun.file(path).exists()))).some(Boolean)) {
+      return;
+    }
+    await Bun.sleep(20);
+  }
+  throw new Error("Work Craft destroy completion could not be confirmed within 3 seconds");
 }
 
 async function main(argv: string[]): Promise<number> {
@@ -22,7 +41,7 @@ async function main(argv: string[]): Promise<number> {
 
   try {
     const client = createClient();
-    await client.ensureDaemon();
+    await client.ensureDaemon({ recover: args.command !== "destroy" });
     if (args.command === "list") {
       const snapshot = await client.snapshot();
       if (args.json) {
@@ -30,9 +49,9 @@ async function main(argv: string[]): Promise<number> {
       } else {
         process.stdout.write(formatList(snapshot));
       }
-    } else if (args.command === "open") {
+    } else if (args.command === "ensure") {
       const response = await client.command({
-        type: "surface.open",
+        type: "surface.ensure",
         itemId: args.itemId,
         ...(args.cwd === undefined ? {} : { cwd: args.cwd }),
       });
@@ -47,7 +66,7 @@ async function main(argv: string[]): Promise<number> {
             .map((pane) => pane.id)
             .sort()[0];
         if (surfaceId === undefined || paneId === undefined) {
-          throw new Error("open result did not include a surface and pane");
+          throw new Error("ensure result did not include a surface and pane");
         }
         process.stdout.write(`Surface: ${surfaceId}\nPane: ${paneId}\n`);
       }
@@ -58,12 +77,20 @@ async function main(argv: string[]): Promise<number> {
       } else {
         process.stdout.write(formatStatus(status));
       }
-    } else {
+    } else if (args.command === "stop") {
       const response = await client.command({ type: "daemon.stop" });
       if (args.json) {
         printJson(response.result);
       } else {
         process.stdout.write("Stopped Work Craft\n");
+      }
+    } else {
+      const response = await client.command({ type: "daemon.destroy" });
+      await waitForDestroyed();
+      if (args.json) {
+        printJson(response.result);
+      } else {
+        process.stdout.write("Destroyed Work Craft\n");
       }
     }
     return 0;
