@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import type { TerminalHistory } from "../history.ts";
+import type { TerminalHistory } from "../terminal/history.ts";
 import { encodeBytes } from "../api/protocol.ts";
 import type {
   CategoryKind,
