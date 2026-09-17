@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.1](https://github.com/console-craft/work-craft/compare/v0.1.0...v0.1.1) (2026-09-17)
+
+
+### Bug Fixes
+
+* **test:** tolerate exited acceptance processes ([249f4ff](https://github.com/console-craft/work-craft/commit/249f4ff482acc35973ed59810a84589f608d8b6a))
+* **test:** tolerate exited acceptance processes ([5fa4ffc](https://github.com/console-craft/work-craft/commit/5fa4ffcd49f5f9800d250306dc96c8c1bb2bccc0))
+
 ## 0.1.0 (2026-09-17)
 
 
