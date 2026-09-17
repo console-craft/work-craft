@@ -3,12 +3,13 @@ import { chmod, mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/pro
 import { createConnection, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createClient } from "./client.ts";
-import { openDatabase } from "./database.ts";
+import { createClient } from "../client.ts";
+import { openDatabase } from "../persistence/database.ts";
 import { runDaemon } from "./lifecycle.ts";
 import { resolvePaths } from "./paths.ts";
 
-const MAIN_PATH = join(import.meta.dir, "main.ts");
+const ROOT = join(import.meta.dir, "../../../..");
+const MAIN_PATH = join(import.meta.dir, "../main.ts");
 
 function isAlive(pid: number): boolean {
   try {
@@ -21,7 +22,7 @@ function isAlive(pid: number): boolean {
 
 function spawnDaemon(home: string, env: Record<string, string> = {}) {
   return Bun.spawn([process.execPath, MAIN_PATH], {
-    cwd: join(import.meta.dir, "../../.."),
+    cwd: ROOT,
     env: { ...process.env, ...env, WORK_CRAFT_HOME: home },
     stdin: "ignore",
     stdout: "ignore",
@@ -122,7 +123,7 @@ test("rejects lock ownership lost between PID sync and startup", async () => {
   `,
   );
   const child = Bun.spawn([process.execPath, "--preload", preloadPath, MAIN_PATH], {
-    cwd: join(import.meta.dir, "../../.."),
+    cwd: ROOT,
     env: {
       ...process.env,
       WORK_CRAFT_HOME: home,
@@ -183,7 +184,7 @@ test("serializes a stale contender paused after classifying the lock", async () 
     `,
   );
   const contender = Bun.spawn([process.execPath, "--preload", preloadPath, MAIN_PATH], {
-    cwd: join(import.meta.dir, "../../.."),
+    cwd: ROOT,
     env: {
       ...process.env,
       WORK_CRAFT_HOME: home,

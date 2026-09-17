@@ -3,9 +3,9 @@ import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openDatabase } from "./database.ts";
+import { openDatabase } from "../persistence/database.ts";
 import { TerminalHistory } from "./history.ts";
-import type { PaneStatus } from "./protocol.ts";
+import type { PaneStatus } from "../api/protocol.ts";
 import { resolveShellSpawn, type RuntimePane } from "./restore.ts";
 import { RuntimeRegistry, type RuntimeCallbacks } from "./runtime.ts";
 

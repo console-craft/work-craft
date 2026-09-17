@@ -1,4 +1,4 @@
-import type { PaneStatus } from "./protocol.ts";
+import type { PaneStatus } from "../api/protocol.ts";
 import { resolveShellSpawn, type RuntimePane } from "./restore.ts";
 
 export type RuntimeCallbacks = {

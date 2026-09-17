@@ -3,12 +3,12 @@ import { closeSync, openSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { resolvePaths } from "./paths.ts";
-import { encodeBytes } from "./protocol.ts";
-import type { Command, CommandResponse, ServerMessage, Snapshot } from "./protocol.ts";
-import type { Health } from "./app.ts";
+import { resolvePaths } from "./daemon/paths.ts";
+import { encodeBytes } from "./api/protocol.ts";
+import type { Command, CommandResponse, ServerMessage, Snapshot } from "./api/protocol.ts";
+import type { Health } from "./application/app.ts";
 
-export { decodeBytes } from "./protocol.ts";
+export { decodeBytes } from "./api/protocol.ts";
 export type {
   CategoryKind,
   Command,
@@ -16,7 +16,7 @@ export type {
   LayoutNode,
   ServerMessage,
   Snapshot,
-} from "./protocol.ts";
+} from "./api/protocol.ts";
 
 export type StreamHandlers = {
   onMessage(message: ServerMessage): void;

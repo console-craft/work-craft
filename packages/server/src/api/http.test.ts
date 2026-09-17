@@ -4,10 +4,10 @@ import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import WebSocket from "ws";
-import { createApp } from "./app.ts";
-import { createClient } from "./client.ts";
-import { openDatabase } from "./database.ts";
-import { TerminalHistory } from "./history.ts";
+import { createApp } from "../application/app.ts";
+import { createClient } from "../client.ts";
+import { openDatabase } from "../persistence/database.ts";
+import { TerminalHistory } from "../terminal/history.ts";
 import { startHttpServer } from "./http.ts";
 import { decodeBytes, type ServerMessage, type Snapshot } from "./protocol.ts";
 

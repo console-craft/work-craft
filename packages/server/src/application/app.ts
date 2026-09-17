@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { applyCommand } from "./commands.ts";
-import { TerminalHistory } from "./history.ts";
-import { decodeBytes, encodeBytes, parseCommand } from "./protocol.ts";
+import { TerminalHistory } from "../terminal/history.ts";
+import { decodeBytes, encodeBytes, parseCommand } from "../api/protocol.ts";
 import type {
   ClientMessage,
   Command,
@@ -9,8 +9,8 @@ import type {
   PaneStatus,
   ServerMessage,
   Snapshot,
-} from "./protocol.ts";
-import { RuntimeRegistry } from "./runtime.ts";
+} from "../api/protocol.ts";
+import { RuntimeRegistry } from "../terminal/runtime.ts";
 import { readSnapshot } from "./snapshot.ts";
 
 export type Health = { epoch: string; revision: number; pid: number };

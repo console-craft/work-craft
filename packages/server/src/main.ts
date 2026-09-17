@@ -1,5 +1,5 @@
-import { runDaemon } from "./lifecycle.ts";
-import { resolvePaths } from "./paths.ts";
+import { runDaemon } from "./daemon/lifecycle.ts";
+import { resolvePaths } from "./daemon/paths.ts";
 
 try {
   await runDaemon(resolvePaths());

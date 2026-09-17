@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDatabase } from "./database.ts";
-import { CATEGORIES, readSnapshot } from "./snapshot.ts";
+import { CATEGORIES, readSnapshot } from "../application/snapshot.ts";
 
 function seedSnapshot(db: ReturnType<typeof openDatabase>): void {
   db.exec(`

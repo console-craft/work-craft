@@ -1,4 +1,4 @@
-import type { LayoutNode } from "./protocol.ts";
+import type { LayoutNode } from "../api/protocol.ts";
 
 export function splitLayout(
   root: LayoutNode,
