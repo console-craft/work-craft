@@ -115,6 +115,37 @@ async function persistentAppFixture() {
       await waitForHistory(app, paneId, "before-restart");
       return paneId;
     },
+    async commitInterruptedShell(): Promise<string> {
+      const session = await this.app.execute({ type: "session.create", name: "Main" });
+      const workspace = await this.app.execute({
+        type: "workspace.create",
+        sessionId: session.result.id,
+        name: "Work",
+      });
+      const project = await this.app.execute({
+        type: "project.create",
+        workspaceId: workspace.result.id,
+        category: "implementation",
+        name: "Work Craft",
+      });
+      const item = await this.app.execute({
+        type: "item.create",
+        projectId: project.result.id,
+        kind: "surface",
+        title: "Committed shell",
+      });
+      const opened = applyCommand(owner!.db, {
+        type: "surface.open",
+        itemId: item.result.id,
+        cwd: process.cwd(),
+      });
+      const paneId = opened.result.paneId!;
+      owner!.db.run("UPDATE panes SET restore_policy_json = ? WHERE id = ?", [
+        JSON.stringify({ type: "shell", executable: shellPath, args: [startsPath] }),
+        paneId,
+      ]);
+      return paneId;
+    },
     async crash(): Promise<void> {
       await stop(true);
     },
@@ -248,6 +279,30 @@ test("restores hierarchy, history, layout, and one shell after restart", async (
     );
     await fixture.waitForStartCount(1);
 
+    await restarted.app.recover();
+    expect(await fixture.startCount()).toBe(1);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("restores an interrupted committed shell exactly once without retrying failed panes", async () => {
+  const fixture = await persistentAppFixture();
+  try {
+    const paneId = await fixture.commitInterruptedShell();
+    const failedPaneId = fixture.addRunningPaneAfter(paneId);
+    fixture.db.run("UPDATE panes SET process_status = 'failed' WHERE id = ?", [failedPaneId]);
+    await fixture.crash();
+
+    const restarted = await fixture.restart();
+    await fixture.waitForStartCount(1);
+
+    expect(restarted.app.snapshot().panes.find(({ id }) => id === paneId)?.processStatus).toBe(
+      "running",
+    );
+    expect(
+      restarted.app.snapshot().panes.find(({ id }) => id === failedPaneId)?.processStatus,
+    ).toBe("failed");
     await restarted.app.recover();
     expect(await fixture.startCount()).toBe(1);
   } finally {

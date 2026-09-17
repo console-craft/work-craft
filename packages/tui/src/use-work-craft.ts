@@ -1,15 +1,13 @@
 import {
   createClient,
-  type StreamConnection,
-  type WorkCraftClient,
-} from "@work-craft/server/client";
-import {
   decodeBytes,
   type Command,
   type CommandResponse,
   type ServerMessage,
   type Snapshot,
-} from "@work-craft/server";
+  type StreamConnection,
+  type WorkCraftClient,
+} from "@work-craft/server/client";
 import { useEffect, useSyncExternalStore } from "react";
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected";

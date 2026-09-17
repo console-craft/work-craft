@@ -1,6 +1,6 @@
 import { useKeyboard } from "@opentui/react";
 import { useState } from "react";
-import type { CategoryKind, Command } from "@work-craft/server";
+import type { CategoryKind, Command } from "@work-craft/server/client";
 import { Badge, type BadgeVariant } from "@/components/ui/badge";
 import { CreatePrompt, type CreateKind } from "./create-prompt.tsx";
 import {

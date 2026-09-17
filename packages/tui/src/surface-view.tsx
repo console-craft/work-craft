@@ -1,6 +1,5 @@
 import { useKeyboard } from "@opentui/react";
-import type { Command, LayoutNode, Snapshot } from "@work-craft/server";
-import type { StreamConnection } from "@work-craft/server/client";
+import type { Command, LayoutNode, Snapshot, StreamConnection } from "@work-craft/server/client";
 import { useState } from "react";
 import { TerminalPane } from "./terminal-pane.tsx";
 import type { TerminalBuffer } from "./use-work-craft.ts";

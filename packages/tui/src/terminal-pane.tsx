@@ -1,6 +1,5 @@
 import type { EmbeddedTerminalRenderable } from "@opentui/core";
-import type { StreamConnection } from "@work-craft/server/client";
-import type { Snapshot } from "@work-craft/server";
+import type { Snapshot, StreamConnection } from "@work-craft/server/client";
 import { useEffect, useRef } from "react";
 import type { TerminalBuffer } from "./use-work-craft.ts";
 

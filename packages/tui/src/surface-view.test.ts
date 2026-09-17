@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { LayoutNode } from "@work-craft/server";
+import type { LayoutNode } from "@work-craft/server/client";
 import { projectLayout, tabSelectionCommand, terminalPaneKey } from "./surface-view.tsx";
 
 function splitFixture(): LayoutNode {

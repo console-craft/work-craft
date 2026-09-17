@@ -1,4 +1,4 @@
-import type { Snapshot } from "@work-craft/server";
+import type { Snapshot } from "@work-craft/server/client";
 
 export type NavigationNode = {
   key: string;

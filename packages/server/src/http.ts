@@ -48,14 +48,12 @@ export function startHttpServer(app: WorkCraftApp, socketPath: string): Bun.Serv
         app.unsubscribe(socket);
       },
       message(socket, data) {
-        let message;
         try {
-          message = parseClientMessage(JSON.parse(data.toString()));
+          const message = parseClientMessage(JSON.parse(data.toString()));
+          app.receive(message);
         } catch {
           socket.close(1008, "invalid client message");
-          return;
         }
-        app.receive(message);
       },
       backpressureLimit: 1024 * 1024,
       closeOnBackpressureLimit: true,

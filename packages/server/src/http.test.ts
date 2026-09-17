@@ -76,6 +76,35 @@ test("the Unix socket is owner-only", async () => {
   }
 });
 
+test("bounds normal client requests when the daemon stops responding", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "work-craft-client-timeout-"));
+  const socketPath = join(directory, "work-craft.sock");
+  const server = Bun.serve({
+    unix: socketPath,
+    fetch() {
+      return new Promise<Response>(() => {});
+    },
+  });
+  const timeout = AbortSignal.timeout.bind(AbortSignal);
+  const timeoutSpy = spyOn(AbortSignal, "timeout").mockImplementation(() => timeout(10));
+  const request = createClient({ socketPath }).snapshot();
+  try {
+    const settled = await Promise.race([
+      request.then(
+        () => "resolved",
+        () => "rejected",
+      ),
+      Bun.sleep(100).then(() => "pending"),
+    ]);
+    expect(settled).toBe("rejected");
+  } finally {
+    timeoutSpy.mockRestore();
+    await server.stop(true);
+    await request.catch(() => {});
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("stops the Unix listener when setting owner-only mode fails", async () => {
   const directory = await mkdtemp(join(tmpdir(), "work-craft-http-"));
   const db = openDatabase(join(directory, "work-craft.db"));
@@ -260,6 +289,38 @@ test("closes malformed stream peers with policy violation", async () => {
     });
     expect(code).toBe(1008);
   } finally {
+    await fixture.close();
+  }
+});
+
+test("closes stream peers whose terminal input targets no live pane", async () => {
+  const fixture = await startTestServer();
+  const socket = new WebSocket(`ws+unix:${fixture.socketPath}:/stream`);
+  try {
+    const closed = new Promise<number>((resolve, reject) => {
+      socket.once("open", () =>
+        socket.send(
+          JSON.stringify({
+            type: "terminal.input",
+            paneId: "missing-pane",
+            data: Buffer.from("input").toString("base64"),
+          }),
+        ),
+      );
+      socket.once("close", resolve);
+      socket.once("error", reject);
+    });
+    const code = await Promise.race([
+      closed,
+      Bun.sleep(250).then(() => {
+        throw new Error("Timed out waiting for invalid stream peer to close");
+      }),
+    ]);
+
+    expect(code).toBe(1008);
+    expect((await fixture.client.health()).pid).toBe(process.pid);
+  } finally {
+    socket.terminate();
     await fixture.close();
   }
 });

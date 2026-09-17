@@ -1,4 +1,7 @@
 import { expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { openDatabase } from "./database.ts";
 import { CATEGORIES, readSnapshot } from "./snapshot.ts";
 
@@ -48,6 +51,17 @@ test("migrates an empty database and exposes six fixed categories", () => {
     sessions: [],
   });
   db.close();
+});
+
+test("makes acknowledged file-backed transactions power-loss durable", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "work-craft-database-"));
+  const db = openDatabase(join(directory, "work-craft.db"));
+  try {
+    expect(db.query<{ synchronous: number }, []>("PRAGMA synchronous").get()?.synchronous).toBe(2);
+  } finally {
+    db.close();
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("reads a deterministic snapshot from persisted rows", () => {

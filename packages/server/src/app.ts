@@ -86,7 +86,7 @@ export function createApp(options: {
     const interrupted = options.db.transaction(() => {
       const rows = options.db
         .query<{ id: string }, []>(
-          "SELECT id FROM panes WHERE process_status IN ('running', 'starting') ORDER BY id",
+          "SELECT id FROM panes WHERE process_status IN ('running', 'starting', 'interrupted') ORDER BY id",
         )
         .all();
       const update = options.db.query(
