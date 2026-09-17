@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/console-craft/work-craft/compare/v0.1.1...v0.2.0) (2026-09-17)
+
+
+### Features
+
+* **server:** add destroy command ([#10](https://github.com/console-craft/work-craft/issues/10)) ([60eec32](https://github.com/console-craft/work-craft/commit/60eec32374cb7c12441656776fb6734ebc72ea41))
+
 ## [0.1.1](https://github.com/console-craft/work-craft/compare/v0.1.0...v0.1.1) (2026-09-17)
 
 
