@@ -3,7 +3,7 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createClient, type StreamConnection } from "./client.ts";
-import { resolvePaths } from "./paths.ts";
+import { resolvePaths } from "./daemon/paths.ts";
 import { decodeBytes, type Snapshot } from "./api/protocol.ts";
 
 const ROOT = join(import.meta.dir, "../../..");

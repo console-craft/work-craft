@@ -17,9 +17,9 @@ import {
   writeSync,
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { createApp, type WorkCraftApp } from "./application/app.ts";
-import { openDatabase } from "./persistence/database.ts";
-import { startHttpServer } from "./api/http.ts";
+import { createApp, type WorkCraftApp } from "../application/app.ts";
+import { openDatabase } from "../persistence/database.ts";
+import { startHttpServer } from "../api/http.ts";
 import type { WorkCraftPaths } from "./paths.ts";
 
 type FileIdentity = { dev: bigint; ino: bigint; ctimeNs: bigint };

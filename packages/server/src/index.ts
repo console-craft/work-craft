@@ -4,7 +4,7 @@ export * from "./application/commands.ts";
 export * from "./persistence/database.ts";
 export * from "./api/http.ts";
 export * from "./terminal/history.ts";
-export * from "./paths.ts";
+export * from "./daemon/paths.ts";
 export * from "./api/protocol.ts";
 export * from "./terminal/restore.ts";
 export * from "./terminal/runtime.ts";

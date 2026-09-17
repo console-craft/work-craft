@@ -3,7 +3,7 @@ import { closeSync, openSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { resolvePaths } from "./paths.ts";
+import { resolvePaths } from "./daemon/paths.ts";
 import { encodeBytes } from "./api/protocol.ts";
 import type { Command, CommandResponse, ServerMessage, Snapshot } from "./api/protocol.ts";
 import type { Health } from "./application/app.ts";
