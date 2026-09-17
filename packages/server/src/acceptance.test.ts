@@ -312,7 +312,7 @@ test.serial(
         "one restored shell per pane",
       );
 
-      expect(await runCli(home, ["list"])).toEqual({
+      expect(await runCli(home, ["snapshot"])).toEqual({
         exitCode: 0,
         stderr: "",
         stdout:
@@ -327,7 +327,7 @@ test.serial(
           `    Collaboration\n` +
           `    Operations\n`,
       });
-      const status = await runCli(home, ["status", "--json"]);
+      const status = await runCli(home, ["daemon", "status", "--json"]);
       expect(status.exitCode).toBe(0);
       expect(status.stderr).toBe("");
       expect(JSON.parse(status.stdout)).toMatchObject({
@@ -344,7 +344,7 @@ test.serial(
           panes: 2,
         },
       });
-      expect(await runCli(home, ["stop"])).toEqual({
+      expect(await runCli(home, ["daemon", "stop"])).toEqual({
         exitCode: 0,
         stderr: "",
         stdout: "Stopped Work Craft\n",

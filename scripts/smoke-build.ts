@@ -93,12 +93,12 @@ async function waitForSocketRemoval(): Promise<void> {
 }
 
 try {
-  const status = JSON.parse(await run(["status", "--json"])) as { running?: unknown };
+  const status = JSON.parse(await run(["daemon", "status", "--json"])) as { running?: unknown };
   if (status.running !== true) {
     throw new Error("compiled status did not report a running daemon");
   }
   await smokeTui();
-  await run(["stop", "--json"]);
+  await run(["daemon", "stop", "--json"]);
   await waitForSocketRemoval();
 } finally {
   if (existsSync(socketPath)) {
