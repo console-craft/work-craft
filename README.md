@@ -52,6 +52,20 @@ bun run build
 
 The executable is written to `dist/work-craft`. Building does not install or copy it outside the repository.
 
+Build and install it to `~/.local/bin` with:
+
+```sh
+bun run build:install
+```
+
+Set `WORK_CRAFT_BIN_DIR` to install elsewhere:
+
+```sh
+WORK_CRAFT_BIN_DIR="$HOME/bin" bun run build:install
+```
+
+The installer creates the destination directory and warns if it is not on `PATH`. It does not modify shell configuration.
+
 The TUI creates and navigates sessions, workspaces, projects, items, tabs, and terminal splits. The CLI exposes snapshot, hierarchy creation, surface/tab/pane operations, and daemon lifecycle operations with plain-text or JSON output.
 
 ## Local State
