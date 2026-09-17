@@ -340,7 +340,10 @@ async function socketIsHealthy(socketPath: string): Promise<boolean> {
   }
 }
 
-export async function runDaemon(paths: WorkCraftPaths): Promise<void> {
+export async function runDaemon(
+  paths: WorkCraftPaths,
+  options: { recover?: boolean } = {},
+): Promise<void> {
   mkdirSync(paths.stateDir, { recursive: true, mode: 0o700 });
   chmodSync(paths.stateDir, 0o700);
 
@@ -353,6 +356,7 @@ export async function runDaemon(paths: WorkCraftPaths): Promise<void> {
   let forceShutdown = false;
   let startupComplete = false;
   let stopRequested = false;
+  let destroyRequested = false;
   let resolveStopped!: () => void;
   let rejectStopped!: (error: unknown) => void;
   const stopped = new Promise<void>((resolve, reject) => {
@@ -373,11 +377,13 @@ export async function runDaemon(paths: WorkCraftPaths): Promise<void> {
     }
     shutdownPromise ??= (async () => {
       let failure: unknown;
-      async function attempt(action: () => void | Promise<void>): Promise<void> {
+      async function attempt(action: () => void | Promise<void>): Promise<boolean> {
         try {
           await action();
+          return true;
         } catch (error) {
           failure ??= error;
+          return false;
         }
       }
 
@@ -398,9 +404,18 @@ export async function runDaemon(paths: WorkCraftPaths): Promise<void> {
         await stopped;
       });
       await attempt(async () => app?.history.flush());
-      await attempt(async () => app?.runtime.stopAll({ preserveStatus: true }));
-      await attempt(async () => app?.history.close());
-      await attempt(() => db?.close());
+      const runtimesStopped = await attempt(async () =>
+        app?.runtime.stopAll({ preserveStatus: true }),
+      );
+      const historyClosed = await attempt(async () => app?.history.close());
+      const databaseClosed = await attempt(() => db?.close());
+      if (destroyRequested && runtimesStopped && historyClosed && databaseClosed) {
+        await attempt(() => {
+          rmSync(`${paths.databasePath}-wal`, { force: true });
+          rmSync(`${paths.databasePath}-shm`, { force: true });
+          rmSync(paths.databasePath, { force: true });
+        });
+      }
       await attempt(() => removeOwned(paths.socketPath, socketIdentity));
       await attempt(() => removeOwned(paths.lockPath, lock?.identity));
       await attempt(() => {
@@ -451,8 +466,16 @@ export async function runDaemon(paths: WorkCraftPaths): Promise<void> {
     }
 
     db = openDatabase(paths.databasePath);
-    app = createApp({ db, onStop: () => requestShutdown(true) });
-    await app.recover();
+    app = createApp({
+      db,
+      onStop: (destroy) => {
+        destroyRequested ||= destroy;
+        requestShutdown(true);
+      },
+    });
+    if (options.recover !== false) {
+      await app.recover();
+    }
     if (await stopStartupIfRequested()) {
       return;
     }

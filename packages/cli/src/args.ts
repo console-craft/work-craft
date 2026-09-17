@@ -1,19 +1,20 @@
 export type CliArgs =
-  | { command: "list" | "status" | "stop"; json: boolean }
-  | { command: "open"; itemId: string; cwd?: string; json: boolean };
+  | { command: "list" | "status" | "stop" | "destroy"; json: boolean }
+  | { command: "ensure"; itemId: string; cwd?: string; json: boolean };
 
 export const USAGE = `Usage:
   work-craft list [--json]
-  work-craft open <item-id> [--cwd <path>] [--json]
+  work-craft ensure <item-id> [--cwd <path>] [--json]
   work-craft status [--json]
   work-craft stop [--json]
+  work-craft destroy [--json]
 `;
 
 export class UsageError extends Error {}
 
 export function parseArgs(argv: string[]): CliArgs {
   const [command, ...values] = argv;
-  if (command === "list" || command === "status" || command === "stop") {
+  if (command === "list" || command === "status" || command === "stop" || command === "destroy") {
     if (values.length === 0) {
       return { command, json: false };
     }
@@ -22,7 +23,7 @@ export function parseArgs(argv: string[]): CliArgs {
     }
     throw new UsageError("invalid arguments");
   }
-  if (command !== "open" || values[0] === undefined || values[0].startsWith("--")) {
+  if (command !== "ensure" || values[0] === undefined || values[0].startsWith("--")) {
     throw new UsageError("invalid arguments");
   }
 

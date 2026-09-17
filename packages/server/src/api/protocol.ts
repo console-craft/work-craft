@@ -72,6 +72,7 @@ export type CommandResult = {
   tabId?: string;
   paneId?: string;
   stopping?: true;
+  destroying?: true;
 };
 
 export type CommandResponse = { ok: true; revision: number; result: CommandResult };
@@ -87,13 +88,14 @@ export type Command =
       title: string;
       data?: Record<string, unknown>;
     }
-  | { type: "surface.open"; itemId: string; cwd?: string }
-  | { type: "surface.openHere"; projectId: string; cwd?: string }
+  | { type: "surface.ensure"; itemId: string; cwd?: string }
+  | { type: "surface.ensureHere"; projectId: string; cwd?: string }
   | { type: "tab.create"; surfaceId: string; title: string }
   | { type: "surface.selectTab"; surfaceId: string; tabId: string }
   | { type: "pane.split"; paneId: string; direction: "horizontal" | "vertical"; cwd?: string }
   | { type: "process.restart"; paneId: string }
-  | { type: "daemon.stop" };
+  | { type: "daemon.stop" }
+  | { type: "daemon.destroy" };
 
 export type ClientMessage =
   | { type: "terminal.input"; paneId: string; data: string }
@@ -189,13 +191,13 @@ export function parseCommand(value: unknown): Command {
         ...(data === undefined ? {} : { data }),
       };
     }
-    case "surface.open":
+    case "surface.ensure":
       return {
         type,
         itemId: idValue(input.itemId, "itemId"),
         ...(input.cwd === undefined ? {} : { cwd: optionalString(input.cwd, "cwd") }),
       };
-    case "surface.openHere":
+    case "surface.ensureHere":
       return {
         type,
         projectId: idValue(input.projectId, "projectId"),
@@ -227,6 +229,7 @@ export function parseCommand(value: unknown): Command {
     case "process.restart":
       return { type, paneId: idValue(input.paneId, "paneId") };
     case "daemon.stop":
+    case "daemon.destroy":
       return { type };
     default:
       throw new ProtocolError(`unknown command type: ${type}`);

@@ -9,7 +9,7 @@ Distribute Work Craft as one standalone executable while preserving the three so
 The `work-craft` executable selects its mode from command-line arguments:
 
 - no arguments starts the TUI;
-- documented commands such as `list`, `open`, `status`, and `stop` run the non-interactive CLI;
+- documented commands such as `list`, `ensure`, `status`, `stop`, and `destroy` run the non-interactive CLI;
 - one undocumented internal argument starts the daemon.
 
 The internal daemon mode exists only so a compiled client can re-execute the same binary. It is not part of the public CLI contract.

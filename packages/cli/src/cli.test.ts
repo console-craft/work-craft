@@ -18,10 +18,14 @@ async function tempHome(): Promise<string> {
   return mkdtemp(join(tmpdir(), "work-craft-cli-"));
 }
 
-async function runCli(home: string, args: string[]): Promise<CliResult> {
+async function runCli(
+  home: string,
+  args: string[],
+  env: Record<string, string> = {},
+): Promise<CliResult> {
   const child = Bun.spawn([process.execPath, CLI_PATH, ...args], {
     cwd: ROOT,
-    env: { ...process.env, WORK_CRAFT_HOME: home, NO_COLOR: "1" },
+    env: { ...process.env, ...env, WORK_CRAFT_HOME: home, NO_COLOR: "1" },
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
@@ -32,6 +36,17 @@ async function runCli(home: string, args: string[]): Promise<CliResult> {
     new Response(child.stderr).text(),
   ]);
   return { exitCode, stdout, stderr };
+}
+
+async function waitForPath(path: string): Promise<void> {
+  const deadline = Date.now() + 3_000;
+  while (Date.now() < deadline) {
+    if (await Bun.file(path).exists()) {
+      return;
+    }
+    await Bun.sleep(20);
+  }
+  throw new Error(`Timed out waiting for ${path}`);
 }
 
 async function seedItems(home: string): Promise<{ first: string; second: string }> {
@@ -296,7 +311,7 @@ async function cleanup(
   throw cleanupError(home);
 }
 
-test("starts, lists, opens, reports status, and stops", async () => {
+test("starts, lists, ensures, reports status, and stops", async () => {
   const home = await tempHome();
   try {
     const initialStatus = await runCli(home, ["status", "--json"]);
@@ -358,7 +373,7 @@ test("starts, lists, opens, reports status, and stops", async () => {
         `    Operations\n`,
     });
 
-    const openedJson = await runCli(home, ["open", items.first, "--cwd", home, "--json"]);
+    const openedJson = await runCli(home, ["ensure", items.first, "--cwd", home, "--json"]);
     expect(openedJson.exitCode).toBe(0);
     expect(openedJson.stderr).toBe("");
     const openResult = JSON.parse(openedJson.stdout);
@@ -372,13 +387,13 @@ test("starts, lists, opens, reports status, and stops", async () => {
     expect((await client.snapshot()).panes.find(({ id }) => id === openResult.paneId)?.cwd).toBe(
       home,
     );
-    expect(await runCli(home, ["open", items.first])).toEqual({
+    expect(await runCli(home, ["ensure", items.first])).toEqual({
       exitCode: 0,
       stderr: "",
       stdout: `Surface: ${openResult.surfaceId}\nPane: ${openResult.paneId}\n`,
     });
 
-    const opened = await runCli(home, ["open", items.second]);
+    const opened = await runCli(home, ["ensure", items.second]);
     expect(opened.exitCode).toBe(0);
     expect(opened.stderr).toBe("");
     expect(opened.stdout).toMatch(/^Surface: [0-9a-f-]+\nPane: [0-9a-f-]+\n$/);
@@ -434,14 +449,15 @@ test("rejects malformed command lines with usage and exit 2", async () => {
     ["status", "--json", "--json"],
     ["stop", "extra"],
     ["stop", "--json", "--json"],
-    ["open"],
-    ["open", "--json"],
-    ["open", "item", "extra"],
-    ["open", "item", "--unknown"],
-    ["open", "item", "--json", "--json"],
-    ["open", "item", "--cwd"],
-    ["open", "item", "--cwd", "one", "--cwd", "two"],
-    ["open", "item", "--cwd", "one", "extra"],
+    ["open", "item"],
+    ["ensure"],
+    ["ensure", "--json"],
+    ["ensure", "item", "extra"],
+    ["ensure", "item", "--unknown"],
+    ["ensure", "item", "--json", "--json"],
+    ["ensure", "item", "--cwd"],
+    ["ensure", "item", "--cwd", "one", "--cwd", "two"],
+    ["ensure", "item", "--cwd", "one", "extra"],
   ];
   try {
     for (const args of cases) {
@@ -452,10 +468,43 @@ test("rejects malformed command lines with usage and exit 2", async () => {
   }
 }, 20_000);
 
+test("destroy removes stopped state without restoring panes", async () => {
+  const home = await tempHome();
+  const shellPath = join(home, "test-shell");
+  const startedPath = join(home, "shell-started");
+  const env = { SHELL: shellPath, WORK_CRAFT_TEST_STARTED: startedPath };
+  await writeFile(
+    shellPath,
+    "#!/bin/sh\nprintf started > \"$WORK_CRAFT_TEST_STARTED\"\ntrap 'exit 0' TERM\nwhile :; do sleep 0.1; done\n",
+    { mode: 0o755 },
+  );
+  try {
+    await runCli(home, ["status"], env);
+    const items = await seedItems(home);
+    expect((await runCli(home, ["ensure", items.first], env)).exitCode).toBe(0);
+    await waitForPath(startedPath);
+    expect((await runCli(home, ["stop"], env)).exitCode).toBe(0);
+    await rm(startedPath, { force: true });
+
+    expect(await runCli(home, ["destroy"], env)).toEqual({
+      exitCode: 0,
+      stderr: "",
+      stdout: "Destroyed Work Craft\n",
+    });
+    expect(await Bun.file(startedPath).exists()).toBe(false);
+    expect(await Bun.file(shellPath).exists()).toBe(true);
+    expect(await Bun.file(join(home, "work-craft.sqlite")).exists()).toBe(false);
+    expect(await Bun.file(join(home, "daemon.lock")).exists()).toBe(false);
+    expect(await Bun.file(join(home, "work-craft.sock")).exists()).toBe(false);
+  } finally {
+    await cleanup(home);
+  }
+}, 20_000);
+
 test("reports command failures without usage or a stack", async () => {
   const home = await tempHome();
   try {
-    expect(await runCli(home, ["open", "missing-item"])).toEqual({
+    expect(await runCli(home, ["ensure", "missing-item"])).toEqual({
       exitCode: 1,
       stdout: "",
       stderr: "item not found\n",

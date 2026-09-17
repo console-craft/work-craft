@@ -136,7 +136,7 @@ The server returns structured data; React controls its presentation. Category sc
 
 The CLI is a non-interactive Unix-style API client. It parses arguments, calls the server, emits plain text or JSON, and exits. It contains no TUI framework or duplicate business logic.
 
-Representative commands include `list`, `open`, `status`, and `stop`.
+Representative commands include `list`, `ensure`, `status`, `stop`, and `destroy`.
 
 ## Server Components
 
@@ -183,7 +183,7 @@ POST /command
 WS   /stream
 ```
 
-`POST /command` accepts a discriminated command such as `item.create`, `surface.open`, `pane.split`, or `process.restart`. HTTP and WebSocket callers use the same command handler.
+`POST /command` accepts a discriminated command such as `item.create`, `surface.ensure`, `pane.split`, or `process.restart`. HTTP and WebSocket callers use the same command handler.
 
 The WebSocket carries the initial TUI snapshot, ordered domain updates, process state, terminal output, and interactive terminal input. Messages use JSON initially. Binary framing, codec negotiation, and separate rendering protocols are deferred until profiling demonstrates a need.
 
@@ -293,7 +293,7 @@ The first useful implementation contains:
 - generic projects, items, and surface items;
 - tabs, split layouts, and terminal panes;
 - shell restoration and bounded terminal history;
-- a minimal `list`, `open`, `status`, and `stop` CLI;
+- a minimal `list`, `ensure`, `status`, `stop`, and `destroy` CLI;
 - a React/OpenTUI shell that reaches and operates those capabilities.
 
 Category-specific screens, `gh` and `az` views, Neovim and OpenCode metadata integration, remote access, and agent automation follow as separate increments. Generic surface items keep the product useful while those richer capabilities are developed.

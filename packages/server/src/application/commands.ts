@@ -3,7 +3,10 @@ import { splitLayout } from "./layout.ts";
 import { ProtocolError } from "../api/protocol.ts";
 import type { Command, CommandResult, LayoutNode } from "../api/protocol.ts";
 
-export type DomainEffect = { type: "spawn-pane"; paneId: string } | { type: "stop-daemon" };
+export type DomainEffect =
+  | { type: "spawn-pane"; paneId: string }
+  | { type: "stop-daemon" }
+  | { type: "destroy-daemon" };
 
 type CommandOutcome = { result: CommandResult; effects: DomainEffect[] };
 
@@ -24,7 +27,7 @@ function createShellPane(
   return paneId;
 }
 
-function openSurface(db: Database, itemId: string, cwd?: string): CommandOutcome {
+function ensureSurface(db: Database, itemId: string, cwd?: string): CommandOutcome {
   if (db.query("SELECT 1 FROM items WHERE id = ?").get(itemId) === null) {
     throw new ProtocolError("item not found");
   }
@@ -123,9 +126,14 @@ export function applyCommand(
         result: { id: "daemon", stopping: true },
         effects: [{ type: "stop-daemon" }],
       };
-    case "surface.open":
-      return db.transaction(() => openSurface(db, command.itemId, command.cwd))();
-    case "surface.openHere":
+    case "daemon.destroy":
+      return {
+        result: { id: "daemon", destroying: true },
+        effects: [{ type: "destroy-daemon" }],
+      };
+    case "surface.ensure":
+      return db.transaction(() => ensureSurface(db, command.itemId, command.cwd))();
+    case "surface.ensureHere":
       return db.transaction(() => {
         if (db.query("SELECT 1 FROM projects WHERE id = ?").get(command.projectId) === null) {
           throw new ProtocolError("project not found");
@@ -146,7 +154,7 @@ export function applyCommand(
             JSON.stringify({ scope: "project-terminal" }),
           );
         }
-        return openSurface(db, item.id, command.cwd);
+        return ensureSurface(db, item.id, command.cwd);
       })();
     case "tab.create":
       return db.transaction(() => {

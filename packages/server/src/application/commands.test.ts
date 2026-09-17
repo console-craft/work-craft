@@ -80,15 +80,24 @@ test("stops the daemon without durable state", () => {
   expect(readSnapshot(db, "epoch", 0).sessions).toEqual([]);
 });
 
-test("opening an item lazily creates one surface, tab, and shell pane", () => {
+test("requests daemon destruction without mutating durable state", () => {
+  const db = openDatabase(":memory:");
+  expect(applyCommand(db, { type: "daemon.destroy" })).toEqual({
+    result: { id: "daemon", destroying: true },
+    effects: [{ type: "destroy-daemon" }],
+  });
+  expect(readSnapshot(db, "epoch", 0).sessions).toEqual([]);
+});
+
+test("ensuring an item lazily creates one surface, tab, and shell pane", () => {
   const fixture = organizationalFixture();
   const opened = applyCommand(fixture.db, {
-    type: "surface.open",
+    type: "surface.ensure",
     itemId: fixture.itemId,
     cwd: process.cwd(),
   });
   const reopened = applyCommand(fixture.db, {
-    type: "surface.open",
+    type: "surface.ensure",
     itemId: fixture.itemId,
     cwd: "/must-not-replace-the-original-cwd",
   });
@@ -121,7 +130,7 @@ test("opening an item lazily creates one surface, tab, and shell pane", () => {
   ]);
 });
 
-test("openHere creates and reuses only the project-terminal item", () => {
+test("ensureHere creates and reuses only the project-terminal item", () => {
   const fixture = organizationalFixture();
   applyCommand(fixture.db, {
     type: "item.create",
@@ -132,11 +141,11 @@ test("openHere creates and reuses only the project-terminal item", () => {
   });
 
   const opened = applyCommand(fixture.db, {
-    type: "surface.openHere",
+    type: "surface.ensureHere",
     projectId: fixture.projectId,
   });
   const reopened = applyCommand(fixture.db, {
-    type: "surface.openHere",
+    type: "surface.ensureHere",
     projectId: fixture.projectId,
     cwd: "/must-not-replace-the-original-cwd",
   });
@@ -159,8 +168,8 @@ test("creates and selects tabs only within their owning surface", () => {
     kind: "generic",
     title: "Second",
   }).result.id;
-  const first = applyCommand(fixture.db, { type: "surface.open", itemId: fixture.itemId });
-  const second = applyCommand(fixture.db, { type: "surface.open", itemId: secondItemId });
+  const first = applyCommand(fixture.db, { type: "surface.ensure", itemId: fixture.itemId });
+  const second = applyCommand(fixture.db, { type: "surface.ensure", itemId: secondItemId });
   const created = applyCommand(fixture.db, {
     type: "tab.create",
     surfaceId: first.result.surfaceId!,
@@ -194,7 +203,7 @@ test("creates and selects tabs only within their owning surface", () => {
 test("splits a pane with its durable policy and inherits cwd unless overridden", () => {
   const fixture = organizationalFixture();
   const opened = applyCommand(fixture.db, {
-    type: "surface.open",
+    type: "surface.ensure",
     itemId: fixture.itemId,
     cwd: "/tmp",
   });
@@ -247,7 +256,7 @@ test("restart validates the pane and returns a spawn intent without runtime owne
   expect(() => applyCommand(fixture.db, { type: "process.restart", paneId: "missing" })).toThrow(
     new ProtocolError("pane not found"),
   );
-  const opened = applyCommand(fixture.db, { type: "surface.open", itemId: fixture.itemId });
+  const opened = applyCommand(fixture.db, { type: "surface.ensure", itemId: fixture.itemId });
 
   expect(
     applyCommand(fixture.db, { type: "process.restart", paneId: opened.result.paneId! }),
@@ -262,12 +271,12 @@ test("app starts committed panes once and suppresses a live restart without a re
   const app = createApp({ db: fixture.db });
   apps.push(app);
 
-  const opened = await app.execute({ type: "surface.open", itemId: fixture.itemId });
+  const opened = await app.execute({ type: "surface.ensure", itemId: fixture.itemId });
   const revision = opened.revision;
   const paneId = opened.result.paneId!;
   expect(app.runtime.isLive(paneId)).toBe(true);
 
-  expect((await app.execute({ type: "surface.open", itemId: fixture.itemId })).revision).toBe(
+  expect((await app.execute({ type: "surface.ensure", itemId: fixture.itemId })).revision).toBe(
     revision,
   );
   expect((await app.execute({ type: "process.restart", paneId })).revision).toBe(revision);
@@ -280,7 +289,7 @@ test("app keeps committed surface state when spawning fails", async () => {
   apps.push(app);
   const cwd = join(tmpdir(), `work-craft-missing-${crypto.randomUUID()}`);
 
-  const response = await app.execute({ type: "surface.open", itemId: fixture.itemId, cwd });
+  const response = await app.execute({ type: "surface.ensure", itemId: fixture.itemId, cwd });
   const snapshot = app.snapshot();
 
   expect(response.ok).toBe(true);
