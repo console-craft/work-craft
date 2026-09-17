@@ -122,6 +122,14 @@ async function main(argv: string[]): Promise<number> {
       if (args.command === "daemon.destroy") {
         await waitForDestroyed();
       }
+      if (response.result.paneId !== undefined) {
+        const pane = (await client.snapshot()).panes.find(
+          ({ id }) => id === response.result.paneId,
+        );
+        if (pane?.processStatus === "failed") {
+          throw new Error(pane.errorText ?? `Pane runtime failed: ${pane.id}`);
+        }
+      }
       if (args.json) {
         printJson(response.result);
       } else {

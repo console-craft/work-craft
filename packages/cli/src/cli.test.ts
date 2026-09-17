@@ -602,6 +602,32 @@ test("reports command failures without usage or a stack", async () => {
   }
 }, 10_000);
 
+test("reports runtime startup failures while preserving pane state", async () => {
+  const home = await tempHome();
+  const shellPath = join(home, "missing-shell");
+  const env = { SHELL: shellPath };
+  try {
+    await runCli(home, ["daemon", "status"], env);
+    const items = await seedItems(home);
+
+    expect(await runCli(home, ["surface", "ensure", "--item", items.first], env)).toEqual({
+      exitCode: 1,
+      stdout: "",
+      stderr: `Shell executable not found: ${shellPath}\n`,
+    });
+
+    const snapshot = await createClient({ socketPath: join(home, "work-craft.sock") }).snapshot();
+    expect(snapshot.panes).toContainEqual(
+      expect.objectContaining({
+        processStatus: "failed",
+        errorText: `Shell executable not found: ${shellPath}`,
+      }),
+    );
+  } finally {
+    await cleanup(home);
+  }
+}, 10_000);
+
 test("cleanup never signals PIDs from empty, malformed, or stale locks", async () => {
   const kill = spyOn(process, "kill").mockImplementation(() => {
     throw new Error("signal blocked by test");
