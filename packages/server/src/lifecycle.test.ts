@@ -4,7 +4,7 @@ import { createConnection, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createClient } from "./client.ts";
-import { openDatabase } from "./database.ts";
+import { openDatabase } from "./persistence/database.ts";
 import { runDaemon } from "./lifecycle.ts";
 import { resolvePaths } from "./paths.ts";
 

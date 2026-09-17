@@ -18,7 +18,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { createApp, type WorkCraftApp } from "./application/app.ts";
-import { openDatabase } from "./database.ts";
+import { openDatabase } from "./persistence/database.ts";
 import { startHttpServer } from "./api/http.ts";
 import type { WorkCraftPaths } from "./paths.ts";
 
