@@ -8,7 +8,8 @@ function snapshotFixture(overrides: Partial<Snapshot> = {}): Snapshot {
     epoch: "epoch-a",
     revision: 4,
     sessions: [{ id: "session-1", name: "Main", position: 0 }],
-    workspaces: [{ id: "workspace-1", sessionId: "session-1", name: "Work", position: 0 }],
+    workspaces: [{ id: "workspace-1", name: "Work" }],
+    sessionWorkspaces: [{ sessionId: "session-1", workspaceId: "workspace-1", position: 0 }],
     categories: [
       { workspaceId: "workspace-1", kind: "inbox", title: "Inbox", position: 0 },
       { workspaceId: "workspace-1", kind: "today", title: "Today", position: 1 },

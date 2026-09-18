@@ -58,7 +58,12 @@ test("creates the durable navigation hierarchy transactionally", () => {
   });
 
   const snapshot = readSnapshot(db, "epoch", 4);
-  expect(snapshot.workspaces[0]?.name).toBe("Work");
+  expect(snapshot.workspaces).toContainEqual({ id: workspace.id, name: "Work" });
+  expect(snapshot.sessionWorkspaces).toContainEqual({
+    sessionId: session.id,
+    workspaceId: workspace.id,
+    position: 0,
+  });
   expect(snapshot.categories.filter((entry) => entry.workspaceId === workspace.id)).toHaveLength(6);
   expect(snapshot.items[0]?.title).toBe("First slice");
 });

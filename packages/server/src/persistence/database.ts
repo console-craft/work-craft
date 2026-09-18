@@ -12,6 +12,37 @@ CREATE TABLE terminal_chunks (id INTEGER PRIMARY KEY AUTOINCREMENT, pane_id TEXT
 CREATE INDEX terminal_chunks_pane_cursor ON terminal_chunks(pane_id, cursor_end);
 `;
 
+const MIGRATION_2 = `
+CREATE TABLE session_workspaces (
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  position INTEGER NOT NULL,
+  PRIMARY KEY (session_id, workspace_id)
+);
+INSERT INTO session_workspaces (session_id, workspace_id, position)
+SELECT session_id, id, position FROM workspaces;
+CREATE TABLE workspaces_new (id TEXT PRIMARY KEY, name TEXT NOT NULL);
+INSERT INTO workspaces_new (id, name) SELECT id, name FROM workspaces;
+DROP TABLE workspaces;
+ALTER TABLE workspaces_new RENAME TO workspaces;
+`;
+
+function migrateToVersion2(db: Database): void {
+  db.exec("PRAGMA foreign_keys = OFF");
+  try {
+    db.transaction(() => {
+      db.exec(MIGRATION_2);
+      const violation = db.query("PRAGMA foreign_key_check").get();
+      if (violation !== null) {
+        throw new Error("Database migration created a foreign-key violation");
+      }
+      db.exec("PRAGMA user_version = 2");
+    })();
+  } finally {
+    db.exec("PRAGMA foreign_keys = ON");
+  }
+}
+
 export function openDatabase(path: string): Database {
   const db = new Database(path, { create: true });
   db.exec("PRAGMA foreign_keys = ON");
@@ -20,13 +51,17 @@ export function openDatabase(path: string): Database {
     db.exec("PRAGMA synchronous = FULL");
   }
 
-  const version =
+  let version =
     db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version ?? 0;
   if (version === 0) {
     db.transaction(() => {
       db.exec(MIGRATION_1);
       db.exec("PRAGMA user_version = 1");
     })();
+    version = 1;
+  }
+  if (version < 2) {
+    migrateToVersion2(db);
   }
   return db;
 }

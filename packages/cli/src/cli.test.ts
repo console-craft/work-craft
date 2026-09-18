@@ -389,15 +389,19 @@ test("creates resources and controls surfaces through canonical commands", async
 
     const sessions = snapshot.sessions as Array<Record<string, unknown>>;
     const workspaces = snapshot.workspaces as Array<Record<string, unknown>>;
+    const sessionWorkspaces = snapshot.sessionWorkspaces as Array<Record<string, unknown>>;
     const projects = snapshot.projects as Array<Record<string, unknown>>;
     const items = snapshot.items as Array<Record<string, unknown>>;
     const surfaces = snapshot.surfaces as Array<Record<string, unknown>>;
     const tabs = snapshot.tabs as Array<Record<string, unknown>>;
 
     expect(sessions).toContainEqual(expect.objectContaining({ id: session.id, name: "Main" }));
-    expect(workspaces).toContainEqual(
-      expect.objectContaining({ id: workspace.id, sessionId: session.id, name: "Work" }),
-    );
+    expect(workspaces).toContainEqual(expect.objectContaining({ id: workspace.id, name: "Work" }));
+    expect(sessionWorkspaces).toContainEqual({
+      sessionId: session.id,
+      workspaceId: workspace.id,
+      position: 0,
+    });
     expect(projects).toContainEqual(
       expect.objectContaining({
         id: project.id,
@@ -887,6 +891,7 @@ test("retries status reads until snapshot and health revisions match", async () 
     revision: 1,
     sessions: [],
     workspaces: [],
+    sessionWorkspaces: [],
     categories: [],
     projects: [],
     items: [],
@@ -944,6 +949,7 @@ test("bounds incoherent status reads", async () => {
         revision: calls,
         sessions: [],
         workspaces: [],
+        sessionWorkspaces: [],
         categories: [],
         projects: [],
         items: [],

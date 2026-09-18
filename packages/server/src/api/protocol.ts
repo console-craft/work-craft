@@ -24,7 +24,8 @@ export type Snapshot = {
   epoch: string;
   revision: number;
   sessions: { id: string; name: string; position: number }[];
-  workspaces: { id: string; sessionId: string; name: string; position: number }[];
+  workspaces: { id: string; name: string }[];
+  sessionWorkspaces: { sessionId: string; workspaceId: string; position: number }[];
   categories: { workspaceId: string; kind: CategoryKind; title: string; position: number }[];
   projects: {
     id: string;

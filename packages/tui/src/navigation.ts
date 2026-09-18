@@ -27,45 +27,53 @@ export function buildNavigation(snapshot: Snapshot): NavigationNode[] {
     kind: "session",
     id: session.id,
     label: session.name,
-    children: snapshot.workspaces
-      .filter((workspace) => workspace.sessionId === session.id)
-      .sort(byPosition)
-      .map((workspace) => ({
-        key: `workspace:${workspace.id}`,
-        kind: "workspace",
-        id: workspace.id,
-        label: workspace.name,
-        children: snapshot.categories
-          .filter((category) => category.workspaceId === workspace.id)
-          .sort(byPosition)
-          .map((category) => ({
-            key: `category:${workspace.id}:${category.kind}`,
-            kind: "category",
-            id: category.kind,
-            label: category.title,
-            children: snapshot.projects
-              .filter(
-                (project) =>
-                  project.workspaceId === workspace.id && project.category === category.kind,
-              )
+    children: snapshot.sessionWorkspaces
+      .filter(({ sessionId }) => sessionId === session.id)
+      .sort((a, b) => a.position - b.position || a.workspaceId.localeCompare(b.workspaceId))
+      .flatMap((membership) => {
+        const workspace = snapshot.workspaces.find(({ id }) => id === membership.workspaceId);
+        if (workspace === undefined) {
+          return [];
+        }
+        return [
+          {
+            key: `workspace:${workspace.id}`,
+            kind: "workspace",
+            id: workspace.id,
+            label: workspace.name,
+            children: snapshot.categories
+              .filter((category) => category.workspaceId === workspace.id)
               .sort(byPosition)
-              .map((project) => ({
-                key: `project:${project.id}`,
-                kind: "project",
-                id: project.id,
-                label: project.name,
-                children: snapshot.items
-                  .filter((item) => item.projectId === project.id)
+              .map((category) => ({
+                key: `category:${workspace.id}:${category.kind}`,
+                kind: "category",
+                id: category.kind,
+                label: category.title,
+                children: snapshot.projects
+                  .filter(
+                    (project) =>
+                      project.workspaceId === workspace.id && project.category === category.kind,
+                  )
                   .sort(byPosition)
-                  .map((item) => ({
-                    key: `item:${item.id}`,
-                    kind: "item",
-                    id: item.id,
-                    label: item.title,
+                  .map((project) => ({
+                    key: `project:${project.id}`,
+                    kind: "project",
+                    id: project.id,
+                    label: project.name,
+                    children: snapshot.items
+                      .filter((item) => item.projectId === project.id)
+                      .sort(byPosition)
+                      .map((item) => ({
+                        key: `item:${item.id}`,
+                        kind: "item",
+                        id: item.id,
+                        label: item.title,
+                      })),
                   })),
               })),
-          })),
-      })),
+          },
+        ];
+      }),
   }));
 }
 

@@ -80,9 +80,14 @@ export function applyCommand(
           throw new ProtocolError("session not found");
         }
         const id = crypto.randomUUID();
+        db.query("INSERT INTO workspaces (id, name) VALUES (?, ?)").run(id, command.name);
         db.query(
-          "INSERT INTO workspaces (id, session_id, name, position) VALUES (?, ?, ?, (SELECT COALESCE(MAX(position), -1) + 1 FROM workspaces WHERE session_id = ?))",
-        ).run(id, command.sessionId, command.name, command.sessionId);
+          `INSERT INTO session_workspaces (session_id, workspace_id, position)
+           VALUES (?, ?, (
+             SELECT COALESCE(MAX(position), -1) + 1
+             FROM session_workspaces WHERE session_id = ?
+           ))`,
+        ).run(command.sessionId, id, command.sessionId);
         return { result: { id }, effects: [] };
       })();
     case "project.create":

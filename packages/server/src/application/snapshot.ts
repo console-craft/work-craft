@@ -106,8 +106,11 @@ export function readSnapshot(
     )
     .all();
   const workspaces = db
-    .query<{ id: string; sessionId: string; name: string; position: number }, []>(
-      "SELECT id, session_id AS sessionId, name, position FROM workspaces ORDER BY position, id",
+    .query<{ id: string; name: string }, []>("SELECT id, name FROM workspaces ORDER BY id")
+    .all();
+  const sessionWorkspaces = db
+    .query<{ sessionId: string; workspaceId: string; position: number }, []>(
+      "SELECT session_id AS sessionId, workspace_id AS workspaceId, position FROM session_workspaces ORDER BY session_id, position, workspace_id",
     )
     .all();
   const projects = db
@@ -190,6 +193,7 @@ export function readSnapshot(
     revision,
     sessions,
     workspaces,
+    sessionWorkspaces,
     categories: workspaces.flatMap((workspace) =>
       CATEGORIES.map((category) => ({ workspaceId: workspace.id, ...category })),
     ),

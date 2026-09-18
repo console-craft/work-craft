@@ -14,7 +14,8 @@ import { decodeBytes, type ServerMessage, type Snapshot } from "./protocol.ts";
 function seedPane(db: ReturnType<typeof openDatabase>): void {
   db.exec(`
     INSERT INTO sessions VALUES ('session-1', 'Main', 0);
-    INSERT INTO workspaces VALUES ('workspace-1', 'session-1', 'Work', 0);
+    INSERT INTO workspaces VALUES ('workspace-1', 'Work');
+    INSERT INTO session_workspaces VALUES ('session-1', 'workspace-1', 0);
     INSERT INTO projects VALUES ('project-1', 'workspace-1', 'implementation', 'Work Craft', 0);
     INSERT INTO items VALUES ('item-1', 'project-1', 'surface', 'Build', 0, '{}', NULL);
     INSERT INTO surfaces VALUES ('surface-1', 'item-1', NULL);
@@ -333,6 +334,7 @@ test("applies a newer snapshot frame after a pending gap refresh", async () => {
     revision,
     sessions: [],
     workspaces: [],
+    sessionWorkspaces: [],
     categories: [],
     projects: [],
     items: [],
