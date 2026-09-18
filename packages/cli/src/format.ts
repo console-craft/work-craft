@@ -5,7 +5,7 @@ type Snapshot = Awaited<ReturnType<WorkCraftClient["snapshot"]>>;
 type Health = Awaited<ReturnType<WorkCraftClient["health"]>>;
 type Counts = Omit<
   { [Key in keyof Snapshot]: Snapshot[Key] extends unknown[] ? number : never },
-  "epoch" | "revision" | "terminalHistories"
+  "epoch" | "revision" | "sessionWorkspaces" | "terminalHistories"
 >;
 export type Status = Health & { running: true; counts: Counts };
 
@@ -45,9 +45,13 @@ export function formatSnapshot(snapshot: Snapshot): string {
   const lines: string[] = [];
   for (const session of snapshot.sessions) {
     lines.push(session.name);
-    for (const workspace of snapshot.workspaces.filter(
-      ({ sessionId }) => sessionId === session.id,
-    )) {
+    for (const membership of snapshot.sessionWorkspaces
+      .filter(({ sessionId }) => sessionId === session.id)
+      .sort((a, b) => a.position - b.position || a.workspaceId.localeCompare(b.workspaceId))) {
+      const workspace = snapshot.workspaces.find(({ id }) => id === membership.workspaceId);
+      if (workspace === undefined) {
+        continue;
+      }
       lines.push(`  ${workspace.name}`);
       for (const category of snapshot.categories.filter(
         ({ workspaceId }) => workspaceId === workspace.id,
@@ -77,6 +81,14 @@ export function formatResult(command: CliArgs["command"], result: Result): strin
     case "project.create":
     case "item.create":
       return `ID: ${result.id}\n`;
+    case "session.update":
+      return `Updated session: ${result.id}\n`;
+    case "session.delete":
+      return `Deleted session: ${result.id}\n`;
+    case "session.workspace.add":
+      return `Session: ${result.sessionId}\nAdded workspace: ${result.workspaceId}\n`;
+    case "session.workspace.remove":
+      return `Session: ${result.sessionId}\nRemoved workspace: ${result.workspaceId}\n`;
     case "surface.ensure":
       return `Item: ${result.itemId}\nSurface: ${result.surfaceId}\n`;
     case "surface.selectTab":

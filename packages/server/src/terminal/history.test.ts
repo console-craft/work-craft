@@ -9,7 +9,8 @@ function databaseWithPane() {
   const db = openDatabase(":memory:");
   db.exec(`
     INSERT INTO sessions VALUES ('session-1', 'Main', 0);
-    INSERT INTO workspaces VALUES ('workspace-1', 'session-1', 'Work', 0);
+    INSERT INTO workspaces VALUES ('workspace-1', 'Work');
+    INSERT INTO session_workspaces VALUES ('session-1', 'workspace-1', 0);
     INSERT INTO projects VALUES ('project-1', 'workspace-1', 'implementation', 'Work Craft', 0);
     INSERT INTO items VALUES ('item-1', 'project-1', 'surface', 'Build', 0, '{}', NULL);
     INSERT INTO surfaces VALUES ('surface-1', 'item-1', NULL);
@@ -114,7 +115,8 @@ test("flushes queued output on its timer and on close", async () => {
   const db = openDatabase(path);
   db.exec(`
     INSERT INTO sessions VALUES ('session-1', 'Main', 0);
-    INSERT INTO workspaces VALUES ('workspace-1', 'session-1', 'Work', 0);
+    INSERT INTO workspaces VALUES ('workspace-1', 'Work');
+    INSERT INTO session_workspaces VALUES ('session-1', 'workspace-1', 0);
     INSERT INTO projects VALUES ('project-1', 'workspace-1', 'implementation', 'Work Craft', 0);
     INSERT INTO items VALUES ('item-1', 'project-1', 'surface', 'Build', 0, '{}', NULL);
     INSERT INTO surfaces VALUES ('surface-1', 'item-1', NULL);

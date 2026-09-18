@@ -1,6 +1,6 @@
 import { useKeyboard } from "@opentui/react";
-import { useState } from "react";
-import type { CategoryKind, Command } from "@work-craft/server/client";
+import { useEffect, useState } from "react";
+import type { CategoryKind, Command, CommandResponse } from "@work-craft/server/client";
 import { Badge, type BadgeVariant } from "@/components/ui/badge";
 import { CreatePrompt, type CreateKind } from "./create-prompt.tsx";
 import {
@@ -10,6 +10,7 @@ import {
   type NavigationNode,
 } from "./navigation.ts";
 import { NavigationPane } from "./navigation-pane.tsx";
+import { SessionChooser } from "./session-chooser.tsx";
 import { SurfaceView } from "./surface-view.tsx";
 import { useWorkCraft } from "./use-work-craft.ts";
 
@@ -20,8 +21,12 @@ function ancestor(
   return entry?.path.findLast((node) => node.kind === kind);
 }
 
-function createCommand(kind: CreateKind, name: string, entry?: NavigationEntry): Command | null {
-  const session = ancestor(entry, "session");
+function createCommand(
+  kind: CreateKind,
+  name: string,
+  sessionId: string | undefined,
+  entry?: NavigationEntry,
+): Command | null {
   const workspace = ancestor(entry, "workspace");
   const category = ancestor(entry, "category");
   const project = ancestor(entry, "project");
@@ -29,9 +34,7 @@ function createCommand(kind: CreateKind, name: string, entry?: NavigationEntry):
     case "session":
       return { type: "session.create", name };
     case "workspace":
-      return session === undefined
-        ? null
-        : { type: "workspace.create", sessionId: session.id, name };
+      return sessionId === undefined ? null : { type: "workspace.create", sessionId, name };
     case "project":
       return workspace === undefined || category === undefined
         ? null
@@ -49,10 +52,10 @@ function createCommand(kind: CreateKind, name: string, entry?: NavigationEntry):
 }
 
 function canCreate(kind: CreateKind, entry: NavigationEntry | undefined): boolean {
-  if (kind === "session") {
+  if (kind === "workspace") {
     return true;
   }
-  const required = kind === "workspace" ? "session" : kind === "project" ? "category" : "project";
+  const required = kind === "project" ? "category" : "project";
   return ancestor(entry, required) !== undefined;
 }
 
@@ -70,19 +73,43 @@ export function App() {
   const [prompt, setPrompt] = useState<CreateKind | null>(null);
   const [openedItemId, setOpenedItemId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const entries = snapshot === null ? [] : flattenNavigation(buildNavigation(snapshot));
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [chooserRequested, setChooserRequested] = useState(false);
+  const sessions = [...(snapshot?.sessions ?? [])].sort(
+    (a, b) => a.position - b.position || a.id.localeCompare(b.id),
+  );
+  const selectedSession = sessions.find(({ id }) => id === activeSessionId);
+  const automaticSession =
+    activeSessionId === null && !chooserRequested && sessions.length === 1
+      ? sessions[0]
+      : undefined;
+  const activeSession = selectedSession ?? automaticSession;
+  const choosingSession = chooserRequested || activeSession === undefined;
+
+  useEffect(() => {
+    if (automaticSession !== undefined) {
+      setActiveSessionId(automaticSession.id);
+    }
+  }, [automaticSession]);
+
+  const entries =
+    snapshot === null || activeSession === undefined
+      ? []
+      : flattenNavigation(buildNavigation(snapshot, activeSession.id));
   const index = Math.max(0, Math.min(selectedIndex, entries.length - 1));
   const selected = entries[index];
 
-  async function run(next: Command, itemId?: string): Promise<void> {
+  async function run(next: Command, itemId?: string): Promise<CommandResponse | undefined> {
     try {
       const response = await command(next);
       setError(null);
       if (itemId !== undefined || response.result.itemId !== undefined) {
         setOpenedItemId(itemId ?? response.result.itemId ?? null);
       }
+      return response;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
+      return undefined;
     }
   }
 
@@ -100,6 +127,13 @@ export function App() {
     if (prompt !== null || openedItemId !== null) {
       return;
     }
+    if (key.name === "s") {
+      setChooserRequested(true);
+      return;
+    }
+    if (choosingSession) {
+      return;
+    }
     if (key.name === "up") {
       setSelectedIndex(Math.max(0, index - 1));
     } else if (key.name === "down" && entries.length > 0) {
@@ -109,9 +143,7 @@ export function App() {
     } else if (key.name === "o" && selected?.node.kind === "project") {
       void run({ type: "surface.ensureHere", projectId: selected.node.id });
     } else {
-      const kind = { s: "session", w: "workspace", p: "project", i: "item" }[key.name] as
-        | CreateKind
-        | undefined;
+      const kind = { w: "workspace", p: "project", i: "item" }[key.name] as CreateKind | undefined;
       if (kind !== undefined && canCreate(kind, selected)) {
         setPrompt(kind);
       }
@@ -123,22 +155,43 @@ export function App() {
     <box flexDirection="column" padding={1} width="100%" height="100%">
       <box justifyContent="space-between">
         <text>Work Craft</text>
+        <text>{`Session: ${choosingSession ? "choose" : (activeSession?.name ?? "choose")}`}</text>
         <Badge variant={statusVariant(status)}>{status}</Badge>
       </box>
       {error === null ? null : <text fg="#EF4444">{error}</text>}
-      {prompt !== null ? (
+      {prompt !== null && (!choosingSession || prompt === "session") ? (
         <CreatePrompt
           kind={prompt}
           onSubmit={(name) => {
-            const next = createCommand(prompt, name, selected);
+            const kind = prompt;
+            const next = createCommand(kind, name, activeSession?.id, selected);
             setPrompt(null);
             if (next !== null) {
-              void run(next);
+              void run(next).then((response) => {
+                if (kind === "session" && response !== undefined) {
+                  setActiveSessionId(response.result.id);
+                  setChooserRequested(false);
+                  setOpenedItemId(null);
+                }
+              });
             }
           }}
         />
+      ) : snapshot === null ? (
+        <text>Connecting to daemon...</text>
+      ) : choosingSession ? (
+        <SessionChooser
+          sessions={sessions}
+          onSelect={(sessionId) => {
+            setActiveSessionId(sessionId);
+            setChooserRequested(false);
+            setPrompt(null);
+            setOpenedItemId(null);
+          }}
+          onCreate={() => setPrompt("session")}
+        />
       ) : openedItemId !== null ? (
-        snapshot === null || surface === undefined ? (
+        surface === undefined ? (
           <text>Opening surface...</text>
         ) : (
           <SurfaceView
@@ -150,8 +203,6 @@ export function App() {
             onCommand={(next) => void run(next)}
           />
         )
-      ) : snapshot === null ? (
-        <text>Connecting to daemon...</text>
       ) : (
         <NavigationPane entries={entries} selectedIndex={index} />
       )}

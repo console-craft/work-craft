@@ -34,6 +34,18 @@ function serverCommand(args: CliArgs): Command | undefined {
       return undefined;
     case "session.create":
       return { type: "session.create", name: args.name };
+    case "session.update":
+      return {
+        type: "session.update",
+        sessionId: args.sessionId,
+        ...(args.name === undefined ? {} : { name: args.name }),
+        ...(args.position === undefined ? {} : { position: args.position }),
+      };
+    case "session.delete":
+      return { type: "session.delete", sessionId: args.sessionId };
+    case "session.workspace.add":
+    case "session.workspace.remove":
+      return { type: args.command, sessionId: args.sessionId, workspaceId: args.workspaceId };
     case "workspace.create":
       return { type: "workspace.create", sessionId: args.sessionId, name: args.name };
     case "project.create":

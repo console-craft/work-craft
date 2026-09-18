@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { createApp, type WorkCraftApp } from "./app.ts";
 import { applyCommand } from "./commands.ts";
 import { openDatabase } from "../persistence/database.ts";
-import { ProtocolError } from "../api/protocol.ts";
+import { decodeBytes, ProtocolError } from "../api/protocol.ts";
 import { readSnapshot } from "./snapshot.ts";
 
 const apps: WorkCraftApp[] = [];
@@ -33,7 +33,12 @@ function organizationalFixture() {
 }
 
 afterEach(async () => {
-  await Promise.all(apps.splice(0).map(({ runtime }) => runtime.stopAll()));
+  await Promise.all(
+    apps.splice(0).map(async ({ history, runtime }) => {
+      await runtime.stopAll();
+      await history.close();
+    }),
+  );
 });
 
 test("creates the durable navigation hierarchy transactionally", () => {
@@ -58,7 +63,12 @@ test("creates the durable navigation hierarchy transactionally", () => {
   });
 
   const snapshot = readSnapshot(db, "epoch", 4);
-  expect(snapshot.workspaces[0]?.name).toBe("Work");
+  expect(snapshot.workspaces).toContainEqual({ id: workspace.id, name: "Work" });
+  expect(snapshot.sessionWorkspaces).toContainEqual({
+    sessionId: session.id,
+    workspaceId: workspace.id,
+    position: 0,
+  });
   expect(snapshot.categories.filter((entry) => entry.workspaceId === workspace.id)).toHaveLength(6);
   expect(snapshot.items[0]?.title).toBe("First slice");
 });
@@ -69,6 +79,139 @@ test("does not mutate when a parent is missing", () => {
     applyCommand(db, { type: "workspace.create", sessionId: "missing", name: "Nope" }),
   ).toThrow("session not found");
   expect(readSnapshot(db, "epoch", 0).workspaces).toEqual([]);
+});
+
+test("updates and deletes sessions with contiguous ordering and atomic validation", () => {
+  const db = openDatabase(":memory:");
+  const first = applyCommand(db, { type: "session.create", name: "First" }).result;
+  const second = applyCommand(db, { type: "session.create", name: "Second" }).result;
+  const third = applyCommand(db, { type: "session.create", name: "Third" }).result;
+
+  applyCommand(db, {
+    type: "session.update",
+    sessionId: third.id,
+    name: "Renamed",
+    position: 0,
+  });
+  expect(readSnapshot(db, "epoch", 0).sessions).toEqual([
+    expect.objectContaining({ id: third.id, name: "Renamed", position: 0 }),
+    expect.objectContaining({ id: first.id, position: 1 }),
+    expect.objectContaining({ id: second.id, position: 2 }),
+  ]);
+
+  expect(() =>
+    applyCommand(db, { type: "session.update", sessionId: "missing", name: "Nope" }),
+  ).toThrow(new ProtocolError("session not found"));
+  expect(() =>
+    applyCommand(db, {
+      type: "session.update",
+      sessionId: third.id,
+      name: "Must not rename",
+      position: 3,
+    }),
+  ).toThrow(new ProtocolError("session position out of range"));
+  expect(readSnapshot(db, "epoch", 0).sessions[0]?.name).toBe("Renamed");
+
+  applyCommand(db, { type: "session.delete", sessionId: first.id });
+  expect(readSnapshot(db, "epoch", 0).sessions).toEqual([
+    expect.objectContaining({ id: third.id, position: 0 }),
+    expect.objectContaining({ id: second.id, position: 1 }),
+  ]);
+  expect(() => applyCommand(db, { type: "session.delete", sessionId: "missing" })).toThrow(
+    new ProtocolError("session not found"),
+  );
+});
+
+test("adds and removes workspace memberships idempotently without changing descendants", () => {
+  const db = openDatabase(":memory:");
+  const firstSessionId = applyCommand(db, { type: "session.create", name: "First" }).result.id;
+  const secondSessionId = applyCommand(db, { type: "session.create", name: "Second" }).result.id;
+  const workspaceId = applyCommand(db, {
+    type: "workspace.create",
+    sessionId: firstSessionId,
+    name: "Shared",
+  }).result.id;
+  const projectId = applyCommand(db, {
+    type: "project.create",
+    workspaceId,
+    category: "implementation",
+    name: "Work Craft",
+  }).result.id;
+
+  expect(
+    applyCommand(db, { type: "session.workspace.add", sessionId: secondSessionId, workspaceId }),
+  ).toEqual({
+    result: { id: workspaceId, sessionId: secondSessionId, workspaceId },
+    effects: [],
+  });
+  applyCommand(db, { type: "session.workspace.add", sessionId: secondSessionId, workspaceId });
+  let snapshot = readSnapshot(db, "epoch", 0);
+  expect(
+    snapshot.sessionWorkspaces.filter(
+      (membership) =>
+        membership.sessionId === secondSessionId && membership.workspaceId === workspaceId,
+    ),
+  ).toHaveLength(1);
+  expect(snapshot.projects.filter(({ id }) => id === projectId)).toHaveLength(1);
+
+  applyCommand(db, { type: "session.workspace.remove", sessionId: secondSessionId, workspaceId });
+  applyCommand(db, { type: "session.workspace.remove", sessionId: secondSessionId, workspaceId });
+  snapshot = readSnapshot(db, "epoch", 0);
+  expect(snapshot.sessionWorkspaces).toEqual([
+    expect.objectContaining({ sessionId: firstSessionId, workspaceId }),
+  ]);
+  expect(snapshot.workspaces).toContainEqual({ id: workspaceId, name: "Shared" });
+  expect(snapshot.projects).toContainEqual(expect.objectContaining({ id: projectId, workspaceId }));
+
+  for (const command of [
+    { type: "session.workspace.add", sessionId: "missing", workspaceId },
+    { type: "session.workspace.remove", sessionId: "missing", workspaceId },
+  ] as const) {
+    expect(() => applyCommand(db, command)).toThrow(new ProtocolError("session not found"));
+  }
+  for (const command of [
+    { type: "session.workspace.add", sessionId: firstSessionId, workspaceId: "missing" },
+    { type: "session.workspace.remove", sessionId: firstSessionId, workspaceId: "missing" },
+  ] as const) {
+    expect(() => applyCommand(db, command)).toThrow(new ProtocolError("workspace not found"));
+  }
+});
+
+test("deleting a session preserves its workspace, history, and live runtime", async () => {
+  const db = openDatabase(":memory:");
+  const app = createApp({ db });
+  apps.push(app);
+  const sessionId = (await app.execute({ type: "session.create", name: "Only" })).result.id;
+  const workspaceId = (await app.execute({ type: "workspace.create", sessionId, name: "Shared" }))
+    .result.id;
+  const projectId = (
+    await app.execute({
+      type: "project.create",
+      workspaceId,
+      category: "implementation",
+      name: "Work Craft",
+    })
+  ).result.id;
+  const itemId = (
+    await app.execute({ type: "item.create", projectId, kind: "surface", title: "Shell" })
+  ).result.id;
+  const paneId = (await app.execute({ type: "surface.ensure", itemId })).result.paneId!;
+  app.history.append(paneId, new TextEncoder().encode("preserved-history"));
+  await app.history.flush();
+
+  await app.execute({ type: "session.delete", sessionId });
+  const snapshot = app.snapshot();
+
+  expect(app.runtime.isLive(paneId)).toBe(true);
+  expect(snapshot.sessions).toEqual([]);
+  expect(snapshot.sessionWorkspaces).toEqual([]);
+  expect(snapshot.workspaces).toContainEqual({ id: workspaceId, name: "Shared" });
+  expect(snapshot.panes).toContainEqual(expect.objectContaining({ id: paneId }));
+  expect(
+    new TextDecoder().decode(
+      decodeBytes(snapshot.terminalHistories.find((entry) => entry.paneId === paneId)!.data),
+    ),
+  ).toContain("preserved-history");
 });
 
 test("stops the daemon without durable state", () => {

@@ -61,6 +61,11 @@ function ensureSurface(db: Database, itemId: string, cwd?: string): CommandOutco
   };
 }
 
+function writeSessionOrder(db: Database, ids: string[]): void {
+  const update = db.query("UPDATE sessions SET position = ? WHERE id = ?");
+  ids.forEach((id, position) => update.run(position, id));
+}
+
 export function applyCommand(
   db: Database,
   command: Command,
@@ -74,15 +79,107 @@ export function applyCommand(
         ).run(id, command.name);
         return { result: { id }, effects: [] };
       })();
+    case "session.update":
+      return db.transaction(() => {
+        const ids = db
+          .query<{ id: string }, []>("SELECT id FROM sessions ORDER BY position, id")
+          .all()
+          .map(({ id }) => id);
+        const currentPosition = ids.indexOf(command.sessionId);
+        if (currentPosition === -1) {
+          throw new ProtocolError("session not found");
+        }
+        const targetPosition = command.position ?? currentPosition;
+        if (targetPosition >= ids.length) {
+          throw new ProtocolError("session position out of range");
+        }
+
+        ids.splice(currentPosition, 1);
+        ids.splice(targetPosition, 0, command.sessionId);
+        if (command.name !== undefined) {
+          db.query("UPDATE sessions SET name = ? WHERE id = ?").run(
+            command.name,
+            command.sessionId,
+          );
+        }
+        writeSessionOrder(db, ids);
+        return { result: { id: command.sessionId }, effects: [] };
+      })();
+    case "session.delete":
+      return db.transaction(() => {
+        const ids = db
+          .query<{ id: string }, []>("SELECT id FROM sessions ORDER BY position, id")
+          .all()
+          .map(({ id }) => id);
+        const position = ids.indexOf(command.sessionId);
+        if (position === -1) {
+          throw new ProtocolError("session not found");
+        }
+
+        ids.splice(position, 1);
+        db.query("DELETE FROM sessions WHERE id = ?").run(command.sessionId);
+        writeSessionOrder(db, ids);
+        return { result: { id: command.sessionId }, effects: [] };
+      })();
+    case "session.workspace.add":
+      return db.transaction(() => {
+        if (db.query("SELECT 1 FROM sessions WHERE id = ?").get(command.sessionId) === null) {
+          throw new ProtocolError("session not found");
+        }
+        if (db.query("SELECT 1 FROM workspaces WHERE id = ?").get(command.workspaceId) === null) {
+          throw new ProtocolError("workspace not found");
+        }
+        db.query(
+          `INSERT OR IGNORE INTO session_workspaces (session_id, workspace_id, position)
+           VALUES (?, ?, (
+             SELECT COALESCE(MAX(position), -1) + 1
+             FROM session_workspaces WHERE session_id = ?
+           ))`,
+        ).run(command.sessionId, command.workspaceId, command.sessionId);
+        return {
+          result: {
+            id: command.workspaceId,
+            sessionId: command.sessionId,
+            workspaceId: command.workspaceId,
+          },
+          effects: [],
+        };
+      })();
+    case "session.workspace.remove":
+      return db.transaction(() => {
+        if (db.query("SELECT 1 FROM sessions WHERE id = ?").get(command.sessionId) === null) {
+          throw new ProtocolError("session not found");
+        }
+        if (db.query("SELECT 1 FROM workspaces WHERE id = ?").get(command.workspaceId) === null) {
+          throw new ProtocolError("workspace not found");
+        }
+        db.query("DELETE FROM session_workspaces WHERE session_id = ? AND workspace_id = ?").run(
+          command.sessionId,
+          command.workspaceId,
+        );
+        return {
+          result: {
+            id: command.workspaceId,
+            sessionId: command.sessionId,
+            workspaceId: command.workspaceId,
+          },
+          effects: [],
+        };
+      })();
     case "workspace.create":
       return db.transaction(() => {
         if (db.query("SELECT 1 FROM sessions WHERE id = ?").get(command.sessionId) === null) {
           throw new ProtocolError("session not found");
         }
         const id = crypto.randomUUID();
+        db.query("INSERT INTO workspaces (id, name) VALUES (?, ?)").run(id, command.name);
         db.query(
-          "INSERT INTO workspaces (id, session_id, name, position) VALUES (?, ?, ?, (SELECT COALESCE(MAX(position), -1) + 1 FROM workspaces WHERE session_id = ?))",
-        ).run(id, command.sessionId, command.name, command.sessionId);
+          `INSERT INTO session_workspaces (session_id, workspace_id, position)
+           VALUES (?, ?, (
+             SELECT COALESCE(MAX(position), -1) + 1
+             FROM session_workspaces WHERE session_id = ?
+           ))`,
+        ).run(command.sessionId, id, command.sessionId);
         return { result: { id }, effects: [] };
       })();
     case "project.create":

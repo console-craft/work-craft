@@ -1,6 +1,6 @@
 # Work Craft
 
-A local-first terminal work organizer with persistent execution surfaces. Work Craft provides durable sessions, workspaces, six fixed work categories, projects, items, tabs, split layouts, and terminal panes.
+A local-first terminal work organizer with persistent execution surfaces. Sessions are named profiles over reusable workspaces, which contain six fixed work categories, projects, items, tabs, split layouts, and terminal panes.
 
 One local Bun daemon owns the SQLite database, terminal runtimes, and bounded terminal history. The React/OpenTUI interface and Unix-style CLI are disposable clients connected through an owner-only Unix socket.
 
@@ -19,6 +19,10 @@ Run `work-craft` to open the TUI. The same executable provides the non-interacti
 ```sh
 work-craft snapshot
 work-craft session create --name Main --json
+work-craft session update <session-id> --name Focused --position 0
+work-craft session add-workspace <session-id> --workspace <workspace-id>
+work-craft session remove-workspace <session-id> --workspace <workspace-id>
+work-craft session delete <session-id>
 work-craft surface ensure --item <item-id>
 work-craft daemon status --json
 work-craft daemon stop
@@ -66,7 +70,7 @@ WORK_CRAFT_BIN_DIR="$HOME/bin" bun run build:install
 
 The installer creates the destination directory and warns if it is not on `PATH`. It does not modify shell configuration.
 
-The TUI creates and navigates sessions, workspaces, projects, items, tabs, and terminal splits. The CLI exposes snapshot, hierarchy creation, surface/tab/pane operations, and daemon lifecycle operations with plain-text or JSON output.
+The TUI creates and navigates sessions, workspaces, projects, items, tabs, and terminal splits. It shows one session at a time; switching sessions does not stop terminals hidden by the new selection. Deleting a session does not delete its reusable workspaces or stop their terminal panes. The CLI exposes snapshot, hierarchy creation, surface/tab/pane operations, and daemon lifecycle operations with plain-text or JSON output.
 
 ## Local State
 

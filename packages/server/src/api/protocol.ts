@@ -24,7 +24,8 @@ export type Snapshot = {
   epoch: string;
   revision: number;
   sessions: { id: string; name: string; position: number }[];
-  workspaces: { id: string; sessionId: string; name: string; position: number }[];
+  workspaces: { id: string; name: string }[];
+  sessionWorkspaces: { sessionId: string; workspaceId: string; position: number }[];
   categories: { workspaceId: string; kind: CategoryKind; title: string; position: number }[];
   projects: {
     id: string;
@@ -67,6 +68,8 @@ export type Snapshot = {
 
 export type CommandResult = {
   id: string;
+  sessionId?: string;
+  workspaceId?: string;
   itemId?: string;
   surfaceId?: string;
   tabId?: string;
@@ -79,6 +82,10 @@ export type CommandResponse = { ok: true; revision: number; result: CommandResul
 
 export type Command =
   | { type: "session.create"; name: string }
+  | { type: "session.update"; sessionId: string; name?: string; position?: number }
+  | { type: "session.delete"; sessionId: string }
+  | { type: "session.workspace.add"; sessionId: string; workspaceId: string }
+  | { type: "session.workspace.remove"; sessionId: string; workspaceId: string }
   | { type: "workspace.create"; sessionId: string; name: string }
   | { type: "project.create"; workspaceId: string; category: CategoryKind; name: string }
   | {
@@ -165,6 +172,31 @@ export function parseCommand(value: unknown): Command {
   switch (type) {
     case "session.create":
       return { type, name: stringValue(input.name, "name", true) };
+    case "session.update": {
+      if (input.name === undefined && input.position === undefined) {
+        throw new ProtocolError("session update requires a name or position");
+      }
+      const name = input.name === undefined ? undefined : stringValue(input.name, "name", true);
+      const position = input.position;
+      if (position !== undefined && (!Number.isSafeInteger(position) || (position as number) < 0)) {
+        throw new ProtocolError("position must be a non-negative safe integer");
+      }
+      return {
+        type,
+        sessionId: idValue(input.sessionId, "sessionId"),
+        ...(name === undefined ? {} : { name }),
+        ...(position === undefined ? {} : { position: position as number }),
+      };
+    }
+    case "session.delete":
+      return { type, sessionId: idValue(input.sessionId, "sessionId") };
+    case "session.workspace.add":
+    case "session.workspace.remove":
+      return {
+        type,
+        sessionId: idValue(input.sessionId, "sessionId"),
+        workspaceId: idValue(input.workspaceId, "workspaceId"),
+      };
     case "workspace.create":
       return {
         type,
