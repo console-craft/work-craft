@@ -85,10 +85,13 @@ Categories remain generated once per workspace. Projects continue to reference a
 The server supports these session and membership operations:
 
 - `session.create`: create an empty named session.
+- `session.update`: rename a session, move it to a zero-based position, or do both atomically.
 - `session.delete`: delete a session and its memberships without deleting workspaces.
 - `workspace.create`: create one canonical workspace and atomically link it to the supplied session. Its existing `sessionId` input remains the convenience context for this operation.
 - `session.workspace.add`: link an existing workspace to a session at the next position.
 - `session.workspace.remove`: remove a membership without deleting the workspace.
+
+`session.update` accepts `sessionId` plus an optional non-blank `name` and optional non-negative integer `position`; at least one change is required. Position is an index in the ordered session list rather than a raw value. Moving a session rewrites all session positions to a contiguous `0..n-1` sequence in the same transaction. Session creation appends to that sequence, and deletion closes the resulting gap. An out-of-range target position is rejected.
 
 Adding an existing membership and removing a missing membership are idempotent successful operations. Commands reject references to sessions or workspaces that do not exist. Each mutation remains a single SQLite transaction and follows the existing revision and snapshot broadcast flow.
 
@@ -113,6 +116,7 @@ The migration preserves all existing IDs, names, workspace ordering, descendants
 - Removing a workspace from the active session removes it from navigation but leaves its processes and history untouched.
 - A duplicate membership does not create another row or alter descendant data.
 - A stale membership command referencing a deleted session or workspace fails as a protocol error.
+- A session update with no changes, a blank name, or an invalid position fails as a protocol error without partially renaming or reordering the session.
 - A failed membership mutation does not update client-visible state or runtime state.
 
 ## Verification
@@ -122,10 +126,11 @@ Keep verification focused on the changed boundaries:
 1. Migrate the existing ownership schema and verify that sessions, workspace order, descendants, and terminal history are unchanged.
 2. Link one workspace to two sessions and verify that both expose the same workspace and projects without duplicate project rows.
 3. Remove a membership and delete a session, verifying that the workspace, descendants, history, and eligible live runtime remain intact.
-4. Verify idempotent add and remove behavior plus missing-resource errors.
-5. Verify that TUI navigation renders only the active session's memberships and that independent clients may select different sessions.
-6. Exercise session creation, deletion, and membership commands through the real CLI and daemon.
-7. Run the complete `bun run check` gate.
+4. Rename and reorder sessions, verifying contiguous positions, atomic combined updates, and invalid-update errors.
+5. Verify idempotent add and remove behavior plus missing-resource errors.
+6. Verify that TUI navigation renders only the active session's memberships and that independent clients may select different sessions.
+7. Exercise session creation, update, deletion, and membership commands through the real CLI and daemon.
+8. Run the complete `bun run check` gate.
 
 ## Deliberate Exclusions
 
