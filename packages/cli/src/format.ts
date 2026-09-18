@@ -81,6 +81,14 @@ export function formatResult(command: CliArgs["command"], result: Result): strin
     case "project.create":
     case "item.create":
       return `ID: ${result.id}\n`;
+    case "session.update":
+      return `Updated session: ${result.id}\n`;
+    case "session.delete":
+      return `Deleted session: ${result.id}\n`;
+    case "session.workspace.add":
+      return `Session: ${result.sessionId}\nAdded workspace: ${result.workspaceId}\n`;
+    case "session.workspace.remove":
+      return `Session: ${result.sessionId}\nRemoved workspace: ${result.workspaceId}\n`;
     case "surface.ensure":
       return `Item: ${result.itemId}\nSurface: ${result.surfaceId}\n`;
     case "surface.selectTab":

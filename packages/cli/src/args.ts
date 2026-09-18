@@ -6,6 +6,18 @@ type OutputArgs = { json: boolean };
 export type CliArgs =
   | (OutputArgs & { command: "snapshot" })
   | (OutputArgs & { command: "session.create"; name: string })
+  | (OutputArgs & {
+      command: "session.update";
+      sessionId: string;
+      name?: string;
+      position?: number;
+    })
+  | (OutputArgs & { command: "session.delete"; sessionId: string })
+  | (OutputArgs & {
+      command: "session.workspace.add" | "session.workspace.remove";
+      sessionId: string;
+      workspaceId: string;
+    })
   | (OutputArgs & { command: "workspace.create"; sessionId: string; name: string })
   | (OutputArgs & {
       command: "project.create";
@@ -48,6 +60,10 @@ export const USAGE = `Usage:
   work-craft snapshot [--json]
 
   work-craft session create --name <name> [--json]
+  work-craft session update <id> [--name <name>] [--position <index>] [--json]
+  work-craft session delete <id> [--json]
+  work-craft session add-workspace <id> --workspace <id> [--json]
+  work-craft session remove-workspace <id> --workspace <id> [--json]
   work-craft workspace create --session <id> --name <name> [--json]
   work-craft project create --workspace <id> --category <kind> --name <name> [--json]
   work-craft item create --project <id> --kind <generic|surface> --title <title>
@@ -105,6 +121,17 @@ function required(value: string | boolean | undefined): string {
   return value;
 }
 
+function positionValue(value: string | boolean | undefined): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const position = Number(required(value));
+  if (!Number.isSafeInteger(position) || position < 0) {
+    throw new UsageError("invalid arguments");
+  }
+  return position;
+}
+
 function noPositionals(positionals: string[]): void {
   if (positionals.length !== 0) {
     throw new UsageError("invalid arguments");
@@ -156,6 +183,57 @@ export function parseArgs(argv: string[]): CliArgs {
       });
       noPositionals(positionals);
       return { command, name: required(values.name), json: values.json ?? false };
+    }
+    case "session.update": {
+      const { values, positionals } = parseLeaf(args, {
+        name: { type: "string" },
+        position: { type: "string" },
+        ...outputOption,
+      });
+      if (
+        positionals.length !== 1 ||
+        (values.name === undefined && values.position === undefined)
+      ) {
+        throw new UsageError("invalid arguments");
+      }
+      const position = positionValue(values.position);
+      return {
+        command,
+        sessionId: required(positionals[0]),
+        ...(values.name === undefined ? {} : { name: required(values.name) }),
+        ...(position === undefined ? {} : { position }),
+        json: values.json ?? false,
+      };
+    }
+    case "session.delete": {
+      const { values, positionals } = parseLeaf(args, outputOption);
+      if (positionals.length !== 1) {
+        throw new UsageError("invalid arguments");
+      }
+      return {
+        command,
+        sessionId: required(positionals[0]),
+        json: values.json ?? false,
+      };
+    }
+    case "session.add-workspace":
+    case "session.remove-workspace": {
+      const { values, positionals } = parseLeaf(args, {
+        workspace: { type: "string" },
+        ...outputOption,
+      });
+      if (positionals.length !== 1) {
+        throw new UsageError("invalid arguments");
+      }
+      return {
+        command:
+          command === "session.add-workspace"
+            ? "session.workspace.add"
+            : "session.workspace.remove",
+        sessionId: required(positionals[0]),
+        workspaceId: required(values.workspace),
+        json: values.json ?? false,
+      };
     }
     case "workspace.create": {
       const { values, positionals } = parseLeaf(args, {

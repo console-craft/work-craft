@@ -448,6 +448,124 @@ test("creates resources and controls surfaces through canonical commands", async
   }
 }, 20_000);
 
+test("manages session profiles and shared workspace memberships", async () => {
+  const home = await tempHome();
+  try {
+    const work = await runJson(home, ["session", "create", "--name", "Work"]);
+    const consulting = await runJson(home, ["session", "create", "--name", "Consulting"]);
+    const workspace = await runJson(home, [
+      "workspace",
+      "create",
+      "--session",
+      String(work.id),
+      "--name",
+      "Client A",
+    ]);
+
+    expect(
+      await runCli(home, [
+        "session",
+        "add-workspace",
+        String(consulting.id),
+        "--workspace",
+        String(workspace.id),
+      ]),
+    ).toEqual({
+      exitCode: 0,
+      stderr: "",
+      stdout: `Session: ${consulting.id}\nAdded workspace: ${workspace.id}\n`,
+    });
+    expect(
+      await runJson(home, [
+        "session",
+        "add-workspace",
+        String(consulting.id),
+        "--workspace",
+        String(workspace.id),
+      ]),
+    ).toEqual({ id: workspace.id, sessionId: consulting.id, workspaceId: workspace.id });
+    expect(
+      await runCli(home, [
+        "session",
+        "update",
+        String(consulting.id),
+        "--name",
+        "Clients",
+        "--position",
+        "0",
+      ]),
+    ).toEqual({
+      exitCode: 0,
+      stderr: "",
+      stdout: `Updated session: ${consulting.id}\n`,
+    });
+
+    const snapshot = (await runJson(home, ["snapshot"])) as {
+      sessions: Array<Record<string, unknown>>;
+      workspaces: Array<Record<string, unknown>>;
+      sessionWorkspaces: Array<Record<string, unknown>>;
+    };
+    expect(snapshot.workspaces).toEqual([
+      expect.objectContaining({ id: workspace.id, name: "Client A" }),
+    ]);
+    expect(snapshot.sessionWorkspaces).toHaveLength(2);
+    expect(snapshot.sessionWorkspaces).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ sessionId: work.id, workspaceId: workspace.id }),
+        expect.objectContaining({ sessionId: consulting.id, workspaceId: workspace.id }),
+      ]),
+    );
+    expect(snapshot.sessions[0]).toEqual(
+      expect.objectContaining({ id: consulting.id, name: "Clients", position: 0 }),
+    );
+
+    expect(
+      await runCli(home, [
+        "session",
+        "remove-workspace",
+        String(work.id),
+        "--workspace",
+        String(workspace.id),
+      ]),
+    ).toEqual({
+      exitCode: 0,
+      stderr: "",
+      stdout: `Session: ${work.id}\nRemoved workspace: ${workspace.id}\n`,
+    });
+    expect(
+      await runJson(home, [
+        "session",
+        "remove-workspace",
+        String(work.id),
+        "--workspace",
+        String(workspace.id),
+      ]),
+    ).toEqual({ id: workspace.id, sessionId: work.id, workspaceId: workspace.id });
+    expect(await runCli(home, ["session", "delete", String(work.id)])).toEqual({
+      exitCode: 0,
+      stderr: "",
+      stdout: `Deleted session: ${work.id}\n`,
+    });
+
+    const finalSnapshot = (await runJson(home, ["snapshot"])) as {
+      sessions: Array<Record<string, unknown>>;
+      workspaces: Array<Record<string, unknown>>;
+      sessionWorkspaces: Array<Record<string, unknown>>;
+    };
+    expect(finalSnapshot.sessions).toEqual([
+      expect.objectContaining({ id: consulting.id, name: "Clients", position: 0 }),
+    ]);
+    expect(finalSnapshot.workspaces).toEqual([
+      expect.objectContaining({ id: workspace.id, name: "Client A" }),
+    ]);
+    expect(finalSnapshot.sessionWorkspaces).toEqual([
+      expect.objectContaining({ sessionId: consulting.id, workspaceId: workspace.id }),
+    ]);
+  } finally {
+    await cleanup(home);
+  }
+}, 20_000);
+
 test("prints representative mutation and snapshot output", async () => {
   const home = await tempHome();
   try {
