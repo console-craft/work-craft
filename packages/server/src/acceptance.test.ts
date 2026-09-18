@@ -214,6 +214,12 @@ test.serial(
         sessionId: session.result.id,
         name: "Work",
       });
+      const secondSession = await client.command({ type: "session.create", name: "Focused" });
+      await client.command({
+        type: "session.workspace.add",
+        sessionId: secondSession.result.id,
+        workspaceId: workspace.result.id,
+      });
       const project = await client.command({
         type: "project.create",
         workspaceId: workspace.result.id,
@@ -275,6 +281,18 @@ test.serial(
       expect(
         reconnected.snapshot.tabs.find(({ id }) => id === opened.result.tabId)?.layout,
       ).toEqual(expectedLayout);
+      expect(reconnected.snapshot.workspaces).toEqual([{ id: workspace.result.id, name: "Work" }]);
+      expect(reconnected.snapshot.sessionWorkspaces).toEqual(
+        expect.arrayContaining([
+          { sessionId: session.result.id, workspaceId: workspace.result.id, position: 0 },
+          { sessionId: secondSession.result.id, workspaceId: workspace.result.id, position: 0 },
+        ]),
+      );
+      expect(reconnected.snapshot.sessionWorkspaces).toHaveLength(2);
+      expect(reconnected.snapshot.panes).toHaveLength(2);
+      expect(
+        reconnected.snapshot.panes.every(({ processStatus }) => processStatus === "running"),
+      ).toBe(true);
 
       firstDaemon.kill("SIGKILL");
       await firstDaemon.exited;
@@ -306,17 +324,44 @@ test.serial(
       expect(history(restored, paneId)).toContain(
         "\r\n[work-craft: daemon restarted; shell restored]\r\n",
       );
-      await waitFor(
+      expect(restored.workspaces).toEqual([{ id: workspace.result.id, name: "Work" }]);
+      expect(restored.sessionWorkspaces).toEqual(
+        expect.arrayContaining([
+          { sessionId: session.result.id, workspaceId: workspace.result.id, position: 0 },
+          { sessionId: secondSession.result.id, workspaceId: workspace.result.id, position: 0 },
+        ]),
+      );
+      expect(restored.sessionWorkspaces).toHaveLength(2);
+      expect(restored.panes).toHaveLength(2);
+      const shellPidsAfterRestore = await waitFor(
         () => readShellPids(shellPidsPath),
         (pids) => pids.length === 4,
         "one restored shell per pane",
       );
+      const restoredShellPids = shellPidsAfterRestore.filter(
+        (pid) => !firstShellPids.includes(pid),
+      );
+      expect(restoredShellPids).toHaveLength(2);
+
+      await client.command({ type: "session.delete", sessionId: session.result.id });
+      const afterDelete = await client.snapshot();
+      expect(afterDelete.sessions).toEqual([
+        { id: secondSession.result.id, name: "Focused", position: 0 },
+      ]);
+      expect(afterDelete.sessionWorkspaces).toEqual([
+        { sessionId: secondSession.result.id, workspaceId: workspace.result.id, position: 0 },
+      ]);
+      expect(afterDelete.panes).toHaveLength(2);
+      expect(afterDelete.panes.every(({ processStatus }) => processStatus === "running")).toBe(
+        true,
+      );
+      expect(restoredShellPids.every(isAlive)).toBe(true);
 
       expect(await runCli(home, ["snapshot"])).toEqual({
         exitCode: 0,
         stderr: "",
         stdout:
-          `Main\n` +
+          `Focused\n` +
           `  Work\n` +
           `    Inbox\n` +
           `    Today\n` +
