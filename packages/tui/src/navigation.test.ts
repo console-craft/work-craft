@@ -1,37 +1,54 @@
 import { expect, test } from "bun:test";
 import type { Snapshot, StreamHandlers, WorkCraftClient } from "@work-craft/server/client";
-import { buildNavigation, flattenNavigation } from "./navigation.ts";
+import { buildNavigation } from "./navigation.ts";
 import { createWorkCraftStore } from "./use-work-craft.ts";
 
 function snapshotFixture(overrides: Partial<Snapshot> = {}): Snapshot {
   return {
     epoch: "epoch-a",
     revision: 4,
-    sessions: [{ id: "session-1", name: "Main", position: 0 }],
-    workspaces: [{ id: "workspace-1", name: "Work" }],
-    sessionWorkspaces: [{ sessionId: "session-1", workspaceId: "workspace-1", position: 0 }],
+    sessions: [
+      { id: "session-work", name: "Work", position: 0 },
+      { id: "session-personal", name: "Personal", position: 1 },
+    ],
+    workspaces: [
+      { id: "workspace-shared", name: "Shared" },
+      { id: "workspace-work", name: "Work Only" },
+      { id: "workspace-personal", name: "Personal Only" },
+    ],
+    sessionWorkspaces: [
+      { sessionId: "session-work", workspaceId: "workspace-work", position: 1 },
+      { sessionId: "session-work", workspaceId: "workspace-shared", position: 0 },
+      { sessionId: "session-personal", workspaceId: "workspace-personal", position: 1 },
+      { sessionId: "session-personal", workspaceId: "workspace-shared", position: 0 },
+    ],
     categories: [
-      { workspaceId: "workspace-1", kind: "inbox", title: "Inbox", position: 0 },
-      { workspaceId: "workspace-1", kind: "today", title: "Today", position: 1 },
-      { workspaceId: "workspace-1", kind: "design", title: "Design", position: 2 },
+      { workspaceId: "workspace-shared", kind: "inbox", title: "Inbox", position: 0 },
+      { workspaceId: "workspace-shared", kind: "today", title: "Today", position: 1 },
+      { workspaceId: "workspace-shared", kind: "design", title: "Design", position: 2 },
       {
-        workspaceId: "workspace-1",
+        workspaceId: "workspace-shared",
         kind: "implementation",
         title: "Implementation",
         position: 3,
       },
       {
-        workspaceId: "workspace-1",
+        workspaceId: "workspace-shared",
         kind: "collaboration",
         title: "Collaboration",
         position: 4,
       },
-      { workspaceId: "workspace-1", kind: "operations", title: "Operations", position: 5 },
+      {
+        workspaceId: "workspace-shared",
+        kind: "operations",
+        title: "Operations",
+        position: 5,
+      },
     ],
     projects: [
       {
         id: "project-1",
-        workspaceId: "workspace-1",
+        workspaceId: "workspace-shared",
         category: "implementation",
         name: "Work Craft",
         position: 0,
@@ -75,8 +92,8 @@ function fakeClient(replacement: Snapshot): WorkCraftClient & { refreshCount(): 
 }
 
 test("projects and items appear under each fixed workspace category", () => {
-  const tree = buildNavigation(snapshotFixture());
-  const categories = tree[0]?.children?.[0]?.children;
+  const tree = buildNavigation(snapshotFixture(), "session-work");
+  const categories = tree[0]?.children;
 
   expect(categories?.map((node) => node.label)).toEqual([
     "Inbox",
@@ -87,13 +104,13 @@ test("projects and items appear under each fixed workspace category", () => {
     "Operations",
   ]);
   expect(categories?.[3]?.children?.[0]).toEqual({
-    key: "session:session-1:project:project-1",
+    key: "session:session-work:project:project-1",
     kind: "project",
     id: "project-1",
     label: "Work Craft",
     children: [
       {
-        key: "session:session-1:item:item-1",
+        key: "session:session-work:item:item-1",
         kind: "item",
         id: "item-1",
         label: "Ship navigator",
@@ -102,25 +119,22 @@ test("projects and items appear under each fixed workspace category", () => {
   });
 });
 
-test("shared workspace occurrences have unique keys in each session", () => {
-  const tree = buildNavigation(
-    snapshotFixture({
-      sessions: [
-        { id: "session-1", name: "Main", position: 0 },
-        { id: "session-2", name: "Focus", position: 1 },
-      ],
-      sessionWorkspaces: [
-        { sessionId: "session-1", workspaceId: "workspace-1", position: 0 },
-        { sessionId: "session-2", workspaceId: "workspace-1", position: 0 },
-      ],
-    }),
-  );
+test("navigation contains only the requested session's workspace roots", () => {
+  const snapshot = snapshotFixture({
+    sessionWorkspaces: [
+      ...snapshotFixture().sessionWorkspaces,
+      { sessionId: "session-work", workspaceId: "missing", position: 2 },
+    ],
+  });
 
-  expect(tree.map((session) => session.children?.[0]?.id)).toEqual(["workspace-1", "workspace-1"]);
-  const keys = flattenNavigation(tree).map(({ node }) => node.key);
-  expect(keys).toContain("session:session-1:workspace:workspace-1");
-  expect(keys).toContain("session:session-2:workspace:workspace-1");
-  expect(new Set(keys).size).toBe(keys.length);
+  expect(buildNavigation(snapshot, "session-work").map(({ label }) => label)).toEqual([
+    "Shared",
+    "Work Only",
+  ]);
+  expect(buildNavigation(snapshot, "session-personal").map(({ label }) => label)).toEqual([
+    "Shared",
+    "Personal Only",
+  ]);
 });
 
 test("a revision gap requests a replacement snapshot", async () => {
