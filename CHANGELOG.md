@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/console-craft/work-craft/compare/v0.4.0...v0.5.0) (2026-09-18)
+
+
+### Features
+
+* add session profiles ([#16](https://github.com/console-craft/work-craft/issues/16)) ([97cf160](https://github.com/console-craft/work-craft/commit/97cf1608dcf17e63951054827b694ce3328bef44))
+
 ## [0.4.0](https://github.com/console-craft/work-craft/compare/v0.3.0...v0.4.0) (2026-09-17)
 
 
