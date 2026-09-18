@@ -1,5 +1,5 @@
 import { useKeyboard } from "@opentui/react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { CategoryKind, Command, CommandResponse } from "@work-craft/server/client";
 import { Badge, type BadgeVariant } from "@/components/ui/badge";
 import { CreatePrompt, type CreateKind } from "./create-prompt.tsx";
@@ -85,6 +85,13 @@ export function App() {
       : undefined;
   const activeSession = selectedSession ?? automaticSession;
   const choosingSession = chooserRequested || activeSession === undefined;
+
+  useEffect(() => {
+    if (automaticSession !== undefined) {
+      setActiveSessionId(automaticSession.id);
+    }
+  }, [automaticSession]);
+
   const entries =
     snapshot === null || activeSession === undefined
       ? []

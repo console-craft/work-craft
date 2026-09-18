@@ -182,6 +182,39 @@ test("deleting the active session replaces an open prompt with the chooser", asy
   }
 });
 
+test("an automatically selected session remains active when another session is created", async () => {
+  const home = await mkdtemp(join(tmpdir(), "work-craft-tui-"));
+  const socketPath = join(home, "work-craft.sock");
+  const client = createClient({ socketPath });
+  await startDaemon(client, home);
+  const first = await client.command({ type: "session.create", name: "First" });
+  const tui = startTui(home);
+
+  try {
+    await waitFor(
+      () => tui.output().includes("First") && tui.output().includes("connected"),
+      "the only session to be selected",
+      () => `\n${tui.output()}`,
+    );
+    const outputLength = tui.output().length;
+    await client.command({ type: "session.create", name: "Second" });
+    await client.command({ type: "session.update", sessionId: first.result.id, name: "Primary" });
+    await waitFor(
+      () => tui.output().slice(outputLength).includes("Primary"),
+      "the later session update",
+    );
+    expect(tui.output().slice(outputLength)).not.toContain("choose");
+
+    tui.terminal.write(new TextEncoder().encode("w"));
+    await waitFor(() => tui.output().includes("workspace name"), "the workspace prompt");
+  } finally {
+    await stopProcessGroup(tui.child, tui.terminal);
+    tui.terminal.close();
+    await stopDaemon(client, socketPath);
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test("session selection remains local to each TUI client", async () => {
   const home = await mkdtemp(join(tmpdir(), "work-craft-tui-"));
   const socketPath = join(home, "work-craft.sock");
@@ -195,7 +228,11 @@ test("session selection remains local to each TUI client", async () => {
 
   try {
     await waitFor(
-      () => first.output().includes("n:") && second.output().includes("n:"),
+      () =>
+        first.output().includes("n:") &&
+        first.output().includes("connected") &&
+        second.output().includes("n:") &&
+        second.output().includes("connected"),
       "both session choosers",
       () => `\nFirst:\n${first.output()}\nSecond:\n${second.output()}`,
     );
