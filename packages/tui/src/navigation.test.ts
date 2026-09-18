@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { Snapshot, StreamHandlers, WorkCraftClient } from "@work-craft/server/client";
-import { buildNavigation } from "./navigation.ts";
+import { buildNavigation, flattenNavigation } from "./navigation.ts";
 import { createWorkCraftStore } from "./use-work-craft.ts";
 
 function snapshotFixture(overrides: Partial<Snapshot> = {}): Snapshot {
@@ -87,12 +87,40 @@ test("projects and items appear under each fixed workspace category", () => {
     "Operations",
   ]);
   expect(categories?.[3]?.children?.[0]).toEqual({
-    key: "project:project-1",
+    key: "session:session-1:project:project-1",
     kind: "project",
     id: "project-1",
     label: "Work Craft",
-    children: [{ key: "item:item-1", kind: "item", id: "item-1", label: "Ship navigator" }],
+    children: [
+      {
+        key: "session:session-1:item:item-1",
+        kind: "item",
+        id: "item-1",
+        label: "Ship navigator",
+      },
+    ],
   });
+});
+
+test("shared workspace occurrences have unique keys in each session", () => {
+  const tree = buildNavigation(
+    snapshotFixture({
+      sessions: [
+        { id: "session-1", name: "Main", position: 0 },
+        { id: "session-2", name: "Focus", position: 1 },
+      ],
+      sessionWorkspaces: [
+        { sessionId: "session-1", workspaceId: "workspace-1", position: 0 },
+        { sessionId: "session-2", workspaceId: "workspace-1", position: 0 },
+      ],
+    }),
+  );
+
+  expect(tree.map((session) => session.children?.[0]?.id)).toEqual(["workspace-1", "workspace-1"]);
+  const keys = flattenNavigation(tree).map(({ node }) => node.key);
+  expect(keys).toContain("session:session-1:workspace:workspace-1");
+  expect(keys).toContain("session:session-2:workspace:workspace-1");
+  expect(new Set(keys).size).toBe(keys.length);
 });
 
 test("a revision gap requests a replacement snapshot", async () => {

@@ -37,7 +37,7 @@ export function buildNavigation(snapshot: Snapshot): NavigationNode[] {
         }
         return [
           {
-            key: `workspace:${workspace.id}`,
+            key: `session:${session.id}:workspace:${workspace.id}`,
             kind: "workspace",
             id: workspace.id,
             label: workspace.name,
@@ -45,7 +45,7 @@ export function buildNavigation(snapshot: Snapshot): NavigationNode[] {
               .filter((category) => category.workspaceId === workspace.id)
               .sort(byPosition)
               .map((category) => ({
-                key: `category:${workspace.id}:${category.kind}`,
+                key: `session:${session.id}:category:${workspace.id}:${category.kind}`,
                 kind: "category",
                 id: category.kind,
                 label: category.title,
@@ -56,7 +56,7 @@ export function buildNavigation(snapshot: Snapshot): NavigationNode[] {
                   )
                   .sort(byPosition)
                   .map((project) => ({
-                    key: `project:${project.id}`,
+                    key: `session:${session.id}:project:${project.id}`,
                     kind: "project",
                     id: project.id,
                     label: project.name,
@@ -64,7 +64,7 @@ export function buildNavigation(snapshot: Snapshot): NavigationNode[] {
                       .filter((item) => item.projectId === project.id)
                       .sort(byPosition)
                       .map((item) => ({
-                        key: `item:${item.id}`,
+                        key: `session:${session.id}:item:${item.id}`,
                         kind: "item",
                         id: item.id,
                         label: item.title,
