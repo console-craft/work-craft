@@ -109,7 +109,46 @@ test("an empty installation offers session creation from the chooser", async () 
   }
 });
 
-test("one session is selected automatically and deletion returns to the chooser", async () => {
+test("the switch key makes the chooser authoritative", async () => {
+  const home = await mkdtemp(join(tmpdir(), "work-craft-tui-"));
+  const socketPath = join(home, "work-craft.sock");
+  const client = createClient({ socketPath });
+  await startDaemon(client, home);
+  await client.command({ type: "session.create", name: "First" });
+  await client.command({ type: "session.create", name: "Second" });
+  const tui = startTui(home);
+
+  try {
+    await waitFor(
+      () => tui.output().includes("n:") && tui.output().includes("connected"),
+      "the initial session chooser",
+      () => `\n${tui.output()}`,
+    );
+    const selectionOutputLength = tui.output().length;
+    tui.terminal.write(new TextEncoder().encode("\r"));
+    await waitFor(
+      () => tui.output().slice(selectionOutputLength).includes("First"),
+      "the first session to be selected",
+    );
+    const outputLength = tui.output().length;
+    tui.terminal.write(new TextEncoder().encode("s"));
+    await waitFor(
+      () => {
+        const update = tui.output().slice(outputLength);
+        return update.includes("choose") && update.includes("n:");
+      },
+      "the explicit session chooser",
+      () => `\n${tui.output().slice(outputLength)}`,
+    );
+  } finally {
+    await stopProcessGroup(tui.child, tui.terminal);
+    tui.terminal.close();
+    await stopDaemon(client, socketPath);
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("deleting the active session replaces an open prompt with the chooser", async () => {
   const home = await mkdtemp(join(tmpdir(), "work-craft-tui-"));
   const socketPath = join(home, "work-craft.sock");
   const client = createClient({ socketPath });
@@ -123,9 +162,18 @@ test("one session is selected automatically and deletion returns to the chooser"
       "the only session to be selected",
       () => `\n${tui.output()}`,
     );
+    tui.terminal.write(new TextEncoder().encode("w"));
+    await waitFor(() => tui.output().includes("workspace name"), "the workspace prompt");
     const outputLength = tui.output().length;
     await client.command({ type: "session.delete", sessionId: session.result.id });
-    await waitFor(() => tui.output().slice(outputLength).includes("choose"), "the session chooser");
+    await waitFor(
+      () => {
+        const update = tui.output().slice(outputLength);
+        return update.includes("choose") && update.includes("No sessions.");
+      },
+      "the chooser to replace the prompt",
+      () => `\n${tui.output().slice(outputLength)}`,
+    );
   } finally {
     await stopProcessGroup(tui.child, tui.terminal);
     tui.terminal.close();

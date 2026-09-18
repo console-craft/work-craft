@@ -148,11 +148,11 @@ export function App() {
     <box flexDirection="column" padding={1} width="100%" height="100%">
       <box justifyContent="space-between">
         <text>Work Craft</text>
-        <text>{`Session: ${activeSession?.name ?? "choose"}`}</text>
+        <text>{`Session: ${choosingSession ? "choose" : (activeSession?.name ?? "choose")}`}</text>
         <Badge variant={statusVariant(status)}>{status}</Badge>
       </box>
       {error === null ? null : <text fg="#EF4444">{error}</text>}
-      {prompt !== null ? (
+      {prompt !== null && (!choosingSession || prompt === "session") ? (
         <CreatePrompt
           kind={prompt}
           onSubmit={(name) => {
@@ -164,13 +164,27 @@ export function App() {
                 if (kind === "session" && response !== undefined) {
                   setActiveSessionId(response.result.id);
                   setChooserRequested(false);
+                  setOpenedItemId(null);
                 }
               });
             }
           }}
         />
+      ) : snapshot === null ? (
+        <text>Connecting to daemon...</text>
+      ) : choosingSession ? (
+        <SessionChooser
+          sessions={sessions}
+          onSelect={(sessionId) => {
+            setActiveSessionId(sessionId);
+            setChooserRequested(false);
+            setPrompt(null);
+            setOpenedItemId(null);
+          }}
+          onCreate={() => setPrompt("session")}
+        />
       ) : openedItemId !== null ? (
-        snapshot === null || surface === undefined ? (
+        surface === undefined ? (
           <text>Opening surface...</text>
         ) : (
           <SurfaceView
@@ -182,17 +196,6 @@ export function App() {
             onCommand={(next) => void run(next)}
           />
         )
-      ) : snapshot === null ? (
-        <text>Connecting to daemon...</text>
-      ) : choosingSession ? (
-        <SessionChooser
-          sessions={sessions}
-          onSelect={(sessionId) => {
-            setActiveSessionId(sessionId);
-            setChooserRequested(false);
-          }}
-          onCreate={() => setPrompt("session")}
-        />
       ) : (
         <NavigationPane entries={entries} selectedIndex={index} />
       )}
