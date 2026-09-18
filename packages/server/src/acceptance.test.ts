@@ -355,6 +355,7 @@ test.serial(
       expect(afterDelete.panes.every(({ processStatus }) => processStatus === "running")).toBe(
         true,
       );
+      expect(history(afterDelete, paneId)).toContain("acceptance-marker");
       expect(restoredShellPids.every(isAlive)).toBe(true);
 
       expect(await runCli(home, ["snapshot"])).toEqual({
