@@ -22,15 +22,11 @@ async function waitFor(
   }
 }
 
-async function stopProcessGroup(child: Bun.Subprocess, terminal: Bun.Terminal): Promise<void> {
-  if (child.exitCode === null) {
-    terminal.write(Uint8Array.of(3));
-    await Promise.race([child.exited, Bun.sleep(500)]);
-  }
+async function stopProcessGroup(child: Bun.Subprocess): Promise<void> {
   try {
     process.kill(-child.pid, "SIGKILL");
   } catch {
-    // The command and all of its children exited from Ctrl-C.
+    // The command and all of its children already exited.
   }
   await child.exited;
 }
@@ -107,7 +103,7 @@ test("an empty installation offers session creation from the chooser", async () 
     );
     expect(tui.output()).toContain("session name");
   } finally {
-    await stopProcessGroup(tui.child, tui.terminal);
+    await stopProcessGroup(tui.child);
     tui.terminal.close();
     await stopDaemon(client, socketPath);
     await rm(home, { recursive: true, force: true });
@@ -151,7 +147,7 @@ test("the switch key makes the chooser authoritative", async () => {
       () => `\n${tui.output().slice(outputLength)}`,
     );
   } finally {
-    await stopProcessGroup(tui.child, tui.terminal);
+    await stopProcessGroup(tui.child);
     tui.terminal.close();
     await stopDaemon(client, socketPath);
     await rm(home, { recursive: true, force: true });
@@ -188,7 +184,7 @@ test("deleting the active session replaces an open prompt with the chooser", asy
       () => `\n${tui.output().slice(outputLength)}`,
     );
   } finally {
-    await stopProcessGroup(tui.child, tui.terminal);
+    await stopProcessGroup(tui.child);
     tui.terminal.close();
     await stopDaemon(client, socketPath);
     await rm(home, { recursive: true, force: true });
@@ -224,7 +220,7 @@ test("an automatically selected session remains active when another session is c
     tui.terminal.write(new TextEncoder().encode("n"));
     await waitFor(() => tui.output().includes("workspace name"), "the workspace prompt");
   } finally {
-    await stopProcessGroup(tui.child, tui.terminal);
+    await stopProcessGroup(tui.child);
     tui.terminal.close();
     await stopDaemon(client, socketPath);
     await rm(home, { recursive: true, force: true });
@@ -280,13 +276,107 @@ test("session selection remains local to each TUI client", async () => {
       () => `\n${second.output().slice(secondSelectionOutputLength)}`,
     );
   } finally {
-    await Promise.all([
-      stopProcessGroup(first.child, first.terminal),
-      stopProcessGroup(second.child, second.terminal),
-    ]);
+    await Promise.all([stopProcessGroup(first.child), stopProcessGroup(second.child)]);
     first.terminal.close();
     second.terminal.close();
     await stopDaemon(client, socketPath);
     await rm(home, { recursive: true, force: true });
   }
 });
+
+test("raw stage 1 key sequences drive the shell", async () => {
+  const home = await mkdtemp(join(tmpdir(), "work-craft-tui-"));
+  const socketPath = join(home, "work-craft.sock");
+  const client = createClient({ socketPath });
+  await startDaemon(client, home);
+  const session = await client.command({ type: "session.create", name: "Keys" });
+  const workspace = await client.command({
+    type: "workspace.create",
+    sessionId: session.result.id,
+    name: "Workbench",
+  });
+  const project = await client.command({
+    type: "project.create",
+    workspaceId: workspace.result.id,
+    category: "implementation",
+    name: "Input Project",
+  });
+  const item = await client.command({
+    type: "item.create",
+    projectId: project.result.id,
+    kind: "surface",
+    title: "Input Item",
+  });
+  await client.command({ type: "surface.ensure", itemId: item.result.id });
+  const tui = startTui(home);
+  const input = new TextEncoder();
+
+  try {
+    await waitFor(
+      () => tui.output().includes("Keys") && tui.output().includes(CONNECTED_COLOR),
+      "the populated shell",
+      () => `\n${tui.output()}`,
+    );
+    await Bun.sleep(100);
+
+    tui.terminal.write(input.encode("\x1b[104;17u"));
+    tui.terminal.write(input.encode("\x1b[108;17u"));
+    await waitFor(() => tui.output().includes("Today"), "the next category");
+    tui.terminal.write(input.encode("\x1b[108;17u"));
+    await waitFor(() => tui.output().includes("Design"), "the design category");
+    tui.terminal.write(input.encode("\x1b[108;17u"));
+    await waitFor(() => tui.output().includes("Implementation"), "the project category");
+
+    tui.terminal.write(Uint8Array.of(12));
+    await Bun.sleep(50);
+    tui.terminal.write(input.encode("l"));
+    await waitFor(() => tui.output().includes("Input Item"), "the expanded project");
+    tui.terminal.write(input.encode("j"));
+    await Bun.sleep(50);
+    expect(tui.output()).not.toContain("Main");
+    tui.terminal.write(input.encode("\r"));
+    await waitFor(() => tui.output().includes("Main"), "item activation");
+
+    tui.terminal.write(Uint8Array.of(12));
+    await Bun.sleep(50);
+    const leaderOutputLength = tui.output().length;
+    tui.terminal.write(Uint8Array.of(0));
+    await waitFor(() => tui.output().slice(leaderOutputLength).includes("LEADER"), "leader mode");
+    await Bun.sleep(450);
+    const passthroughOutputLength = tui.output().length;
+    tui.terminal.write(input.encode("x"));
+    await waitFor(
+      () => tui.output().slice(passthroughOutputLength).includes("x"),
+      "expired leader passthrough",
+    );
+
+    tui.terminal.write(Uint8Array.of(0));
+    await waitFor(() => tui.output().slice(passthroughOutputLength).includes("LEADER"), "leader");
+    tui.terminal.write(input.encode("b"));
+    await Bun.sleep(50);
+    const restoreOutputLength = tui.output().length;
+    tui.terminal.write(Uint8Array.of(0));
+    await Bun.sleep(20);
+    tui.terminal.write(input.encode("b"));
+    await waitFor(
+      () => tui.output().slice(restoreOutputLength).includes("Input"),
+      "navigator restoration",
+    );
+
+    const chooserOutputLength = tui.output().length;
+    tui.terminal.write(input.encode("\x1b[115;17u"));
+    await waitFor(
+      () => tui.output().slice(chooserOutputLength).includes("Sessions"),
+      "the session chooser",
+    );
+    tui.terminal.write(input.encode("\x1b"));
+    await Bun.sleep(50);
+    tui.terminal.write(input.encode("\x1b[113;17u"));
+    await waitFor(() => tui.child.exitCode !== null, "Hyper+q to quit");
+  } finally {
+    await stopProcessGroup(tui.child);
+    tui.terminal.close();
+    await stopDaemon(client, socketPath);
+    await rm(home, { recursive: true, force: true });
+  }
+}, 15_000);

@@ -69,10 +69,6 @@ async function smokeTui(): Promise<void> {
       throw new Error(`compiled TUI did not connect: ${output.trim()}`);
     }
   } finally {
-    if (child.exitCode === null) {
-      terminal.write(Uint8Array.of(3));
-      await Promise.race([child.exited, Bun.sleep(500)]);
-    }
     try {
       process.kill(-child.pid, "SIGKILL");
     } catch {
