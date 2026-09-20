@@ -38,7 +38,9 @@ export function SessionChooser({
                 {`${session.id === cursorId ? ">" : " "} ${session.name}`}
               </text>
             ))}
-            <text>n: new session</text>
+            <text id="session:create" onMouseDown={onCreate}>
+              n: new session
+            </text>
           </>
         )}
       </box>
