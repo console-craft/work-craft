@@ -1,6 +1,5 @@
-import { useKeyboard } from "@opentui/react";
-import type { Command, LayoutNode, Snapshot, StreamConnection } from "@work-craft/server/client";
-import { useState } from "react";
+import type { EmbeddedTerminalRenderable } from "@opentui/core";
+import type { LayoutNode, Snapshot, StreamConnection } from "@work-craft/server/client";
 import { TerminalPane } from "./terminal-pane.tsx";
 import type { TerminalBuffer } from "./use-work-craft.ts";
 
@@ -30,47 +29,50 @@ export function terminalPaneKey(
   return `${paneId}:${buffer?.epoch ?? "pending"}:${buffer?.historyCursor ?? 0}`;
 }
 
-export function tabSelectionCommand(
-  key: "[" | "]",
-  surfaceId: string,
-  tabs: { id: string }[],
+export function adjacentTab<T extends { id: string }>(
+  tabs: readonly T[],
   activeTabId: string,
-): Extract<Command, { type: "surface.selectTab" }> | undefined {
-  const activeIndex = tabs.findIndex(({ id }) => id === activeTabId);
-  if (activeIndex === -1) {
-    return undefined;
-  }
-  const offset = key === "[" ? -1 : 1;
-  const index = (activeIndex + offset + tabs.length) % tabs.length;
-  return { type: "surface.selectTab", surfaceId, tabId: tabs[index]!.id };
+  offset: -1 | 1,
+): T | undefined {
+  const index = tabs.findIndex(({ id }) => id === activeTabId);
+  return index < 0 ? undefined : tabs[index + offset];
 }
 
-type SurfaceViewProps = {
-  controlsEnabled: boolean;
+export type SurfaceViewProps = {
   snapshot: Snapshot;
   stream: StreamConnection | null;
   surface: Snapshot["surfaces"][number];
   terminals: ReadonlyMap<string, TerminalBuffer>;
-  onCommand(command: Command): void;
+  focusedPaneId: string | null;
+  workbenchFocused: boolean;
+  undersized: boolean;
+  onFocusPane(paneId: string): void;
+  onTerminalReady(paneId: string, terminal: EmbeddedTerminalRenderable | null): void;
 };
 
 type LayoutViewProps = Pick<SurfaceViewProps, "snapshot" | "stream" | "terminals"> & {
-  activePaneId: string | undefined;
+  focusedPaneId: string | null;
   layout: ProjectedLayout;
-  onActivate(paneId: string): void;
+  resizeEnabled: boolean;
+  workbenchFocused: boolean;
+  onFocusPane(paneId: string): void;
+  onTerminalReady(paneId: string, terminal: EmbeddedTerminalRenderable | null): void;
 };
 
-function paneIds(layout: ProjectedLayout): string[] {
+export function paneIds(layout: ProjectedLayout): string[] {
   return "paneId" in layout ? [layout.paneId] : layout.children.flatMap(paneIds);
 }
 
 function LayoutView({
-  activePaneId,
+  focusedPaneId,
   layout,
+  resizeEnabled,
   snapshot,
   stream,
   terminals,
-  onActivate,
+  workbenchFocused,
+  onFocusPane,
+  onTerminalReady,
 }: LayoutViewProps) {
   if ("paneId" in layout) {
     const pane = snapshot.panes.find(({ id }) => id === layout.paneId);
@@ -80,11 +82,13 @@ function LayoutView({
     ) : (
       <TerminalPane
         key={terminalPaneKey(pane.id, buffer)}
-        active={pane.id === activePaneId}
         buffer={buffer}
+        focused={workbenchFocused && pane.id === focusedPaneId}
         pane={pane}
+        resizeEnabled={resizeEnabled}
         stream={stream}
-        onActivate={() => onActivate(pane.id)}
+        onFocus={() => onFocusPane(pane.id)}
+        onTerminalReady={onTerminalReady}
       />
     );
   }
@@ -95,13 +99,31 @@ function LayoutView({
     <box flexDirection={layout.direction} width="100%" height="100%">
       <box {...{ [size]: firstSize }}>
         <LayoutView
-          {...{ activePaneId, snapshot, stream, terminals, onActivate }}
+          {...{
+            focusedPaneId,
+            resizeEnabled,
+            snapshot,
+            stream,
+            terminals,
+            workbenchFocused,
+            onFocusPane,
+            onTerminalReady,
+          }}
           layout={layout.children[0]}
         />
       </box>
       <box {...{ [size]: secondSize }}>
         <LayoutView
-          {...{ activePaneId, snapshot, stream, terminals, onActivate }}
+          {...{
+            focusedPaneId,
+            resizeEnabled,
+            snapshot,
+            stream,
+            terminals,
+            workbenchFocused,
+            onFocusPane,
+            onTerminalReady,
+          }}
           layout={layout.children[1]}
         />
       </box>
@@ -110,12 +132,15 @@ function LayoutView({
 }
 
 export function SurfaceView({
-  controlsEnabled,
+  focusedPaneId,
+  onFocusPane,
+  onTerminalReady,
   snapshot,
   stream,
   surface,
   terminals,
-  onCommand,
+  undersized,
+  workbenchFocused,
 }: SurfaceViewProps) {
   const tabs = snapshot.tabs
     .filter(({ surfaceId }) => surfaceId === surface.id)
@@ -125,60 +150,27 @@ export function SurfaceView({
     activeTab?.layout === null || activeTab === undefined
       ? undefined
       : projectLayout(activeTab.layout);
-  const ids = layout === undefined ? [] : paneIds(layout);
-  const [selectedPaneId, setSelectedPaneId] = useState<string>();
-  const activePaneId = ids.includes(selectedPaneId ?? "") ? selectedPaneId : ids[0];
-
-  useKeyboard((key) => {
-    if (!controlsEnabled || activeTab === undefined) {
-      return;
-    }
-    let command: Command | undefined;
-    if (key.name === "[" || key.name === "]") {
-      command = tabSelectionCommand(key.name, surface.id, tabs, activeTab.id);
-    } else if (key.name === "t") {
-      command = { type: "tab.create", surfaceId: surface.id, title: "Shell" };
-    } else if ((key.name === "\\" || key.name === "-") && activePaneId !== undefined) {
-      command = {
-        type: "pane.split",
-        paneId: activePaneId,
-        direction: key.name === "\\" ? "vertical" : "horizontal",
-      };
-    } else if (key.name === "r" && activePaneId !== undefined) {
-      const status = snapshot.panes.find(({ id }) => id === activePaneId)?.processStatus;
-      if (status === "failed" || status === "exited") {
-        command = { type: "process.restart", paneId: activePaneId };
-      }
-    }
-    if (command !== undefined) {
-      key.preventDefault();
-      key.stopPropagation();
-      onCommand(command);
-    }
-  });
 
   return (
-    <box flexDirection="column" flexGrow={1}>
-      <text>
-        {tabs
-          .map(
-            (tab) =>
-              `${tab.id === activeTab?.id ? "[" : " "}${tab.title}${tab.id === activeTab?.id ? "]" : " "}`,
-          )
-          .join(" ")}
-      </text>
+    <box flexGrow={1} width="100%" height="100%">
       {layout === undefined ? (
         <text fg="#9CA3AF">No terminal panes</text>
       ) : (
-        <LayoutView
-          activePaneId={activePaneId}
-          layout={layout}
-          snapshot={snapshot}
-          stream={stream}
-          terminals={terminals}
-          onActivate={setSelectedPaneId}
-        />
+        <box visible={!undersized} width="100%" height="100%">
+          <LayoutView
+            focusedPaneId={focusedPaneId}
+            layout={layout}
+            resizeEnabled={!undersized}
+            snapshot={snapshot}
+            stream={stream}
+            terminals={terminals}
+            workbenchFocused={workbenchFocused}
+            onFocusPane={onFocusPane}
+            onTerminalReady={onTerminalReady}
+          />
+        </box>
       )}
+      {undersized ? <text>Workbench too small. Resize terminal or use leader+b.</text> : null}
     </box>
   );
 }

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { LayoutNode } from "@work-craft/server/client";
-import { projectLayout, tabSelectionCommand, terminalPaneKey } from "./surface-view.tsx";
+import { adjacentTab, paneIds, projectLayout, terminalPaneKey } from "./surface-view.tsx";
 
 function splitFixture(): LayoutNode {
   return {
@@ -29,15 +29,13 @@ test("terminal renderer identity includes the daemon epoch and replay cursor", (
   ]).toEqual(["pane-1:epoch-a:3", "pane-1:epoch-b:3", "pane-1:epoch-b:9"]);
 });
 
-test("bracket controls select the current tab when it is the only tab", () => {
-  expect(tabSelectionCommand("[", "surface-1", [{ id: "tab-1" }], "tab-1")).toEqual({
-    type: "surface.selectTab",
-    surfaceId: "surface-1",
-    tabId: "tab-1",
-  });
-  expect(tabSelectionCommand("]", "surface-1", [{ id: "tab-1" }], "tab-1")).toEqual({
-    type: "surface.selectTab",
-    surfaceId: "surface-1",
-    tabId: "tab-1",
-  });
+test("tab adjacency stops at both edges", () => {
+  const tabs = [{ id: "a" }, { id: "b" }];
+  expect(adjacentTab(tabs, "a", -1)).toBeUndefined();
+  expect(adjacentTab(tabs, "a", 1)?.id).toBe("b");
+  expect(adjacentTab(tabs, "b", 1)).toBeUndefined();
+});
+
+test("pane IDs preserve recursive visual order", () => {
+  expect(paneIds(projectLayout(splitFixture()))).toEqual(["a", "b"]);
 });

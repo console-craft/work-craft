@@ -11,7 +11,7 @@ import {
 } from "./navigation.ts";
 import { NavigationPane } from "./navigation-pane.tsx";
 import { SessionChooser } from "./session-chooser.tsx";
-import { SurfaceView } from "./surface-view.tsx";
+import { adjacentTab, paneIds, projectLayout, SurfaceView } from "./surface-view.tsx";
 import { useWorkCraft } from "./use-work-craft.ts";
 
 function ancestor(
@@ -75,6 +75,7 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [chooserRequested, setChooserRequested] = useState(false);
+  const [selectedPaneId, setSelectedPaneId] = useState<string | null>(null);
   const sessions = [...(snapshot?.sessions ?? [])].sort(
     (a, b) => a.position - b.position || a.id.localeCompare(b.id),
   );
@@ -98,6 +99,19 @@ export function App() {
       : flattenNavigation(buildNavigation(snapshot, activeSession.id));
   const index = Math.max(0, Math.min(selectedIndex, entries.length - 1));
   const selected = entries[index];
+  const surface = snapshot?.surfaces.find((value) => value.itemId === openedItemId);
+  const surfaceTabs = (snapshot?.tabs ?? [])
+    .filter(({ surfaceId }) => surfaceId === surface?.id)
+    .sort((a, b) => a.position - b.position);
+  const activeSurfaceTab = surfaceTabs.find(({ id }) => id === surface?.activeTabId);
+  const surfaceLayout =
+    activeSurfaceTab?.layout === null || activeSurfaceTab === undefined
+      ? undefined
+      : projectLayout(activeSurfaceTab.layout);
+  const surfacePaneIds = surfaceLayout === undefined ? [] : paneIds(surfaceLayout);
+  const focusedPaneId = surfacePaneIds.includes(selectedPaneId ?? "")
+    ? selectedPaneId
+    : (surfacePaneIds[0] ?? null);
 
   async function run(next: Command, itemId?: string): Promise<CommandResponse | undefined> {
     try {
@@ -124,7 +138,38 @@ export function App() {
       }
       return;
     }
-    if (prompt !== null || openedItemId !== null) {
+    if (prompt !== null) {
+      return;
+    }
+    if (openedItemId !== null) {
+      if (surface === undefined || activeSurfaceTab === undefined) {
+        return;
+      }
+      let next: Command | undefined;
+      if (key.name === "[" || key.name === "]") {
+        const tab = adjacentTab(surfaceTabs, activeSurfaceTab.id, key.name === "[" ? -1 : 1);
+        if (tab !== undefined) {
+          next = { type: "surface.selectTab", surfaceId: surface.id, tabId: tab.id };
+        }
+      } else if (key.name === "t") {
+        next = { type: "tab.create", surfaceId: surface.id, title: "Shell" };
+      } else if ((key.name === "\\" || key.name === "-") && focusedPaneId !== null) {
+        next = {
+          type: "pane.split",
+          paneId: focusedPaneId,
+          direction: key.name === "\\" ? "vertical" : "horizontal",
+        };
+      } else if (key.name === "r" && focusedPaneId !== null) {
+        const pane = snapshot?.panes.find(({ id }) => id === focusedPaneId);
+        if (pane?.processStatus === "failed" || pane?.processStatus === "exited") {
+          next = { type: "process.restart", paneId: focusedPaneId };
+        }
+      }
+      if (next !== undefined) {
+        key.preventDefault();
+        key.stopPropagation();
+        void run(next);
+      }
       return;
     }
     if (key.name === "s") {
@@ -150,7 +195,6 @@ export function App() {
     }
   });
 
-  const surface = snapshot?.surfaces.find((value) => value.itemId === openedItemId);
   return (
     <box flexDirection="column" padding={1} width="100%" height="100%">
       <box justifyContent="space-between">
@@ -194,14 +238,27 @@ export function App() {
         surface === undefined ? (
           <text>Opening surface...</text>
         ) : (
-          <SurfaceView
-            controlsEnabled={prompt === null}
-            snapshot={snapshot}
-            stream={stream}
-            surface={surface}
-            terminals={terminals}
-            onCommand={(next) => void run(next)}
-          />
+          <box flexDirection="column" flexGrow={1}>
+            <text>
+              {surfaceTabs
+                .map(
+                  (tab) =>
+                    `${tab.id === activeSurfaceTab?.id ? "[" : " "}${tab.title}${tab.id === activeSurfaceTab?.id ? "]" : " "}`,
+                )
+                .join(" ")}
+            </text>
+            <SurfaceView
+              focusedPaneId={focusedPaneId}
+              snapshot={snapshot}
+              stream={stream}
+              surface={surface}
+              terminals={terminals}
+              undersized={false}
+              workbenchFocused={true}
+              onFocusPane={setSelectedPaneId}
+              onTerminalReady={() => {}}
+            />
+          </box>
         )
       ) : (
         <NavigationPane entries={entries} selectedIndex={index} />
