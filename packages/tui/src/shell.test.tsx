@@ -95,6 +95,24 @@ function surfaceSnapshot(): Snapshot {
   });
 }
 
+function splitSurfaceSnapshot(): Snapshot {
+  const snapshot = surfaceSnapshot();
+  return {
+    ...snapshot,
+    tabs: snapshot.tabs.map((tab) => ({
+      ...tab,
+      layout: {
+        type: "split" as const,
+        direction: "vertical" as const,
+        ratio: 0.5,
+        first: { type: "pane" as const, paneId: "pane-1" },
+        second: { type: "pane" as const, paneId: "pane-2" },
+      },
+    })),
+    panes: [...snapshot.panes, { ...snapshot.panes[0]!, id: "pane-2", title: "Second" }],
+  };
+}
+
 async function openFixtureItem(setup: Awaited<ReturnType<typeof testRender>>): Promise<void> {
   await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
   await act(async () => setup.mockInput.pressKey("l"));
@@ -261,6 +279,113 @@ test("shell-only state changes preserve terminal renderable identity", async () 
   act(() => setup.renderer.destroy());
 });
 
+test("spatial focus moves between workbench panes", async () => {
+  const commands: Command[] = [];
+  const setup = await testRender(
+    <WorkCraftShell
+      workCraft={workCraftStateFixture({
+        snapshot: splitSurfaceSnapshot(),
+        command: async (command) => {
+          commands.push(command);
+          return { ok: true, revision: 1, result: { id: "result-1" } };
+        },
+      })}
+    />,
+    { width: 120, height: 40, kittyKeyboard: true },
+  );
+  await setup.flush();
+  await openFixtureItem(setup);
+  commands.length = 0;
+  await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
+  await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
+  await act(async () => setup.mockInput.pressKey(" ", { ctrl: true }));
+  await act(async () => setup.mockInput.pressKey("v"));
+  expect(commands.at(-1)).toEqual({
+    type: "pane.split",
+    paneId: "pane-2",
+    direction: "vertical",
+  });
+  act(() => setup.renderer.destroy());
+});
+
+test("a rejected pane command stays visible in the workbench region", async () => {
+  const setup = await testRender(
+    <WorkCraftShell
+      workCraft={workCraftStateFixture({
+        snapshot: surfaceSnapshot(),
+        command: async (command) => {
+          if (command.type === "surface.ensure") {
+            return { ok: true, revision: 1, result: { id: "surface-1" } };
+          }
+          throw new Error("split failed");
+        },
+      })}
+    />,
+    { width: 120, height: 40, kittyKeyboard: true },
+  );
+  await setup.flush();
+  await openFixtureItem(setup);
+  await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
+  await act(async () => setup.mockInput.pressKey(" ", { ctrl: true }));
+  await act(async () => setup.mockInput.pressKey("s"));
+  await setup.flush();
+  expect(setup.captureCharFrame()).toContain("split failed");
+  expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBeDefined();
+  act(() => setup.renderer.destroy());
+});
+
+test("opening a collapsed project terminal expands and activates its item", async () => {
+  const setup = await testRender(
+    <WorkCraftShell
+      workCraft={workCraftStateFixture({
+        snapshot: surfaceSnapshot(),
+        command: async () => ({
+          ok: true,
+          revision: 1,
+          result: { id: "surface-1", itemId: "item-1" },
+        }),
+      })}
+    />,
+    { width: 120, height: 40, kittyKeyboard: true },
+  );
+  await setup.flush();
+  await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
+  await act(async () => setup.mockInput.pressKey("o"));
+  await setup.flush();
+  expect(setup.renderer.root.findDescendantById("navigator-row:item:item-1")).toBeDefined();
+  expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBeDefined();
+  act(() => setup.renderer.destroy());
+});
+
+test("minimum workbench size applies to the bordered interior", async () => {
+  const setup = await testRender(
+    <WorkCraftShell workCraft={workCraftStateFixture({ snapshot: surfaceSnapshot() })} />,
+    { width: 120, height: 40, kittyKeyboard: true },
+  );
+  await setup.flush();
+  await openFixtureItem(setup);
+  act(() => setup.resize(32, 10));
+  await setup.flush();
+  expect(setup.captureCharFrame()).toContain("Workbench too");
+  expect(setup.captureCharFrame()).toContain("small.");
+  act(() => setup.renderer.destroy());
+});
+
+test("compact navigator shows invalid leader feedback", async () => {
+  const setup = await testRender(<WorkCraftShell workCraft={workCraftStateFixture()} />, {
+    width: 70,
+    height: 20,
+    kittyKeyboard: true,
+  });
+  await setup.flush();
+  await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
+  await act(async () => setup.mockInput.pressKey(" ", { ctrl: true }));
+  await act(async () => setup.mockInput.pressKey("x"));
+  await setup.flush();
+  expect(setup.captureCharFrame()).toMatch(/Invalid.leader.key:.x/);
+  act(() => setup.renderer.destroy());
+});
+
 test("navigator renders one stable projection in expanded and compact modes", async () => {
   const expanded = await testRender(
     <NavigationPane
@@ -323,6 +448,7 @@ test("workspace overflow leaves the session control and connection dot pinned", 
         hasNext
         hasPrevious
         visibleIds={["b", "c"]}
+        width={30}
         workspaces={[
           { id: "a", name: "Alpha" },
           { id: "b", name: "Beta" },
@@ -332,7 +458,13 @@ test("workspace overflow leaves the session control and connection dot pinned", 
         onActivate={() => {}}
         onFocus={() => {}}
       />
-      <SessionSwitcher focused={false} name="Work" status="connecting" onOpen={() => {}} />
+      <SessionSwitcher
+        focused={false}
+        name="Work"
+        status="connecting"
+        width={20}
+        onOpen={() => {}}
+      />
     </box>,
     { width: 50, height: 3 },
   );
@@ -341,6 +473,37 @@ test("workspace overflow leaves the session control and connection dot pinned", 
   expect(frame).toContain("<");
   expect(frame).toContain(">");
   expect(frame).toContain("Work");
+  expect(setup.renderer.root.findDescendantById("connection-status")).toBeDefined();
+  act(() => setup.renderer.destroy());
+});
+
+test("long pinned header labels use trailing ellipses", async () => {
+  const setup = await testRender(
+    <box flexDirection="row" width={30}>
+      <WorkspaceStrip
+        activeId="a"
+        cursorId="a"
+        focused={false}
+        hasNext={false}
+        hasPrevious={false}
+        visibleIds={["a"]}
+        width={12}
+        workspaces={[{ id: "a", name: "Workspace with a very long name" }]}
+        onActivate={() => {}}
+        onFocus={() => {}}
+      />
+      <SessionSwitcher
+        focused={false}
+        name="Session with a very long name"
+        status="connected"
+        width={18}
+        onOpen={() => {}}
+      />
+    </box>,
+    { width: 30, height: 3 },
+  );
+  await setup.flush();
+  expect(setup.captureCharFrame().match(/…/g)?.length).toBe(2);
   expect(setup.renderer.root.findDescendantById("connection-status")).toBeDefined();
   act(() => setup.renderer.destroy());
 });
@@ -385,6 +548,7 @@ test("mouse-down focuses and activates a workspace through the same callbacks", 
       hasNext={false}
       hasPrevious={false}
       visibleIds={["a"]}
+      width={30}
       workspaces={[{ id: "a", name: "Alpha" }]}
       onActivate={(id) => calls.push(`activate:${id}`)}
       onFocus={(id) => calls.push(`focus:${id}`)}

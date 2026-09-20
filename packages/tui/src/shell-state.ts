@@ -302,7 +302,11 @@ export function projectIdForShellContext(
     state.activeCategory,
     state.expandedProjectIds,
   );
-  const key =
-    state.focus.region === "navigator" ? state.navigatorCursorKey : state.activeNavigatorKey;
-  return projectIdForEntry(entries.find((entry) => entry.key === key));
+  if (state.focus.region === "navigator") {
+    return projectIdForEntry(entries.find((entry) => entry.key === state.navigatorCursorKey));
+  }
+  const itemId = state.activeNavigatorKey?.startsWith("item:")
+    ? state.activeNavigatorKey.slice("item:".length)
+    : undefined;
+  return snapshot.items.find(({ id }) => id === itemId)?.projectId;
 }

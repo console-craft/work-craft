@@ -165,7 +165,7 @@ export function createWorkCraftStore(
     return true;
   }
 
-  async function applyMessage(message: ServerMessage): Promise<void> {
+  async function applyMessage(message: ServerMessage, activeRun?: number): Promise<void> {
     if (message.type === "terminal.output") {
       if (message.epoch !== state.snapshot?.epoch) {
         return;
@@ -196,7 +196,7 @@ export function createWorkCraftStore(
     if (current === null || next.epoch !== current.epoch || next.revision <= current.revision + 1) {
       replaceSnapshot(next);
     } else if (next.revision > current.revision + 1) {
-      await refresh();
+      await refresh(activeRun);
     }
   }
 
@@ -204,7 +204,7 @@ export function createWorkCraftStore(
     let stream: StreamConnection | undefined;
     stream = await client.stream({
       onMessage(message) {
-        void apply(message).catch(() => stream?.close());
+        void apply(message, activeRun).catch(() => stream?.close());
       },
       onClose() {
         if (run === activeRun) {
@@ -272,11 +272,20 @@ export function createWorkCraftStore(
     const oldStream = state.stream;
     update({ status: "connecting", stream: null });
     oldStream?.close();
+    await sleep(0);
+    if (run !== activeRun) {
+      return;
+    }
     await establish(activeRun, false);
   }
 
-  function apply(message: ServerMessage): Promise<void> {
-    const result = applying.then(() => applyMessage(message));
+  function apply(message: ServerMessage, activeRun?: number): Promise<void> {
+    const result = applying.then(() => {
+      if (activeRun !== undefined && run !== activeRun) {
+        return;
+      }
+      return applyMessage(message, activeRun);
+    });
     applying = result.catch(() => {});
     return result;
   }

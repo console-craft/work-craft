@@ -152,6 +152,27 @@ test("an old stream close callback cannot start a competing reconnect", async ()
   expect(store.getState().status).toBe("connected");
 });
 
+test("an old stream message cannot replace state after reload", async () => {
+  const oldSnapshot = snapshotFixture({ epoch: "old" });
+  const currentSnapshot = snapshotFixture({ epoch: "current", revision: 1 });
+  const handlers: StreamHandlers[] = [];
+  let snapshots = 0;
+  const client = fakeClient(oldSnapshot);
+  client.snapshot = async () => (++snapshots === 1 ? oldSnapshot : currentSnapshot);
+  client.stream = async (nextHandlers) => {
+    handlers.push(nextHandlers);
+    return { close() {}, sendInput() {}, resize() {} };
+  };
+  const store = createWorkCraftStore(client, { retryDelays: [] });
+  await store.start();
+  await store.reload();
+
+  handlers[0]!.onMessage({ type: "snapshot", snapshot: oldSnapshot });
+  await Bun.sleep(0);
+
+  expect(store.snapshot()).toBe(currentSnapshot);
+});
+
 test("exhausted recovery becomes disconnected and rejects mutations", async () => {
   const client = fakeClient(snapshotFixture());
   client.stream = async () => {

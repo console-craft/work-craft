@@ -45,6 +45,10 @@ function intervalGap(aStart: number, aSize: number, bStart: number, bSize: numbe
   return Math.max(0, aStart - (bStart + bSize), bStart - (aStart + aSize));
 }
 
+function intervalsOverlap(aStart: number, aSize: number, bStart: number, bSize: number): boolean {
+  return aStart < bStart + bSize && bStart < aStart + aSize;
+}
+
 function score(current: Rect, candidate: FocusNode, direction: Direction): readonly unknown[] {
   const currentCenter = center(current);
   const candidateCenter = center(candidate.rect);
@@ -52,6 +56,9 @@ function score(current: Rect, candidate: FocusNode, direction: Direction): reado
   const perpendicularGap = horizontal
     ? intervalGap(current.y, current.height, candidate.rect.y, candidate.rect.height)
     : intervalGap(current.x, current.width, candidate.rect.x, candidate.rect.width);
+  const perpendicularOverlap = horizontal
+    ? intervalsOverlap(current.y, current.height, candidate.rect.y, candidate.rect.height)
+    : intervalsOverlap(current.x, current.width, candidate.rect.x, candidate.rect.width);
   const primaryGap = horizontal
     ? intervalGap(current.x, current.width, candidate.rect.x, candidate.rect.width)
     : intervalGap(current.y, current.height, candidate.rect.y, candidate.rect.height);
@@ -60,7 +67,7 @@ function score(current: Rect, candidate: FocusNode, direction: Direction): reado
     candidateCenter.y - currentCenter.y,
   );
   return [
-    perpendicularGap > 0 ? 1 : 0,
+    perpendicularOverlap ? 0 : 1,
     primaryGap,
     perpendicularGap,
     centerDistance,
@@ -93,6 +100,24 @@ export function moveFocus(
       return false;
     }
     const candidateCenter = center(node.rect);
+    const horizontal = direction === "left" || direction === "right";
+    if (
+      !(horizontal
+        ? intervalsOverlap(
+            currentNode.rect.y,
+            currentNode.rect.height,
+            node.rect.y,
+            node.rect.height,
+          )
+        : intervalsOverlap(
+            currentNode.rect.x,
+            currentNode.rect.width,
+            node.rect.x,
+            node.rect.width,
+          ))
+    ) {
+      return false;
+    }
     if (direction === "left") {
       return candidateCenter.x < currentCenter.x;
     }

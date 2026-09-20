@@ -1,5 +1,10 @@
 import { expect, test } from "bun:test";
-import { createInitialShellState, reconcileShellState, reduceShellState } from "./shell-state.ts";
+import {
+  createInitialShellState,
+  projectIdForShellContext,
+  reconcileShellState,
+  reduceShellState,
+} from "./shell-state.ts";
 import { snapshotFixture } from "./test-fixtures.ts";
 
 test("one session is selected automatically without opening the chooser", () => {
@@ -65,4 +70,27 @@ test("focusing a pane records it for composite-region restoration", () => {
   });
   expect(state.focus).toEqual({ region: "workbench", paneId: "pane-2" });
   expect(state.lastWorkbenchPaneId).toBe("pane-2");
+});
+
+test("item creation outside the navigator requires an active item", () => {
+  const snapshot = snapshotFixture();
+  const projectState = {
+    ...reconcileShellState(createInitialShellState(), snapshot),
+    focus: { region: "category" as const },
+    activeWorkspaceId: "workspace-shared",
+    activeCategory: "implementation" as const,
+    activeNavigatorKey: "project:project-1",
+    expandedProjectIds: new Set(["project-1"]),
+  };
+  expect(projectIdForShellContext(projectState, snapshot)).toBeUndefined();
+
+  const itemState = { ...projectState, activeNavigatorKey: "item:item-1" };
+  expect(projectIdForShellContext(itemState, snapshot)).toBe("project-1");
+
+  const cursorState = {
+    ...projectState,
+    focus: { region: "navigator" as const },
+    navigatorCursorKey: "project:project-1",
+  };
+  expect(projectIdForShellContext(cursorState, snapshot)).toBe("project-1");
 });

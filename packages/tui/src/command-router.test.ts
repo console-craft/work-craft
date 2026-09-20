@@ -180,11 +180,17 @@ test("session dialog traps keys and has its own scoped commands", () => {
   expect(route({ name: "return" }, dialogContext)).toBe("cursor.activate");
   expect(route({ name: "n" }, dialogContext)).toBe("context.create");
   expect(route({ name: "escape" }, dialogContext)).toBe("dialog.cancel");
-  expect(route({ name: "q", hyper: true }, dialogContext)).toBeUndefined();
+  expect(route({ name: "q", hyper: true }, dialogContext)).toBe("client.quit");
 
-  const createContext: CommandContext = { ...terminalContext, dialog: "create" };
+  const createContext: CommandContext = {
+    ...terminalContext,
+    dialog: "create",
+    focus: { region: "navigator" },
+  };
   expect(route({ name: "escape" }, createContext)).toBe("dialog.cancel");
   expect(route({ name: "j" }, createContext)).toBeUndefined();
+  expect(routeKey(initialRouterState, { name: "j" }, createContext, 0).handled).toBe(false);
+  expect(routeKey(initialRouterState, { name: "h" }, createContext, 0).handled).toBe(false);
 });
 
 test("unavailable edge commands do not wrap or appear in hints", () => {

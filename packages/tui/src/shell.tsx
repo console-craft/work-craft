@@ -201,9 +201,10 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
         : 0;
   const workbenchWidth = dimensions.width - CATEGORY_RAIL_WIDTH - navigatorWidth;
   const workbenchHeight = dimensions.height - 3;
-  const undersized = workbenchWidth < MIN_WORKBENCH_WIDTH || workbenchHeight < MIN_WORKBENCH_HEIGHT;
+  const undersized =
+    workbenchWidth - 2 < MIN_WORKBENCH_WIDTH || workbenchHeight - 2 < MIN_WORKBENCH_HEIGHT;
   const sessionWidth = Math.min(
-    Math.max(18, (activeSession?.name.length ?? 6) + 14),
+    Math.max(18, Bun.stringWidth(activeSession?.name ?? "choose") + 14),
     Math.max(18, dimensions.width - 1),
   );
   const viewport = workspaceViewport(
@@ -452,7 +453,9 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
       const direction = command.slice(6) as "left" | "right" | "up" | "down";
       const next = moveFocus(state.focus, direction, focusNodes());
       const restored =
-        next.region === "workbench" && state.lastWorkbenchPaneId !== null
+        state.focus.region !== "workbench" &&
+        next.region === "workbench" &&
+        state.lastWorkbenchPaneId !== null
           ? { region: "workbench" as const, paneId: state.lastWorkbenchPaneId }
           : next;
       dispatch({ type: "focus.set", focus: restored });
@@ -549,7 +552,12 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
         const entry = entries[navigatorCursorIndex];
         if (entry?.kind === "project") {
           const itemId = await runCommand(durableCommands.openProject(entry.id), "navigator");
-          if (itemId !== undefined) dispatch({ type: "navigator.activate", key: `item:${itemId}` });
+          if (itemId !== undefined) {
+            if (!state.expandedProjectIds.has(entry.id)) {
+              dispatch({ type: "project.toggle", projectId: entry.id });
+            }
+            dispatch({ type: "navigator.activate", key: `item:${itemId}` });
+          }
         }
         return;
       }
@@ -623,7 +631,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
   const hints = commandHints(routerState, commandContext);
   const status =
     mode === "INFO" ? (
-      <StatusBar mode="INFO" text={cursorEntry?.label ?? ""} />
+      <StatusBar mode="INFO" text={routerState.invalidMessage ?? cursorEntry?.label ?? ""} />
     ) : (
       <StatusBar mode={mode} hints={hints} text={routerState.invalidMessage ?? undefined} />
     );
@@ -640,6 +648,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
           hasNext={viewport.hasNext}
           hasPrevious={viewport.hasPrevious}
           visibleIds={viewport.ids}
+          width={Math.max(0, dimensions.width - sessionWidth)}
           workspaces={workspaces}
           onActivate={(id) => {
             dispatch({ type: "focus.set", focus: { region: "workspace" } });
@@ -655,6 +664,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
           focused={state.focus.region === "session"}
           name={activeSession?.name ?? null}
           status={workCraft.status}
+          width={sessionWidth}
           onOpen={() => void executeCommand("session.open")}
         />
       </box>
@@ -713,7 +723,16 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
               dispatch({ type: "tab.cursor", id });
             }}
           />
-          <box id="region:workbench" flexGrow={1} minHeight={0} borderStyle="single">
+          <box
+            id="region:workbench"
+            flexDirection="column"
+            flexGrow={1}
+            minHeight={0}
+            borderStyle="single"
+          >
+            {state.errors.workbench === undefined ? null : (
+              <text fg="#EF4444">{state.errors.workbench}</text>
+            )}
             {surface === undefined || snapshot === null ? (
               <text fg="#9CA3AF">Select an item with an execution surface</text>
             ) : (

@@ -1,5 +1,6 @@
 import type { CategoryKind, Snapshot } from "@work-craft/server/client";
 import type { CommandHint, StatusMode } from "./command-router.ts";
+import { ellipsize } from "./shell-layout.ts";
 import type { ConnectionStatus } from "./use-work-craft.ts";
 
 export type WorkspaceStripProps = {
@@ -10,6 +11,7 @@ export type WorkspaceStripProps = {
   focused: boolean;
   hasPrevious: boolean;
   hasNext: boolean;
+  width: number;
   onActivate(id: string): void;
   onFocus(id: string): void;
 };
@@ -21,12 +23,13 @@ export function WorkspaceStrip({
   hasNext,
   hasPrevious,
   visibleIds,
+  width,
   workspaces,
   onActivate,
   onFocus,
 }: WorkspaceStripProps) {
   return (
-    <box id="region:workspace" flexDirection="row" flexGrow={1} overflow="hidden">
+    <box id="region:workspace" flexDirection="row" width={width} overflow="hidden">
       {hasPrevious ? <text>{"<"}</text> : null}
       {visibleIds.map((id) => {
         const workspace = workspaces.find((candidate) => candidate.id === id);
@@ -35,6 +38,10 @@ export function WorkspaceStrip({
         }
         const cursor = focused && id === cursorId;
         const active = id === activeId;
+        const label =
+          visibleIds.length === 1
+            ? ellipsize(workspace.name, width - Number(hasPrevious) - Number(hasNext) - 3)
+            : workspace.name;
         return (
           <text
             id={`workspace:${id}`}
@@ -45,7 +52,7 @@ export function WorkspaceStrip({
               onActivate(id);
             }}
           >
-            {` ${cursor ? ">" : active ? "*" : " "}${workspace.name} `}
+            {` ${cursor ? ">" : active ? "*" : " "}${label} `}
           </text>
         );
       })}
@@ -151,13 +158,15 @@ export type SessionSwitcherProps = {
   name: string | null;
   status: ConnectionStatus;
   focused: boolean;
+  width: number;
   onOpen(): void;
 };
 
-export function SessionSwitcher({ focused, name, status, onOpen }: SessionSwitcherProps) {
+export function SessionSwitcher({ focused, name, status, width, onOpen }: SessionSwitcherProps) {
+  const label = ellipsize(name ?? "choose", width - 12);
   return (
-    <box id="region:session" flexDirection="row" flexShrink={0} onMouseDown={onOpen}>
-      <text fg={focused ? "#FFFFFF" : "#9CA3AF"}>{` Session: ${name ?? "choose"} `}</text>
+    <box id="region:session" flexDirection="row" flexShrink={0} width={width} onMouseDown={onOpen}>
+      <text fg={focused ? "#FFFFFF" : "#9CA3AF"}>{` Session: ${label} `}</text>
       <text id="connection-status" fg={CONNECTION_COLORS[status]}>
         ●
       </text>

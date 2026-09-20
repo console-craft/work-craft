@@ -3,10 +3,21 @@ import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { createClient, type WorkCraftClient } from "@work-craft/server/client";
+import {
+  createClient,
+  decodeBytes,
+  type Snapshot,
+  type WorkCraftClient,
+} from "@work-craft/server/client";
 
 const ROOT = resolve(import.meta.dir, "../../..");
 const CONNECTED_COLOR = "38;2;34;197;94m";
+const CONNECTING_COLOR = "38;2;234;179;8m";
+const kitty = {
+  hyper(keyCode: number): string {
+    return `\x1b[${keyCode};17u`;
+  },
+};
 
 async function waitFor(
   predicate: () => boolean,
@@ -23,10 +34,20 @@ async function waitFor(
 }
 
 async function stopProcessGroup(child: Bun.Subprocess): Promise<void> {
-  try {
-    process.kill(-child.pid, "SIGKILL");
-  } catch {
-    // The command and all of its children already exited.
+  if (child.exitCode === null) {
+    try {
+      process.kill(-child.pid, "SIGTERM");
+    } catch {
+      // The command and all of its children already exited.
+    }
+    await Promise.race([child.exited, Bun.sleep(500)]);
+  }
+  if (child.exitCode === null) {
+    try {
+      process.kill(-child.pid, "SIGKILL");
+    } catch {
+      // The command and all of its children exited after SIGTERM.
+    }
   }
   await child.exited;
 }
@@ -51,6 +72,28 @@ function startTui(home: string): {
     terminal,
   });
   return { child, output: () => output, terminal };
+}
+
+async function waitForSnapshot(
+  client: WorkCraftClient,
+  predicate: (snapshot: Snapshot) => boolean,
+  message: string,
+): Promise<Snapshot> {
+  const deadline = Date.now() + 3_000;
+  let snapshot = await client.snapshot();
+  while (!predicate(snapshot) && Date.now() < deadline) {
+    await Bun.sleep(20);
+    snapshot = await client.snapshot();
+  }
+  if (!predicate(snapshot)) {
+    throw new Error(`Timed out waiting for ${message}`);
+  }
+  return snapshot;
+}
+
+function terminalText(snapshot: Snapshot, paneId: string): string {
+  const data = snapshot.terminalHistories.find((history) => history.paneId === paneId)?.data ?? "";
+  return new TextDecoder().decode(decodeBytes(data));
 }
 
 async function stopDaemon(client: WorkCraftClient, socketPath: string): Promise<void> {
@@ -102,6 +145,8 @@ test("an empty installation offers session creation from the chooser", async () 
       () => `\n${tui.output()}`,
     );
     expect(tui.output()).toContain("session name");
+    expect(tui.output()).toContain("HINTS");
+    expect(tui.output()).toContain("Inbox");
   } finally {
     await stopProcessGroup(tui.child);
     tui.terminal.close();
@@ -173,6 +218,8 @@ test("deleting the active session replaces an open prompt with the chooser", asy
     await waitFor(() => tui.output().length > focusOutputLength, "workspace focus");
     tui.terminal.write(new TextEncoder().encode("n"));
     await waitFor(() => tui.output().includes("workspace name"), "the workspace prompt");
+    expect(tui.output()).toContain("HINTS");
+    expect(tui.output()).toContain("Inbox");
     const outputLength = tui.output().length;
     await client.command({ type: "session.delete", sessionId: session.result.id });
     await waitFor(
@@ -307,7 +354,15 @@ test("raw stage 1 key sequences drive the shell", async () => {
     kind: "surface",
     title: "Input Item",
   });
-  await client.command({ type: "surface.ensure", itemId: item.result.id });
+  const ensured = await client.command({ type: "surface.ensure", itemId: item.result.id });
+  const secondTab = await client.command({
+    type: "tab.create",
+    surfaceId: ensured.result.surfaceId!,
+    title: "Second",
+  });
+  const paneId = ensured.result.paneId!;
+  let focusedPaneId = paneId;
+  const firstTabId = ensured.result.tabId!;
   const tui = startTui(home);
   const input = new TextEncoder();
 
@@ -319,12 +374,12 @@ test("raw stage 1 key sequences drive the shell", async () => {
     );
     await Bun.sleep(100);
 
-    tui.terminal.write(input.encode("\x1b[104;17u"));
-    tui.terminal.write(input.encode("\x1b[108;17u"));
+    tui.terminal.write(input.encode(kitty.hyper(104)));
+    tui.terminal.write(input.encode(kitty.hyper(108)));
     await waitFor(() => tui.output().includes("Today"), "the next category");
-    tui.terminal.write(input.encode("\x1b[108;17u"));
+    tui.terminal.write(input.encode(kitty.hyper(108)));
     await waitFor(() => tui.output().includes("Design"), "the design category");
-    tui.terminal.write(input.encode("\x1b[108;17u"));
+    tui.terminal.write(input.encode(kitty.hyper(108)));
     await waitFor(() => tui.output().includes("Implementation"), "the project category");
 
     tui.terminal.write(Uint8Array.of(12));
@@ -333,25 +388,92 @@ test("raw stage 1 key sequences drive the shell", async () => {
     await waitFor(() => tui.output().includes("Input Item"), "the expanded project");
     tui.terminal.write(input.encode("j"));
     await Bun.sleep(50);
-    expect(tui.output()).not.toContain("Main");
+    expect(tui.output()).not.toContain("Second");
     tui.terminal.write(input.encode("\r"));
-    await waitFor(() => tui.output().includes("Main"), "item activation");
+    await waitFor(() => tui.output().includes("Second"), "item activation");
+
+    tui.terminal.write(input.encode(kitty.hyper(93)));
+    await Bun.sleep(100);
+    expect(
+      (await client.snapshot()).surfaces.find(({ id }) => id === ensured.result.surfaceId)
+        ?.activeTabId,
+    ).toBe(secondTab.result.tabId);
+    tui.terminal.write(input.encode(kitty.hyper(91)));
+    await waitForSnapshot(
+      client,
+      (snapshot) =>
+        snapshot.surfaces.find(({ id }) => id === ensured.result.surfaceId)?.activeTabId ===
+        firstTabId,
+      "previous tab selection",
+    );
+    tui.terminal.write(input.encode(kitty.hyper(91)));
+    await Bun.sleep(100);
+    expect(
+      (await client.snapshot()).surfaces.find(({ id }) => id === ensured.result.surfaceId)
+        ?.activeTabId,
+    ).toBe(firstTabId);
 
     tui.terminal.write(Uint8Array.of(12));
     await Bun.sleep(50);
-    const leaderOutputLength = tui.output().length;
-    tui.terminal.write(Uint8Array.of(0));
-    await waitFor(() => tui.output().slice(leaderOutputLength).includes("LEADER"), "leader mode");
-    await Bun.sleep(450);
-    const passthroughOutputLength = tui.output().length;
-    tui.terminal.write(input.encode("x"));
-    await waitFor(
-      () => tui.output().slice(passthroughOutputLength).includes("x"),
-      "expired leader passthrough",
+    tui.terminal.write(input.encode("printf 'WC-%s\\n' \"$((6*7))\"\r"));
+    await waitForSnapshot(
+      client,
+      (snapshot) => terminalText(snapshot, paneId).includes("WC-42"),
+      "printable terminal output",
     );
 
+    const horizontalOutputLength = tui.output().length;
     tui.terminal.write(Uint8Array.of(0));
-    await waitFor(() => tui.output().slice(passthroughOutputLength).includes("LEADER"), "leader");
+    await waitFor(
+      () => tui.output().slice(horizontalOutputLength).includes("LEADER"),
+      "horizontal split leader",
+    );
+    tui.terminal.write(input.encode("s"));
+    await waitForSnapshot(client, (snapshot) => snapshot.panes.length === 3, "horizontal split");
+
+    const verticalOutputLength = tui.output().length;
+    tui.terminal.write(Uint8Array.of(0));
+    await waitFor(
+      () => tui.output().slice(verticalOutputLength).includes("LEADER"),
+      "vertical split leader",
+    );
+    tui.terminal.write(input.encode("v"));
+    const splitSnapshot = await waitForSnapshot(
+      client,
+      (snapshot) => snapshot.panes.length === 4,
+      "vertical split",
+    );
+    const layout = splitSnapshot.tabs.find(({ id }) => id === firstTabId)?.layout;
+    expect(JSON.stringify(layout)).toContain('"direction":"horizontal"');
+    expect(JSON.stringify(layout)).toContain('"direction":"vertical"');
+
+    tui.terminal.write(Uint8Array.of(8));
+    await Bun.sleep(50);
+    const reloadOutputLength = tui.output().length;
+    tui.terminal.write(input.encode(kitty.hyper(114)));
+    await waitFor(
+      () => {
+        const update = tui.output().slice(reloadOutputLength);
+        return update.includes(CONNECTING_COLOR) && update.includes(CONNECTED_COLOR);
+      },
+      "reload to reconnect",
+      () => `\n${tui.output().slice(reloadOutputLength)}`,
+    );
+    tui.terminal.write(Uint8Array.of(12));
+    await Bun.sleep(50);
+    tui.terminal.write(input.encode("printf 'REL-%s\\n' \"$((5*5))\"\r"));
+    const reloadedSnapshot = await waitForSnapshot(
+      client,
+      (snapshot) => snapshot.panes.some(({ id }) => terminalText(snapshot, id).includes("REL-25")),
+      "terminal output after reload",
+    );
+    focusedPaneId = reloadedSnapshot.panes.find(({ id }) =>
+      terminalText(reloadedSnapshot, id).includes("REL-25"),
+    )!.id;
+
+    const hideOutputLength = tui.output().length;
+    tui.terminal.write(Uint8Array.of(0));
+    await waitFor(() => tui.output().slice(hideOutputLength).includes("LEADER"), "hide leader");
     tui.terminal.write(input.encode("b"));
     await Bun.sleep(50);
     const restoreOutputLength = tui.output().length;
@@ -364,19 +486,61 @@ test("raw stage 1 key sequences drive the shell", async () => {
     );
 
     const chooserOutputLength = tui.output().length;
-    tui.terminal.write(input.encode("\x1b[115;17u"));
-    await waitFor(
-      () => tui.output().slice(chooserOutputLength).includes("Sessions"),
-      "the session chooser",
-    );
+    tui.terminal.write(input.encode(kitty.hyper(115)));
+    await waitFor(() => {
+      const update = tui.output().slice(chooserOutputLength);
+      return update.includes("Sessions") && tui.output().includes("HINTS");
+    }, "the session chooser");
     tui.terminal.write(input.encode("\x1b"));
     await Bun.sleep(50);
-    tui.terminal.write(input.encode("\x1b[113;17u"));
+
+    tui.terminal.write(input.encode("_wc_missing_command_\r"));
+    await Bun.sleep(100);
+    tui.terminal.write(input.encode("printf 'ERR-%s\\n' \"$((9*9))\"\r"));
+    await waitForSnapshot(
+      client,
+      (snapshot) => terminalText(snapshot, focusedPaneId).includes("ERR-81"),
+      "shell recovery after command error",
+    );
+
+    tui.terminal.write(input.encode("sleep 10\r"));
+    await Bun.sleep(100);
+    tui.terminal.write(Uint8Array.of(3));
+    await Bun.sleep(50);
+    tui.terminal.write(input.encode("printf 'INT-%s\\n' \"$((7*7))\"\r"));
+    await waitForSnapshot(
+      client,
+      (snapshot) => terminalText(snapshot, focusedPaneId).includes("INT-49"),
+      "terminal after Ctrl-C",
+    );
+    expect(tui.child.exitCode).toBeNull();
+
+    const cursorBeforeEscape = (await client.snapshot()).terminalHistories.find(
+      ({ paneId: id }) => id === focusedPaneId,
+    )?.cursor;
+    tui.terminal.write(input.encode("\x1b"));
+    await Bun.sleep(20);
+    tui.terminal.write(input.encode("\r"));
+    const finalSnapshot = await waitForSnapshot(
+      client,
+      (snapshot) =>
+        (snapshot.terminalHistories.find(({ paneId: id }) => id === focusedPaneId)?.cursor ?? 0) >
+        (cursorBeforeEscape ?? 0),
+      "Escape terminal prompt",
+    );
+    expect(terminalText(finalSnapshot, paneId)).toContain("WC-42");
+    expect(terminalText(finalSnapshot, focusedPaneId)).toContain("REL-25");
+
+    tui.terminal.write(input.encode(kitty.hyper(113)));
     await waitFor(() => tui.child.exitCode !== null, "Hyper+q to quit");
+    expect((await client.health()).epoch).toBeTruthy();
+    expect((await client.snapshot()).panes.find(({ id }) => id === paneId)?.processStatus).toBe(
+      "running",
+    );
   } finally {
     await stopProcessGroup(tui.child);
     tui.terminal.close();
     await stopDaemon(client, socketPath);
     await rm(home, { recursive: true, force: true });
   }
-}, 15_000);
+}, 20_000);

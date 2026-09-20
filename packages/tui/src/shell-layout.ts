@@ -77,7 +77,7 @@ export function workspaceViewport(
       const width =
         workspaces
           .slice(start, end + 1)
-          .reduce((total, workspace) => total + Bun.stringWidth(workspace.label) + 2, 0) +
+          .reduce((total, workspace) => total + Bun.stringWidth(workspace.label) + 3, 0) +
         (start > 0 ? 1 : 0) +
         (end < workspaces.length - 1 ? 1 : 0);
       if (width > availableWidth) {

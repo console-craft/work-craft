@@ -100,6 +100,20 @@ test("focus prefers an overlapping candidate before a diagonally closer one", ()
   expect(moveFocus({ region: "navigator" }, "right", candidates)).toEqual({ region: "tabs" });
 });
 
+test("focus stops when only diagonal candidates remain at an outer edge", () => {
+  const outerEdge: FocusNode[] = [
+    {
+      target: { region: "workbench", paneId: "right" },
+      rect: { x: 60, y: 2, width: 40, height: 30 },
+    },
+    { target: { region: "session" }, rect: { x: 80, y: 0, width: 20, height: 1 } },
+  ];
+  expect(moveFocus({ region: "workbench", paneId: "right" }, "right", outerEdge)).toEqual({
+    region: "workbench",
+    paneId: "right",
+  });
+});
+
 test("hiding a focused navigator prefers the last workbench pane", () => {
   expect(focusAfterNavigatorHide({ region: "navigator" }, "pane-2", true)).toEqual({
     region: "workbench",

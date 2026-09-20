@@ -60,7 +60,7 @@ test("workspace viewport keeps both active and cursor tabs when they fit", () =>
     ],
     "b",
     "c",
-    16,
+    17,
   );
   expect(result.ids).toEqual(["b", "c"]);
   expect(result.hasPrevious).toBe(true);

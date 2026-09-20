@@ -342,6 +342,25 @@ function commandFor(
   return undefined;
 }
 
+function dialogCommandFor(
+  key: KeyLike,
+  context: CommandContext,
+): { definition: CommandDefinition; allowed: boolean } | undefined {
+  for (const definition of COMMANDS) {
+    if (
+      definition.routes.some(
+        (route) =>
+          route.kind === "plain" &&
+          route.dialogs !== undefined &&
+          routeMatches(route, key, context),
+      )
+    ) {
+      return { definition, allowed: available(definition, context) };
+    }
+  }
+  return undefined;
+}
+
 function clearExpiredMessage(state: RouterState, now: number): RouterState {
   return state.invalidMessageUntil !== null && now >= state.invalidMessageUntil
     ? { ...state, invalidMessage: null, invalidMessageUntil: null }
@@ -370,10 +389,14 @@ export function routeKey(
   const state = clearExpiredMessage(currentState, now);
 
   if (context.dialog !== undefined) {
-    const match = commandFor("plain", key, context);
-    return match === undefined
+    const dialogMatch = dialogCommandFor(key, context);
+    if (dialogMatch !== undefined) {
+      return result(state, true, dialogMatch.allowed ? dialogMatch.definition.id : undefined);
+    }
+    const globalMatch = commandFor("hyper", key, context);
+    return globalMatch === undefined
       ? result(state, false)
-      : result(state, true, match.allowed ? match.definition.id : undefined);
+      : result(state, true, globalMatch.allowed ? globalMatch.definition.id : undefined);
   }
 
   if (state.leaderStartedAt !== null) {

@@ -69,10 +69,20 @@ async function smokeTui(): Promise<void> {
       throw new Error(`compiled TUI did not connect: ${output.trim()}`);
     }
   } finally {
-    try {
-      process.kill(-child.pid, "SIGKILL");
-    } catch {
-      // The TUI and its process group already exited.
+    if (child.exitCode === null) {
+      try {
+        process.kill(-child.pid, "SIGTERM");
+      } catch {
+        // The TUI and its process group already exited.
+      }
+      await Promise.race([child.exited, Bun.sleep(500)]);
+    }
+    if (child.exitCode === null) {
+      try {
+        process.kill(-child.pid, "SIGKILL");
+      } catch {
+        // The TUI and its process group exited after SIGTERM.
+      }
     }
     await child.exited;
     terminal.close();
