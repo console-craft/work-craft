@@ -9,7 +9,6 @@ import {
   type NavigationEntry,
   type NavigationNode,
 } from "./navigation.ts";
-import { NavigationPane } from "./navigation-pane.tsx";
 import { SessionChooser } from "./session-chooser.tsx";
 import { adjacentTab, paneIds, projectLayout, SurfaceView } from "./surface-view.tsx";
 import { useWorkCraft } from "./use-work-craft.ts";
@@ -76,6 +75,8 @@ export function App() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [chooserRequested, setChooserRequested] = useState(false);
   const [selectedPaneId, setSelectedPaneId] = useState<string | null>(null);
+  const [sessionCursorId, setSessionCursorId] = useState<string | null>(null);
+  const [promptValue, setPromptValue] = useState("");
   const sessions = [...(snapshot?.sessions ?? [])].sort(
     (a, b) => a.position - b.position || a.id.localeCompare(b.id),
   );
@@ -86,6 +87,9 @@ export function App() {
       : undefined;
   const activeSession = selectedSession ?? automaticSession;
   const choosingSession = chooserRequested || activeSession === undefined;
+  const sessionCursor = sessions.some(({ id }) => id === sessionCursorId)
+    ? sessionCursorId
+    : (sessions[0]?.id ?? null);
 
   useEffect(() => {
     if (automaticSession !== undefined) {
@@ -127,11 +131,21 @@ export function App() {
     }
   }
 
+  function selectSession(sessionId: string): void {
+    setActiveSessionId(sessionId);
+    setSessionCursorId(sessionId);
+    setChooserRequested(false);
+    setPrompt(null);
+    setPromptValue("");
+    setOpenedItemId(null);
+  }
+
   useKeyboard((key) => {
     if (key.name === "escape") {
       if (prompt !== null) {
         key.preventDefault();
         setPrompt(null);
+        setPromptValue("");
       } else if (openedItemId !== null) {
         key.preventDefault();
         setOpenedItemId(null);
@@ -139,6 +153,20 @@ export function App() {
       return;
     }
     if (prompt !== null) {
+      return;
+    }
+    if (choosingSession) {
+      const cursorIndex = sessions.findIndex(({ id }) => id === sessionCursor);
+      if (key.name === "up") {
+        setSessionCursorId(sessions[Math.max(0, cursorIndex - 1)]?.id ?? null);
+      } else if (key.name === "down") {
+        setSessionCursorId(sessions[Math.min(sessions.length - 1, cursorIndex + 1)]?.id ?? null);
+      } else if (key.name === "return" && sessionCursor !== null) {
+        selectSession(sessionCursor);
+      } else if (key.name === "n") {
+        setPromptValue("");
+        setPrompt("session");
+      }
       return;
     }
     if (openedItemId !== null) {
@@ -176,9 +204,6 @@ export function App() {
       setChooserRequested(true);
       return;
     }
-    if (choosingSession) {
-      return;
-    }
     if (key.name === "up") {
       setSelectedIndex(Math.max(0, index - 1));
     } else if (key.name === "down" && entries.length > 0) {
@@ -190,6 +215,7 @@ export function App() {
     } else {
       const kind = { w: "workspace", p: "project", i: "item" }[key.name] as CreateKind | undefined;
       if (kind !== undefined && canCreate(kind, selected)) {
+        setPromptValue("");
         setPrompt(kind);
       }
     }
@@ -205,17 +231,19 @@ export function App() {
       {error === null ? null : <text fg="#EF4444">{error}</text>}
       {prompt !== null && (!choosingSession || prompt === "session") ? (
         <CreatePrompt
+          error={error}
           kind={prompt}
+          value={promptValue}
+          onChange={setPromptValue}
           onSubmit={(name) => {
             const kind = prompt;
             const next = createCommand(kind, name, activeSession?.id, selected);
             setPrompt(null);
+            setPromptValue("");
             if (next !== null) {
               void run(next).then((response) => {
                 if (kind === "session" && response !== undefined) {
-                  setActiveSessionId(response.result.id);
-                  setChooserRequested(false);
-                  setOpenedItemId(null);
+                  selectSession(response.result.id);
                 }
               });
             }
@@ -225,14 +253,14 @@ export function App() {
         <text>Connecting to daemon...</text>
       ) : choosingSession ? (
         <SessionChooser
+          cursorId={sessionCursor}
           sessions={sessions}
-          onSelect={(sessionId) => {
-            setActiveSessionId(sessionId);
-            setChooserRequested(false);
-            setPrompt(null);
-            setOpenedItemId(null);
+          onFocus={setSessionCursorId}
+          onSelect={selectSession}
+          onCreate={() => {
+            setPromptValue("");
+            setPrompt("session");
           }}
-          onCreate={() => setPrompt("session")}
         />
       ) : openedItemId !== null ? (
         surface === undefined ? (
@@ -261,7 +289,13 @@ export function App() {
           </box>
         )
       ) : (
-        <NavigationPane entries={entries} selectedIndex={index} />
+        <box flexDirection="column">
+          {entries.map(({ node, depth }, entryIndex) => (
+            <text key={node.key} fg={entryIndex === index ? "#FFFFFF" : "#9CA3AF"}>
+              {`${entryIndex === index ? ">" : " "} ${"  ".repeat(depth)}${node.label}`}
+            </text>
+          ))}
+        </box>
       )}
     </box>
   );
