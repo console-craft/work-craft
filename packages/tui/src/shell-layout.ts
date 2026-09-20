@@ -1,8 +1,8 @@
 export const CATEGORY_RAIL_WIDTH = 5;
 export const DEFAULT_NAVIGATOR_WIDTH = 32;
 export const COMPACT_NAVIGATOR_WIDTH = 7;
-export const PREFERRED_WORKBENCH_WIDTH = 40;
-export const MIN_WORKBENCH_WIDTH = 20;
+export const MIN_EXPANDED_SHELL_WIDTH = 120;
+export const MIN_WORKBENCH_WIDTH = 60;
 export const MIN_WORKBENCH_HEIGHT = 5;
 export const MIN_EXPANDED_NAVIGATOR_WIDTH = 16;
 
@@ -11,16 +11,12 @@ export type NavigatorPreference = "auto" | "expanded" | "hidden";
 
 export function resolveNavigatorMode(input: {
   terminalWidth: number;
-  expandedWidth: number;
   preference: NavigatorPreference;
 }): NavigatorMode {
   if (input.preference !== "auto") {
     return input.preference;
   }
-  return input.terminalWidth - CATEGORY_RAIL_WIDTH - input.expandedWidth >=
-    PREFERRED_WORKBENCH_WIDTH
-    ? "expanded"
-    : "compact";
+  return input.terminalWidth >= MIN_EXPANDED_SHELL_WIDTH ? "expanded" : "compact";
 }
 
 export function resizeNavigatorWidth(

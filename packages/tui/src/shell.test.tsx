@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { EmbeddedTerminalRenderable } from "@opentui/core";
+import { BoxRenderable, EmbeddedTerminalRenderable } from "@opentui/core";
 import { extend } from "@opentui/react";
 import { testRender } from "@opentui/react/test-utils";
 import type { Command, Snapshot } from "@work-craft/server/client";
@@ -137,7 +137,57 @@ test("chooser and prompt keep every shell region mounted", async () => {
   const chooser = setup.captureCharFrame();
   expect(chooser).toContain("Sessions");
   expect(chooser).toContain("HINTS");
+  expect(
+    (setup.renderer.root.findDescendantById("dialog") as BoxRenderable).backgroundColor.a,
+  ).toBe(1);
   expect(setup.renderer.root.findDescendantById("region:workbench")).toBeDefined();
+  act(() => setup.renderer.destroy());
+});
+
+test("navigator stops above the status bar", async () => {
+  const setup = await testRender(<WorkCraftShell workCraft={workCraftStateFixture()} />, {
+    width: 120,
+    height: 40,
+    kittyKeyboard: true,
+  });
+  await setup.flush();
+  const navigator = setup.renderer.root.findDescendantById("region:navigator")!;
+  const status = setup.renderer.root.findDescendantById("status")!;
+  expect(navigator.y + navigator.height).toBeLessThanOrEqual(status.y);
+  act(() => setup.renderer.destroy());
+});
+
+test("navigator stays unmounted when fewer than two rows are available", async () => {
+  const setup = await testRender(<WorkCraftShell workCraft={workCraftStateFixture()} />, {
+    width: 120,
+    height: 40,
+    kittyKeyboard: true,
+  });
+  await setup.flush();
+  for (const height of [1, 2, 3, 4]) {
+    act(() => setup.resize(120, height));
+    await setup.flush();
+    expect(setup.renderer.root.findDescendantById("region:navigator")).toBeUndefined();
+  }
+  act(() => setup.renderer.destroy());
+});
+
+test("size-hiding a focused navigator returns focus to the category rail", async () => {
+  const setup = await testRender(<WorkCraftShell workCraft={workCraftStateFixture()} />, {
+    width: 119,
+    height: 20,
+    kittyKeyboard: true,
+  });
+  await setup.flush();
+  await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
+  await setup.flush();
+  expect(setup.captureCharFrame()).toContain("INFO");
+
+  act(() => setup.resize(119, 4));
+  await setup.flush();
+  act(() => setup.resize(119, 20));
+  await setup.flush();
+  expect(setup.captureCharFrame()).toContain("HINTS");
   act(() => setup.renderer.destroy());
 });
 
@@ -181,6 +231,7 @@ test("leader status resolves commands and reports invalid input", async () => {
   expect(setup.captureCharFrame()).toContain("LEADER");
   await act(async () => setup.mockInput.pressKey("x"));
   await setup.flush();
+  expect(setup.captureCharFrame()).toContain("ERROR");
   expect(setup.captureCharFrame()).toMatch(/Invalid.leader.key:.x/);
   act(() => setup.renderer.destroy());
 });
@@ -208,25 +259,26 @@ test("navigator hides, restores expanded, and resizes one column", async () => {
   act(() => setup.renderer.destroy());
 });
 
-test("narrow shells compact automatically and preserve the undersized workbench message", async () => {
+test("narrow shells compact automatically", async () => {
   const compact = await testRender(<WorkCraftShell workCraft={workCraftStateFixture()} />, {
-    width: 70,
+    width: 119,
     height: 20,
     kittyKeyboard: true,
   });
   await compact.flush();
   expect(compact.renderer.root.findDescendantById("region:navigator")?.width).toBe(7);
   act(() => compact.renderer.destroy());
+});
 
+test("workbench warns before its content narrows below 60 columns", async () => {
   const small = await testRender(
     <WorkCraftShell workCraft={workCraftStateFixture({ snapshot: surfaceSnapshot() })} />,
     { width: 120, height: 40, kittyKeyboard: true },
   );
   await small.flush();
   await openFixtureItem(small);
-  act(() => small.resize(25, 10));
+  act(() => small.resize(73, 20));
   await small.flush();
-  expect(small.captureCharFrame()).toContain("Workbench");
   expect(small.captureCharFrame()).toContain("too small.");
   act(() => small.renderer.destroy());
 });
@@ -305,6 +357,38 @@ test("spatial focus moves between workbench panes", async () => {
     paneId: "pane-2",
     direction: "vertical",
   });
+  act(() => setup.renderer.destroy());
+});
+
+test("splitting focuses the new pane returned by the server", async () => {
+  let workCraft: WorkCraftState;
+  workCraft = workCraftStateFixture({
+    snapshot: surfaceSnapshot(),
+    command: async (command) => {
+      if (command.type === "pane.split") {
+        workCraft.snapshot = splitSurfaceSnapshot();
+        return {
+          ok: true,
+          revision: 2,
+          result: { id: "pane-2", surfaceId: "surface-1", tabId: "tab-1", paneId: "pane-2" },
+        };
+      }
+      return { ok: true, revision: 1, result: { id: "result-1" } };
+    },
+  });
+  const setup = await testRender(<WorkCraftShell workCraft={workCraft} />, {
+    width: 120,
+    height: 40,
+    kittyKeyboard: true,
+  });
+  await setup.flush();
+  await openFixtureItem(setup);
+  await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
+  await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
+  await act(async () => setup.mockInput.pressKey(" ", { ctrl: true }));
+  await act(async () => setup.mockInput.pressKey("s"));
+  await setup.flush();
+  expect(setup.renderer.root.findDescendantById("terminal:pane-2")?.focused).toBe(true);
   act(() => setup.renderer.destroy());
 });
 
@@ -394,6 +478,7 @@ test("navigator renders one stable projection in expanded and compact modes", as
       entries={entries}
       error={null}
       focused
+      height={10}
       mode="expanded"
       width={24}
       onActivate={() => {}}
@@ -413,6 +498,7 @@ test("navigator renders one stable projection in expanded and compact modes", as
       entries={entries}
       error={null}
       focused
+      height={10}
       mode="compact"
       width={7}
       onActivate={() => {}}

@@ -140,7 +140,7 @@ export function reduceShellState(state: ShellState, action: ShellAction): ShellS
     }
     case "navigator.toggle": {
       if (state.navigatorPreference === "hidden") {
-        return { ...state, navigatorPreference: "expanded" };
+        return { ...state, navigatorPreference: "auto" };
       }
       return {
         ...state,
@@ -151,7 +151,6 @@ export function reduceShellState(state: ShellState, action: ShellAction): ShellS
     case "navigator.resize":
       return {
         ...state,
-        navigatorPreference: "expanded",
         navigatorWidth: resizeNavigatorWidth(
           state.navigatorWidth,
           action.direction,

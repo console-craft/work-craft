@@ -15,7 +15,7 @@ const CONNECTED_COLOR = "38;2;34;197;94m";
 const CONNECTING_COLOR = "38;2;234;179;8m";
 const kitty = {
   hyper(keyCode: number): string {
-    return `\x1b[${keyCode};17u`;
+    return `\x1b[${keyCode};15u`;
   },
 };
 
@@ -182,7 +182,7 @@ test("the switch key makes the chooser authoritative", async () => {
     }, "the first session to be selected");
     await Bun.sleep(100);
     const outputLength = tui.output().length;
-    tui.terminal.write(new TextEncoder().encode("\x1b[115;17u"));
+    tui.terminal.write(new TextEncoder().encode(kitty.hyper(115)));
     await waitFor(
       () => {
         const update = tui.output().slice(outputLength);

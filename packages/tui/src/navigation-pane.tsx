@@ -7,6 +7,7 @@ export type NavigationPaneProps = {
   entries: NavigatorEntry[];
   mode: Exclude<NavigatorMode, "hidden">;
   width: number;
+  height: number;
   focused: boolean;
   cursorKey: string | null;
   activeKey: string | null;
@@ -21,6 +22,7 @@ export function NavigationPane({
   entries,
   error,
   focused,
+  height,
   mode,
   width,
   onActivate,
@@ -38,7 +40,7 @@ export function NavigationPane({
     <box
       id="region:navigator"
       flexDirection="column"
-      flexGrow={1}
+      height={height}
       width={width}
       borderStyle="single"
     >

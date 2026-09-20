@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
 import {
-  DEFAULT_NAVIGATOR_WIDTH,
   ellipsize,
   projectInitials,
   resizeNavigatorWidth,
@@ -9,32 +8,28 @@ import {
   workspaceViewport,
 } from "./shell-layout.ts";
 
-test("navigator compacts only when auto width would starve the preferred workbench", () => {
+test("navigator compacts below 120 columns in auto mode", () => {
   expect(
     resolveNavigatorMode({
       terminalWidth: 120,
-      expandedWidth: DEFAULT_NAVIGATOR_WIDTH,
       preference: "auto",
     }),
   ).toBe("expanded");
   expect(
     resolveNavigatorMode({
-      terminalWidth: 70,
-      expandedWidth: DEFAULT_NAVIGATOR_WIDTH,
+      terminalWidth: 119,
       preference: "auto",
     }),
   ).toBe("compact");
   expect(
     resolveNavigatorMode({
-      terminalWidth: 70,
-      expandedWidth: DEFAULT_NAVIGATOR_WIDTH,
+      terminalWidth: 119,
       preference: "expanded",
     }),
   ).toBe("expanded");
   expect(
     resolveNavigatorMode({
       terminalWidth: 120,
-      expandedWidth: DEFAULT_NAVIGATOR_WIDTH,
       preference: "hidden",
     }),
   ).toBe("hidden");

@@ -33,13 +33,27 @@ test("deleting the active session opens the chooser and cancels creation", () =>
   expect(state.dialog?.kind).toBe("sessions");
 });
 
-test("showing a hidden navigator restores expanded mode and width", () => {
-  const hidden = reduceShellState(
-    { ...createInitialShellState(), navigatorPreference: "hidden", navigatorWidth: 37 },
-    { type: "navigator.toggle", hasWorkbench: false },
+test("showing a resized navigator restores automatic mode and its width", () => {
+  const resized = reduceShellState(
+    { ...createInitialShellState(), navigatorWidth: 37 },
+    { type: "navigator.resize", direction: 1, terminalWidth: 160 },
   );
-  expect(hidden.navigatorPreference).toBe("expanded");
-  expect(hidden.navigatorWidth).toBe(37);
+  const hidden = reduceShellState(resized, {
+    type: "navigator.toggle",
+    hasWorkbench: false,
+  });
+  const shown = reduceShellState(hidden, { type: "navigator.toggle", hasWorkbench: false });
+  expect(shown.navigatorPreference).toBe("auto");
+  expect(shown.navigatorWidth).toBe(38);
+});
+
+test("resizing preserves automatic navigator behavior and remembers the width", () => {
+  const resized = reduceShellState(
+    { ...createInitialShellState(), navigatorWidth: 37 },
+    { type: "navigator.resize", direction: 1, terminalWidth: 160 },
+  );
+  expect(resized.navigatorPreference).toBe("auto");
+  expect(resized.navigatorWidth).toBe(38);
 });
 
 test("reconciliation preserves stable IDs when server ordering changes", () => {

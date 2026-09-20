@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { parseKeypress } from "@opentui/core";
 import {
   commandHints,
   initialRouterState,
@@ -91,6 +92,11 @@ test("spatial Ctrl chords resolve without matching unrelated modifiers", () => {
   expect(route({ name: "h", ctrl: true, shift: true })).toBeUndefined();
 });
 
+test("legacy Ctrl+h and Ctrl+j bytes resolve as spatial focus chords", () => {
+  expect(route(parseKeypress("\b", { useKittyKeyboard: true })!)).toBe("focus.left");
+  expect(route(parseKeypress("\n", { useKittyKeyboard: true })!)).toBe("focus.down");
+});
+
 test("leader waits without a general timeout and resolves every continuation", () => {
   const bindings: [string, CommandId][] = [
     ["n", "item.create"],
@@ -112,13 +118,15 @@ test("leader waits without a general timeout and resolves every continuation", (
   }
 });
 
-test("terminal double prefix passes through only inside 400 milliseconds", () => {
+test("terminal double prefix passes through only inside one second", () => {
   const entered = routeKey(initialRouterState, { name: "space", ctrl: true }, terminalContext, 100);
   expect(
-    routeKey(entered.state, { name: "space", ctrl: true }, terminalContext, 499).passthroughLeader,
+    routeKey(entered.state, { name: "space", ctrl: true }, terminalContext, 1_099)
+      .passthroughLeader,
   ).toBe(true);
   expect(
-    routeKey(entered.state, { name: "space", ctrl: true }, terminalContext, 500).passthroughLeader,
+    routeKey(entered.state, { name: "space", ctrl: true }, terminalContext, 1_100)
+      .passthroughLeader,
   ).toBeUndefined();
 
   const shellContext = { ...terminalContext, focus: { region: "tabs" as const } };
@@ -131,6 +139,7 @@ test("invalid leader input is consumed and reports for one second", () => {
   const entered = routeKey(initialRouterState, { name: "space", ctrl: true }, terminalContext, 100);
   const invalid = routeKey(entered.state, { name: "x" }, terminalContext, 200);
   expect(invalid.handled).toBe(true);
+  expect(invalid.statusMode).toBe("ERROR");
   expect(invalid.state.invalidMessage).toBe("Invalid leader key: x");
   expect(invalid.state.invalidMessageUntil).toBe(1_200);
 

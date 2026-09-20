@@ -1,7 +1,8 @@
 import type { EmbeddedTerminalRenderable } from "@opentui/core";
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react";
-import type { CategoryKind, Command, Snapshot } from "@work-craft/server/client";
+import type { CategoryKind, Command, CommandResponse, Snapshot } from "@work-craft/server/client";
 import { useEffect, useReducer, useRef, useState, type ReactNode } from "react";
+import { useTheme } from "@/hooks/use-theme";
 import {
   commandHints,
   initialRouterState,
@@ -116,6 +117,7 @@ function commandRegion(focus: FocusTarget): ShellRegion {
 
 export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
   const renderer = useRenderer();
+  const theme = useTheme();
   const dimensions = useTerminalDimensions();
   const [state, dispatch] = useReducer(reduceShellState, undefined, createInitialShellState);
   const [routerState, setRouterState] = useState(initialRouterState);
@@ -190,17 +192,25 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
         : (currentPaneIds[0] ?? null);
   const navigatorMode = resolveNavigatorMode({
     terminalWidth: dimensions.width,
-    expandedWidth: state.navigatorWidth,
     preference: state.navigatorPreference,
   });
-  const navigatorWidth =
-    navigatorMode === "expanded"
+  const workbenchHeight = Math.max(0, dimensions.height - 3);
+  const navigatorVisible = navigatorMode !== "hidden" && workbenchHeight >= 2;
+
+  useEffect(() => {
+    if (!navigatorVisible && state.focus.region === "navigator") {
+      dispatch({ type: "focus.set", focus: { region: "category" } });
+    }
+  }, [navigatorVisible, state.focus.region]);
+
+  const navigatorWidth = !navigatorVisible
+    ? 0
+    : navigatorMode === "expanded"
       ? state.navigatorWidth
       : navigatorMode === "compact"
         ? COMPACT_NAVIGATOR_WIDTH
         : 0;
   const workbenchWidth = dimensions.width - CATEGORY_RAIL_WIDTH - navigatorWidth;
-  const workbenchHeight = dimensions.height - 3;
   const undersized =
     workbenchWidth - 2 < MIN_WORKBENCH_WIDTH || workbenchHeight - 2 < MIN_WORKBENCH_HEIGHT;
   const sessionWidth = Math.min(
@@ -255,7 +265,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
         rect: { x: workbenchX, y: 1, width: Math.max(0, workbenchWidth), height: 1 },
       },
     ];
-    if (navigatorMode !== "hidden") {
+    if (navigatorVisible) {
       nodes.push({
         target: { region: "navigator" },
         rect: { x: CATEGORY_RAIL_WIDTH, y: 1, width: navigatorWidth, height: bodyHeight },
@@ -358,11 +368,14 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     availableCommands,
   };
 
-  async function runCommand(command: Command, region: ShellRegion): Promise<string | undefined> {
+  async function runCommand(
+    command: Command,
+    region: ShellRegion,
+  ): Promise<CommandResponse["result"] | undefined> {
     try {
       const response = await workCraft.command(command);
       dispatch({ type: "error.set", region, error: null });
-      return response.result.itemId ?? response.result.id;
+      return response.result;
     } catch (cause) {
       dispatch({
         type: "error.set",
@@ -513,12 +526,26 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
         openCreate("item");
         return;
       case "pane.splitHorizontal":
-        if (focusedPaneId !== null)
-          await runCommand(durableCommands.splitHorizontal(focusedPaneId), "workbench");
+        if (focusedPaneId !== null) {
+          const result = await runCommand(
+            durableCommands.splitHorizontal(focusedPaneId),
+            "workbench",
+          );
+          if (result?.paneId !== undefined) {
+            dispatch({ type: "focus.set", focus: { region: "workbench", paneId: result.paneId } });
+          }
+        }
         return;
       case "pane.splitVertical":
-        if (focusedPaneId !== null)
-          await runCommand(durableCommands.splitVertical(focusedPaneId), "workbench");
+        if (focusedPaneId !== null) {
+          const result = await runCommand(
+            durableCommands.splitVertical(focusedPaneId),
+            "workbench",
+          );
+          if (result?.paneId !== undefined) {
+            dispatch({ type: "focus.set", focus: { region: "workbench", paneId: result.paneId } });
+          }
+        }
         return;
       case "pane.restart":
         if (focusedPaneId !== null)
@@ -551,7 +578,8 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
       case "project.openTerminal": {
         const entry = entries[navigatorCursorIndex];
         if (entry?.kind === "project") {
-          const itemId = await runCommand(durableCommands.openProject(entry.id), "navigator");
+          const result = await runCommand(durableCommands.openProject(entry.id), "navigator");
+          const itemId = result?.itemId ?? result?.id;
           if (itemId !== undefined) {
             if (!state.expandedProjectIds.has(entry.id)) {
               dispatch({ type: "project.toggle", projectId: entry.id });
@@ -578,6 +606,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
   useKeyboard((key) => {
     const keyLike: KeyLike = {
       name: key.name,
+      raw: key.raw,
       ctrl: key.ctrl,
       meta: key.meta,
       option: key.option,
@@ -613,7 +642,8 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
       if (projectId !== undefined) command = durableCommands.createItem(projectId, value);
     }
     if (command === undefined) return;
-    const id = await runCommand(command, commandRegion(returnFocus));
+    const result = await runCommand(command, commandRegion(returnFocus));
+    const id = result?.itemId ?? result?.id;
     if (id === undefined) return;
     dispatch({ type: "dialog.close" });
     if (createKind === "session") dispatch({ type: "session.activate", id });
@@ -623,10 +653,13 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     else dispatch({ type: "navigator.activate", key: `item:${id}` });
   }
 
-  const mode = statusModeFor(
-    routerState.leaderStartedAt !== null,
-    navigatorMode === "compact" && state.focus.region === "navigator",
-  );
+  const mode =
+    routerState.invalidMessage !== null
+      ? "ERROR"
+      : statusModeFor(
+          routerState.leaderStartedAt !== null,
+          navigatorMode === "compact" && state.focus.region === "navigator",
+        );
   const cursorEntry = entries.find(({ key }) => key === state.navigatorCursorKey);
   const hints = commandHints(routerState, commandContext);
   const status =
@@ -684,8 +717,8 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
             dispatch({ type: "category.cursor", category });
           }}
         />
-        {navigatorMode === "hidden" ? null : (
-          <box flexDirection="column" width={navigatorWidth} height="100%">
+        {!navigatorVisible ? null : (
+          <box flexDirection="column" minHeight={0} width={navigatorWidth}>
             <text height={1}>{activeCategoryTitle}</text>
             <NavigationPane
               activeKey={state.activeNavigatorKey}
@@ -693,6 +726,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
               entries={entries}
               error={state.errors.navigator ?? null}
               focused={state.focus.region === "navigator"}
+              height={workbenchHeight}
               mode={navigatorMode}
               width={navigatorWidth}
               onActivate={(key) => {
@@ -758,7 +792,15 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
       </box>
       {status}
       {state.dialog === null ? null : (
-        <box id="dialog" position="absolute" left="20%" top="20%" width="60%" height="60%">
+        <box
+          id="dialog"
+          position="absolute"
+          left="20%"
+          top="20%"
+          width="60%"
+          height="60%"
+          backgroundColor={theme.colors.background}
+        >
           {state.dialog.kind === "sessions" ? (
             <SessionChooser
               cursorId={sessionCursor}

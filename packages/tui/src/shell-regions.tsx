@@ -175,7 +175,7 @@ export function SessionSwitcher({ focused, name, status, width, onOpen }: Sessio
 }
 
 export type StatusBarProps =
-  | { mode: "HINTS" | "LEADER"; hints: readonly CommandHint[]; text?: string }
+  | { mode: "HINTS" | "LEADER" | "ERROR"; hints: readonly CommandHint[]; text?: string }
   | { mode: "INFO"; text: string; hints?: never };
 
 export function StatusBar(props: StatusBarProps) {
@@ -185,7 +185,9 @@ export function StatusBar(props: StatusBarProps) {
       : (props.text ?? props.hints.map(({ keys, label }) => `${keys} ${label}`).join("  "));
   return (
     <box id="status" height={1} flexDirection="row">
-      <text fg={props.mode === "LEADER" ? "#EAB308" : "#60A5FA"}>{`${props.mode}  `}</text>
+      <text
+        fg={props.mode === "ERROR" ? "#EF4444" : props.mode === "LEADER" ? "#EAB308" : "#60A5FA"}
+      >{`${props.mode}  `}</text>
       <text>{content}</text>
     </box>
   );

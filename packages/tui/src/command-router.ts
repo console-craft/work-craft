@@ -1,6 +1,6 @@
 import type { FocusTarget } from "./focus.ts";
 
-export type StatusMode = "HINTS" | "LEADER" | "INFO";
+export type StatusMode = "HINTS" | "LEADER" | "INFO" | "ERROR";
 export type CommandId =
   | "focus.left"
   | "focus.down"
@@ -34,6 +34,7 @@ export type CommandId =
 
 export type KeyLike = {
   name: string;
+  raw?: string;
   ctrl?: boolean;
   meta?: boolean;
   option?: boolean;
@@ -41,6 +42,10 @@ export type KeyLike = {
   super?: boolean;
   hyper?: boolean;
 };
+
+function legacyCtrlName(key: KeyLike): "h" | "j" | undefined {
+  return key.raw === "\b" ? "h" : key.raw === "\n" ? "j" : undefined;
+}
 
 export type CommandContext = {
   focus: FocusTarget;
@@ -294,7 +299,8 @@ function isPlain(key: KeyLike): boolean {
 }
 
 function routeMatches(route: Route, key: KeyLike, context: CommandContext): boolean {
-  if (!route.names.includes(key.name.toLowerCase())) {
+  const legacyCtrl = legacyCtrlName(key);
+  if (!route.names.includes(legacyCtrl ?? key.name.toLowerCase())) {
     return false;
   }
   if (route.dialogs !== undefined && !route.dialogs.includes(context.dialog!)) {
@@ -308,7 +314,12 @@ function routeMatches(route: Route, key: KeyLike, context: CommandContext): bool
   }
   if (route.kind === "ctrl") {
     return (
-      key.ctrl === true && !isHyperKey(key) && !key.meta && !key.option && !key.shift && !key.super
+      (key.ctrl === true || legacyCtrl !== undefined) &&
+      !isHyperKey(key) &&
+      !key.meta &&
+      !key.option &&
+      !key.shift &&
+      !key.super
     );
   }
   return isPlain(key);
@@ -323,7 +334,8 @@ function result(state: RouterState, handled: boolean, command?: CommandId): Rout
     state,
     handled,
     ...(command === undefined ? {} : { command }),
-    statusMode: state.leaderStartedAt === null ? "HINTS" : "LEADER",
+    statusMode:
+      state.invalidMessage !== null ? "ERROR" : state.leaderStartedAt === null ? "HINTS" : "LEADER",
   };
 }
 
@@ -408,7 +420,7 @@ export function routeKey(
       key.name === "space" &&
       key.ctrl === true &&
       !isHyperKey(key) &&
-      now - state.leaderStartedAt < 400
+      now - state.leaderStartedAt < 1_000
     ) {
       return {
         ...result({ ...state, leaderStartedAt: null }, true),

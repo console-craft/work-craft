@@ -84,7 +84,7 @@ presentation state containing:
 
 - the focused region and last focused child of composite regions;
 - local browsing cursors for workspace, category, navigator, and tab regions;
-- navigator visibility preference and expanded width;
+- navigator visibility override and preferred expanded width;
 - vertical navigator scroll position;
 - workspace-strip viewport;
 - leader prefix and the first-leader timestamp;
@@ -191,15 +191,15 @@ remains active until:
 - an invalid sequence is consumed and reported;
 - a qualifying double-prefix passes through to a terminal.
 
-An invalid sequence returns to the normal contextual status mode after
-reporting the invalid key inline for one second. It is never forwarded to the
-child terminal.
+An invalid sequence enters `ERROR` mode and reports the invalid key for one
+second before returning to the status mode derived from focus and navigator
+state. It is never forwarded to the child terminal.
 
 ### Terminal Double Prefix
 
-When a terminal pane is focused, pressing `Ctrl+Space` a second time within
-400 milliseconds exits leader mode and sends one literal `Ctrl+Space` to the
-child. This supports nested terminal applications that use the same leader.
+When a terminal pane is focused, pressing `Ctrl+Space` a second time within one
+second exits leader mode and sends one literal `Ctrl+Space` to the child. This
+supports nested terminal applications that use the same leader.
 
 A second `Ctrl+Space` after that window follows normal invalid-sequence
 behavior. The leader itself still has no timeout.
@@ -232,26 +232,26 @@ behavior exists end to end.
 
 ### Stage 1 Global Commands
 
-| Binding                 | Action                                                         |
-| ----------------------- | -------------------------------------------------------------- |
-| `Ctrl+Space`            | Enter leader mode                                              |
-| `Ctrl+Space Ctrl+Space` | Send one literal `Ctrl+Space` to a focused terminal            |
-| `Ctrl+h/j/k/l`          | Move spatial focus without wrapping                            |
-| `Hyper+h`               | Activate previous category without moving focus                |
-| `Hyper+l`               | Activate next category without moving focus                    |
-| `Hyper+j`               | Activate next visible navigator node without moving focus      |
-| `Hyper+k`               | Activate previous visible navigator node without moving focus  |
-| `Hyper+[`               | Activate previous tab without wrapping                         |
-| `Hyper+]`               | Activate next tab without wrapping                             |
-| `Hyper+n`               | Create a new tab                                               |
-| `Hyper+s`               | Open or focus the session switcher                             |
-| `Hyper+r`               | Force reconnect and snapshot reload                            |
-| `Hyper+q`               | Quit the TUI without stopping daemon runtimes                  |
-| `leader+n`              | Create an item under the focused project                       |
-| `leader+b`              | Hide or show the expanded navigator                            |
-| `leader+s`              | Split the active pane horizontally, producing top/bottom panes |
-| `leader+v`              | Split the active pane vertically, producing left/right panes   |
-| `leader+r`              | Restart an eligible active pane                                |
+| Binding                 | Action                                                        |
+| ----------------------- | ------------------------------------------------------------- |
+| `Ctrl+Space`            | Enter leader mode                                             |
+| `Ctrl+Space Ctrl+Space` | Send one literal `Ctrl+Space` to a focused terminal           |
+| `Ctrl+h/j/k/l`          | Move spatial focus without wrapping                           |
+| `Hyper+h`               | Activate previous category without moving focus               |
+| `Hyper+l`               | Activate next category without moving focus                   |
+| `Hyper+j`               | Activate next visible navigator node without moving focus     |
+| `Hyper+k`               | Activate previous visible navigator node without moving focus |
+| `Hyper+[`               | Activate previous tab without wrapping                        |
+| `Hyper+]`               | Activate next tab without wrapping                            |
+| `Hyper+n`               | Create a new tab                                              |
+| `Hyper+s`               | Open or focus the session switcher                            |
+| `Hyper+r`               | Force reconnect and snapshot reload                           |
+| `Hyper+q`               | Quit the TUI without stopping daemon runtimes                 |
+| `leader+n`              | Create an item under the focused project                      |
+| `leader+b`              | Hide or show the responsive navigator                         |
+| `leader+s`              | Split the active pane horizontally and focus the new pane     |
+| `leader+v`              | Split the active pane vertically and focus the new pane       |
+| `leader+r`              | Restart an eligible active pane                               |
 
 Hyper category, navigator, and tab cycling activates immediately, aligns the
 corresponding client cursor, preserves focus, and stops at the first or last
@@ -341,15 +341,16 @@ The navigator has three client-local states.
 - `j/k`, `h/l`, and `Enter` keep exactly the expanded-mode behavior.
 - The status bar uses `INFO` while this region is focused and shows the full
   cursor project/item label.
+- Manual expanded-width changes are retained but do not disable automatic
+  transitions between compact and expanded modes.
 
 ### Hidden
 
 - The navigator never hides automatically.
 - `leader+b` hides either visible form.
-- Invoking `leader+b` while hidden restores the expanded form, even in a narrow
-  terminal, and shrinks the workbench rather than overlaying it.
-- Hiding preserves the adjusted expanded width. Showing restores that width and
-  keeps expanded mode as the client-local override until the client exits.
+- Invoking `leader+b` while hidden restores responsive auto mode.
+- Hiding preserves the adjusted expanded width. Showing and later automatic
+  expansion restore that width.
 - The category rail remains visible.
 
 Both visible forms scroll vertically and keep the local cursor in view. The
@@ -363,12 +364,12 @@ Initial cell dimensions are:
 - category rail: 5 columns;
 - expanded navigator: 32 columns by default;
 - compact navigator: 7 columns;
-- preferred workbench width before automatic compaction: 40 columns;
-- minimum renderable workbench: 20 columns by 5 rows.
+- automatic navigator compaction below 120 shell columns;
+- minimum renderable workbench interior: 60 columns by 5 rows.
 
-The navigator defaults to expanded whenever its current expanded width leaves
-the preferred workbench width; otherwise it becomes compact. A manual expanded
-override may reduce the workbench below its preferred width.
+In auto mode, the navigator is expanded at shell widths of 120 columns or more
+and compact below 120. Manual navigator resizing changes the preferred expanded
+width without disabling this responsive behavior.
 
 Below the minimum workbench size, the workbench shows a message instructing the
 user to resize or use `leader+b`. It does not send invalid tiny PTY dimensions.
@@ -399,15 +400,17 @@ The always-visible status bar is the shell's primary contextual feedback
 surface. Its left segment displays an explicit mode; the remainder displays
 mode content.
 
-Stage 1 defines three modes:
+Stage 1 defines four modes:
 
 - **`HINTS`:** commands relevant to the focused region.
 - **`LEADER`:** valid continuations for the current leader prefix.
 - **`INFO`:** the full cursor project/item label while the compact navigator is
   focused.
+- **`ERROR`:** transient invalid leader input and its rejected key.
 
-`LEADER` temporarily supersedes `INFO`. Completing or cancelling the sequence
-restores the status mode derived from focus and navigator state.
+`LEADER` temporarily supersedes `INFO`. Invalid input replaces it with `ERROR`
+for one second. Completing or cancelling the sequence restores the status mode
+derived from focus and navigator state.
 
 The mode representation is deliberately easy to extend when a concrete new
 feedback state appears, but Stage 1 does not add empty placeholder modes.
@@ -453,7 +456,7 @@ Stage 1 adds focused behavioral coverage rather than broad visual snapshots.
 - routing priority and focus scope;
 - direct versus leader commands;
 - no-timeout leader behavior;
-- 400-millisecond terminal double prefix;
+- one-second terminal double prefix;
 - invalid sequence cancellation;
 - no-wrap global cycling;
 - `Ctrl+C` and terminal `Escape` passthrough;
@@ -475,6 +478,7 @@ Stage 1 adds focused behavioral coverage rather than broad visual snapshots.
 ### Integration
 
 - existing reconnect, terminal replay, session, and split tests remain green;
+- successful splits focus the newly created pane returned by the server;
 - real TUI/PTTY tests prove ordinary terminal input is not stolen;
 - shell changes do not remount unaffected terminal panes;
 - dialogs and empty states preserve shell composition;
@@ -495,7 +499,8 @@ Stage 1 is complete when:
 - focus moves spatially across all visible regions without wrapping;
 - keyboard browsing and activation remain separate;
 - ordinary terminal input, `Ctrl+C`, and `Escape` are no longer stolen;
-- `HINTS`, `LEADER`, and compact-navigator `INFO` behave as specified;
+- `HINTS`, `LEADER`, compact-navigator `INFO`, and transient `ERROR` behave as
+  specified;
 - expanded, compact, hidden, resized, scrolled, overflow, and undersized states
   are usable;
 - every implemented Hyper command works in the real WezTerm environment;
