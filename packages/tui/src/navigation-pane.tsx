@@ -35,7 +35,13 @@ export function NavigationPane({
   }, [cursorKey]);
 
   return (
-    <box id="region:navigator" flexDirection="column" width={width} borderStyle="single">
+    <box
+      id="region:navigator"
+      flexDirection="column"
+      flexGrow={1}
+      width={width}
+      borderStyle="single"
+    >
       <scrollbox ref={scrollbox} scrollY scrollX={false} flexGrow={1}>
         {entries.map((entry) => {
           const cursor = focused && entry.key === cursorKey;

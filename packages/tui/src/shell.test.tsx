@@ -1,11 +1,19 @@
 import { expect, test } from "bun:test";
+import { EmbeddedTerminalRenderable } from "@opentui/core";
+import { extend } from "@opentui/react";
 import { testRender } from "@opentui/react/test-utils";
+import type { Command, Snapshot } from "@work-craft/server/client";
 import { act } from "react";
 import { CreatePrompt } from "./create-prompt.tsx";
 import { NavigationPane } from "./navigation-pane.tsx";
 import { SessionChooser } from "./session-chooser.tsx";
+import { WorkCraftShell } from "./shell.tsx";
 import { SessionSwitcher, StatusBar, WorkspaceStrip } from "./shell-regions.tsx";
 import type { NavigatorEntry } from "./navigation.ts";
+import { snapshotFixture } from "./test-fixtures.ts";
+import type { WorkCraftState } from "./use-work-craft.ts";
+
+extend({ terminal: EmbeddedTerminalRenderable });
 
 const entries: NavigatorEntry[] = [
   {
@@ -25,6 +33,233 @@ const entries: NavigatorEntry[] = [
     depth: 1,
   },
 ];
+
+function workCraftStateFixture(overrides: Partial<WorkCraftState> = {}): WorkCraftState {
+  const snapshot = snapshotFixture({
+    sessions: [{ id: "session-work", name: "Work", position: 0 }],
+    categories: [
+      {
+        workspaceId: "workspace-shared",
+        kind: "implementation",
+        title: "Implementation",
+        position: 0,
+      },
+    ],
+  });
+  return {
+    snapshot,
+    status: "connected",
+    command: async () => ({ ok: true, revision: 1, result: { id: "result-1" } }),
+    reload: async () => {},
+    stream: null,
+    terminals: new Map(),
+    ...overrides,
+  };
+}
+
+function surfaceSnapshot(): Snapshot {
+  return snapshotFixture({
+    sessions: [{ id: "session-work", name: "Work", position: 0 }],
+    categories: [
+      {
+        workspaceId: "workspace-shared",
+        kind: "implementation",
+        title: "Implementation",
+        position: 0,
+      },
+    ],
+    surfaces: [{ id: "surface-1", itemId: "item-1", activeTabId: "tab-1" }],
+    tabs: [
+      {
+        id: "tab-1",
+        surfaceId: "surface-1",
+        title: "Shell",
+        position: 0,
+        layout: { type: "pane", paneId: "pane-1" },
+      },
+    ],
+    panes: [
+      {
+        id: "pane-1",
+        surfaceId: "surface-1",
+        kind: "terminal",
+        title: "Shell",
+        cwd: "/tmp",
+        restorePolicy: { type: "shell", executable: "/bin/sh", args: [] },
+        processStatus: "running",
+        errorText: null,
+        startedAt: null,
+        exitedAt: null,
+      },
+    ],
+  });
+}
+
+async function openFixtureItem(setup: Awaited<ReturnType<typeof testRender>>): Promise<void> {
+  await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
+  await act(async () => setup.mockInput.pressKey("l"));
+  await act(async () => setup.mockInput.pressKey("j"));
+  await act(async () => setup.mockInput.pressEnter());
+  await setup.flush();
+}
+
+test("chooser and prompt keep every shell region mounted", async () => {
+  const setup = await testRender(<WorkCraftShell workCraft={workCraftStateFixture()} />, {
+    width: 120,
+    height: 40,
+    kittyKeyboard: true,
+  });
+  await setup.flush();
+  const initial = setup.captureCharFrame();
+  expect(initial).toContain("HINTS");
+  expect(initial).toContain("Implementation");
+
+  await act(async () => setup.mockInput.pressKey("s", { hyper: true }));
+  await setup.flush();
+  const chooser = setup.captureCharFrame();
+  expect(chooser).toContain("Sessions");
+  expect(chooser).toContain("HINTS");
+  expect(setup.renderer.root.findDescendantById("region:workbench")).toBeDefined();
+  act(() => setup.renderer.destroy());
+});
+
+test("browsing stays local until Enter activates the item", async () => {
+  const commands: Command[] = [];
+  const setup = await testRender(
+    <WorkCraftShell
+      workCraft={workCraftStateFixture({
+        snapshot: surfaceSnapshot(),
+        command: async (command) => {
+          commands.push(command);
+          return { ok: true, revision: 1, result: { id: "result-1" } };
+        },
+      })}
+    />,
+    { width: 120, height: 40, kittyKeyboard: true },
+  );
+  await setup.flush();
+  await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
+  await act(async () => setup.mockInput.pressKey("l"));
+  await act(async () => setup.mockInput.pressKey("j"));
+  expect(commands).toEqual([]);
+  expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBeUndefined();
+
+  await act(async () => setup.mockInput.pressEnter());
+  await setup.flush();
+  expect(commands[0]).toEqual({ type: "surface.ensure", itemId: "item-1" });
+  expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBeDefined();
+  act(() => setup.renderer.destroy());
+});
+
+test("leader status resolves commands and reports invalid input", async () => {
+  const setup = await testRender(<WorkCraftShell workCraft={workCraftStateFixture()} />, {
+    width: 120,
+    height: 40,
+    kittyKeyboard: true,
+  });
+  await setup.flush();
+  await act(async () => setup.mockInput.pressKey(" ", { ctrl: true }));
+  await setup.flush();
+  expect(setup.captureCharFrame()).toContain("LEADER");
+  await act(async () => setup.mockInput.pressKey("x"));
+  await setup.flush();
+  expect(setup.captureCharFrame()).toMatch(/Invalid.leader.key:.x/);
+  act(() => setup.renderer.destroy());
+});
+
+test("navigator hides, restores expanded, and resizes one column", async () => {
+  const setup = await testRender(<WorkCraftShell workCraft={workCraftStateFixture()} />, {
+    width: 120,
+    height: 40,
+    kittyKeyboard: true,
+  });
+  await setup.flush();
+  await act(async () => setup.mockInput.pressKey(" ", { ctrl: true }));
+  await act(async () => setup.mockInput.pressKey("b"));
+  await setup.flush();
+  expect(setup.renderer.root.findDescendantById("region:navigator")).toBeUndefined();
+  await act(async () => setup.mockInput.pressKey(" ", { ctrl: true }));
+  await act(async () => setup.mockInput.pressKey("b"));
+  await setup.flush();
+  expect(setup.renderer.root.findDescendantById("region:navigator")?.width).toBe(32);
+
+  await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
+  await act(async () => setup.mockInput.pressKey("ARROW_RIGHT", { ctrl: true }));
+  await setup.flush();
+  expect(setup.renderer.root.findDescendantById("region:navigator")?.width).toBe(33);
+  act(() => setup.renderer.destroy());
+});
+
+test("narrow shells compact automatically and preserve the undersized workbench message", async () => {
+  const compact = await testRender(<WorkCraftShell workCraft={workCraftStateFixture()} />, {
+    width: 70,
+    height: 20,
+    kittyKeyboard: true,
+  });
+  await compact.flush();
+  expect(compact.renderer.root.findDescendantById("region:navigator")?.width).toBe(7);
+  act(() => compact.renderer.destroy());
+
+  const small = await testRender(
+    <WorkCraftShell workCraft={workCraftStateFixture({ snapshot: surfaceSnapshot() })} />,
+    { width: 120, height: 40, kittyKeyboard: true },
+  );
+  await small.flush();
+  await openFixtureItem(small);
+  act(() => small.resize(25, 10));
+  await small.flush();
+  expect(small.captureCharFrame()).toContain("Workbench");
+  expect(small.captureCharFrame()).toContain("too small.");
+  act(() => small.renderer.destroy());
+});
+
+test("disconnected durable commands are disabled while reload remains available", async () => {
+  let commands = 0;
+  let reloads = 0;
+  const setup = await testRender(
+    <WorkCraftShell
+      workCraft={workCraftStateFixture({
+        snapshot: surfaceSnapshot(),
+        status: "disconnected",
+        command: async () => {
+          commands += 1;
+          throw new Error("offline");
+        },
+        reload: async () => {
+          reloads += 1;
+        },
+      })}
+    />,
+    { width: 120, height: 40, kittyKeyboard: true },
+  );
+  await setup.flush();
+  await act(async () => setup.mockInput.pressKey("n", { hyper: true }));
+  await act(async () => setup.mockInput.pressKey("r", { hyper: true }));
+  expect(commands).toBe(0);
+  expect(reloads).toBe(1);
+  act(() => setup.renderer.destroy());
+});
+
+test("shell-only state changes preserve terminal renderable identity", async () => {
+  const setup = await testRender(
+    <WorkCraftShell workCraft={workCraftStateFixture({ snapshot: surfaceSnapshot() })} />,
+    { width: 120, height: 40, kittyKeyboard: true },
+  );
+  await setup.flush();
+  await openFixtureItem(setup);
+  const terminal = setup.renderer.root.findDescendantById("terminal:pane-1");
+  expect(terminal).toBeDefined();
+
+  await act(async () => setup.mockInput.pressKey("s", { hyper: true }));
+  await setup.flush();
+  expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBe(terminal);
+  await act(async () => setup.mockInput.pressEscape());
+  await act(async () => setup.mockInput.pressKey(" ", { ctrl: true }));
+  await act(async () => setup.mockInput.pressKey("b"));
+  await setup.flush();
+  expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBe(terminal);
+  act(() => setup.renderer.destroy());
+});
 
 test("navigator renders one stable projection in expanded and compact modes", async () => {
   const expanded = await testRender(

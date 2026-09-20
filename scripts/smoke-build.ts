@@ -11,6 +11,7 @@ const installDirectory = join(temporaryDirectory, "install");
 const installedExecutable = join(installDirectory, "work-craft");
 const home = join(temporaryDirectory, "state");
 const socketPath = join(home, "work-craft.sock");
+const connectedColor = "38;2;34;197;94m";
 
 await mkdir(installDirectory);
 await copyFile(executable, installedExecutable);
@@ -61,10 +62,10 @@ async function smokeTui(): Promise<void> {
 
   try {
     const deadline = Date.now() + 3_000;
-    while (!output.includes("connected") && child.exitCode === null && Date.now() < deadline) {
+    while (!output.includes(connectedColor) && child.exitCode === null && Date.now() < deadline) {
       await Bun.sleep(20);
     }
-    if (!output.includes("connected")) {
+    if (!output.includes(connectedColor)) {
       throw new Error(`compiled TUI did not connect: ${output.trim()}`);
     }
   } finally {

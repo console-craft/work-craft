@@ -37,6 +37,8 @@ export type ShellState = {
 };
 
 export type ShellAction =
+  | { type: "snapshot.reconcile"; snapshot: Snapshot }
+  | { type: "session.activate"; id: string }
   | { type: "focus.set"; focus: FocusTarget }
   | { type: "workspace.cursor"; id: string | null }
   | { type: "workspace.activate"; id: string }
@@ -80,6 +82,20 @@ export function createInitialShellState(): ShellState {
 
 export function reduceShellState(state: ShellState, action: ShellAction): ShellState {
   switch (action.type) {
+    case "snapshot.reconcile":
+      return reconcileShellState(state, action.snapshot);
+    case "session.activate":
+      return {
+        ...state,
+        activeSessionId: action.id,
+        activeWorkspaceId: null,
+        activeNavigatorKey: null,
+        workspaceCursorId: null,
+        navigatorCursorKey: null,
+        tabCursorId: null,
+        dialog: null,
+        promptValue: "",
+      };
     case "focus.set":
       return {
         ...state,
