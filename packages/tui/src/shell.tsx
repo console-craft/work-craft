@@ -98,6 +98,12 @@ const durableCommands = {
 
 export type WorkCraftShellProps = { workCraft: WorkCraftState };
 
+type CompletionContext = {
+  key?: string;
+  navigationKey: string;
+  dialog: DialogState;
+};
+
 function orderedSessions(snapshot: Snapshot | null): Snapshot["sessions"] {
   return [...(snapshot?.sessions ?? [])].sort(
     (a, b) => a.position - b.position || a.id.localeCompare(b.id),
@@ -124,8 +130,9 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
   const [routerState, setRouterState] = useState(initialRouterState);
   const [sessionCursorId, setSessionCursorId] = useState<string | null>(null);
   const terminalRefs = useRef(new Map<string, EmbeddedTerminalRenderable>());
-  const completionContextRef = useRef<{ key: string; dialog: DialogState }>({
+  const completionContextRef = useRef<CompletionContext>({
     key: "",
+    navigationKey: "",
     dialog: null,
   });
   const snapshot = workCraft.snapshot;
@@ -223,19 +230,30 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
       : currentPaneIds.includes(state.lastWorkbenchPaneId ?? "")
         ? state.lastWorkbenchPaneId
         : (currentPaneIds[0] ?? null);
+  function navigationContextKey(navigatorKey: string | null): string {
+    return JSON.stringify([
+      snapshot?.epoch ?? null,
+      state.activeSessionId,
+      state.activeWorkspaceId,
+      state.activeCategory,
+      navigatorKey,
+    ]);
+  }
+
+  const completionNavigationKey = navigationContextKey(state.activeNavigatorKey);
   const completionContextKey = JSON.stringify([
-    snapshot?.epoch ?? null,
-    state.activeSessionId,
-    state.activeWorkspaceId,
-    state.activeCategory,
-    state.activeNavigatorKey,
+    completionNavigationKey,
     surface?.id ?? null,
     activeTab?.id ?? null,
   ]);
 
   useLayoutEffect(() => {
-    completionContextRef.current = { key: completionContextKey, dialog: state.dialog };
-  }, [completionContextKey, state.dialog]);
+    completionContextRef.current = {
+      key: completionContextKey,
+      navigationKey: completionNavigationKey,
+      dialog: state.dialog,
+    };
+  }, [completionContextKey, completionNavigationKey, state.dialog]);
   const sessionWidth = Math.min(
     Math.max(18, Bun.stringWidth(activeSession?.name ?? "choose") + 14),
     Math.max(18, dimensions.width - 1),
@@ -394,10 +412,11 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
   async function runCommand(
     command: Command,
     region: ShellRegion,
+    context: CompletionContext = completionContextRef.current,
   ): Promise<CommandResponse["result"] | undefined> {
-    const context = completionContextRef.current;
     const contextIsCurrent = () =>
-      completionContextRef.current.key === context.key &&
+      completionContextRef.current.navigationKey === context.navigationKey &&
+      (context.key === undefined || completionContextRef.current.key === context.key) &&
       completionContextRef.current.dialog === context.dialog;
     try {
       const response = await workCraft.command(command);
@@ -425,7 +444,10 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     if (entry === undefined) return;
     dispatch({ type: "navigator.activate", key: entry.key });
     if (entry.kind === "item") {
-      void runCommand(durableCommands.openItem(entry.id), "navigator");
+      void runCommand(durableCommands.openItem(entry.id), "navigator", {
+        navigationKey: navigationContextKey(entry.key),
+        dialog: state.dialog,
+      });
     }
   }
 

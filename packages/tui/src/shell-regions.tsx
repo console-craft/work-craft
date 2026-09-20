@@ -129,25 +129,27 @@ export function TabStrip({
   onFocus,
 }: TabStripProps) {
   return (
-    <box id="region:tabs" flexDirection="row" height={1} overflow="hidden">
-      {tabs.map((tab) => {
-        const cursor = focused && tab.id === cursorId;
-        return (
-          <text
-            id={`tab:${tab.id}`}
-            key={tab.id}
-            fg={cursor ? "#FFFFFF" : tab.id === activeId ? "#60A5FA" : "#9CA3AF"}
-            onMouseDown={() => {
-              onFocus(tab.id);
-              onActivate(tab.id);
-            }}
-          >
-            {` ${cursor ? ">" : tab.id === activeId ? "*" : " "}${tab.title} `}
-          </text>
-        );
-      })}
+    <box id="region:tabs" flexDirection="row" height={1}>
+      <box flexDirection="row" flexGrow={1} minWidth={0} overflow="hidden">
+        {tabs.map((tab) => {
+          const cursor = focused && tab.id === cursorId;
+          return (
+            <text
+              id={`tab:${tab.id}`}
+              key={tab.id}
+              fg={cursor ? "#FFFFFF" : tab.id === activeId ? "#60A5FA" : "#9CA3AF"}
+              onMouseDown={() => {
+                onFocus(tab.id);
+                onActivate(tab.id);
+              }}
+            >
+              {` ${cursor ? ">" : tab.id === activeId ? "*" : " "}${tab.title} `}
+            </text>
+          );
+        })}
+      </box>
       {error === null ? null : (
-        <text id="tab-error" fg="#EF4444">
+        <text id="tab-error" flexShrink={0} fg="#EF4444">
           {` ${error}`}
         </text>
       )}

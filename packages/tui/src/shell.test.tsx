@@ -8,7 +8,7 @@ import { CreatePrompt } from "./create-prompt.tsx";
 import { NavigationPane } from "./navigation-pane.tsx";
 import { SessionChooser } from "./session-chooser.tsx";
 import { WorkCraftShell } from "./shell.tsx";
-import { SessionSwitcher, StatusBar, WorkspaceStrip } from "./shell-regions.tsx";
+import { SessionSwitcher, StatusBar, TabStrip, WorkspaceStrip } from "./shell-regions.tsx";
 import type { NavigatorEntry } from "./navigation.ts";
 import { snapshotFixture } from "./test-fixtures.ts";
 import type { WorkCraftState } from "./use-work-craft.ts";
@@ -34,12 +34,18 @@ const entries: NavigatorEntry[] = [
   },
 ];
 
-function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve(value: T): void;
+  reject(reason?: unknown): void;
+} {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((next) => {
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((next, fail) => {
     resolve = next;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 function workCraftStateFixture(overrides: Partial<WorkCraftState> = {}): WorkCraftState {
@@ -266,6 +272,38 @@ test("browsing stays local until Enter activates the item", async () => {
   await act(async () => setup.mockInput.pressEnter());
   await setup.flush();
   expect(commands[0]).toEqual({ type: "surface.ensure", itemId: "item-1" });
+  expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBeDefined();
+  act(() => setup.renderer.destroy());
+});
+
+test("a current item-open failure remains visible after activation", async () => {
+  const open = deferred<CommandResponse>();
+  const setup = await testRender(
+    <WorkCraftShell
+      workCraft={workCraftStateFixture({
+        snapshot: surfaceSnapshot(),
+        command: async (command) =>
+          command.type === "surface.ensure"
+            ? open.promise
+            : { ok: true, revision: 1, result: { id: "result-1" } },
+      })}
+    />,
+    { width: 120, height: 40, kittyKeyboard: true },
+  );
+  await setup.flush();
+  await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
+  await act(async () => setup.mockInput.pressKey("l"));
+  await act(async () => setup.mockInput.pressKey("j"));
+  await act(async () => setup.mockInput.pressEnter());
+  await setup.flush();
+
+  await act(async () => {
+    open.reject(new Error("open failed"));
+    await open.promise.catch(() => {});
+  });
+  await setup.flush();
+
+  expect(setup.captureCharFrame()).toContain("open failed");
   expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBeDefined();
   act(() => setup.renderer.destroy());
 });
@@ -565,6 +603,31 @@ test("a rejected tab command stays visible in the tab region", async () => {
   await setup.flush();
 
   expect(setup.renderer.root.findDescendantById("tab-error")).toBeDefined();
+  expect(setup.captureCharFrame()).toContain("tab failed");
+  act(() => setup.renderer.destroy());
+});
+
+test("tab errors stay visible when tab labels overflow", async () => {
+  const tab = surfaceSnapshot().tabs[0]!;
+  const setup = await testRender(
+    <TabStrip
+      activeId="tab-1"
+      cursorId="tab-1"
+      error="tab failed"
+      focused
+      tabs={Array.from({ length: 6 }, (_, index) => ({
+        ...tab,
+        id: `tab-${index + 1}`,
+        title: `Long tab ${index + 1}`,
+        position: index,
+      }))}
+      onActivate={() => {}}
+      onFocus={() => {}}
+    />,
+    { width: 30, height: 1 },
+  );
+  await setup.flush();
+
   expect(setup.captureCharFrame()).toContain("tab failed");
   act(() => setup.renderer.destroy());
 });
