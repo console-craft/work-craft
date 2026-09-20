@@ -459,6 +459,32 @@ test("shell-only state changes preserve terminal renderable identity", async () 
   act(() => setup.renderer.destroy());
 });
 
+test("dialogs blur and restore the focused terminal", async () => {
+  const setup = await testRender(
+    <WorkCraftShell workCraft={workCraftStateFixture({ snapshot: surfaceSnapshot() })} />,
+    { width: 120, height: 40, kittyKeyboard: true },
+  );
+  await setup.flush();
+  await openFixtureItem(setup);
+  await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
+  const terminal = setup.renderer.root.findDescendantById("terminal:pane-1");
+  expect(terminal?.focused).toBe(true);
+
+  await act(async () => setup.mockInput.pressKey("s", { hyper: true }));
+  await setup.flush();
+  expect(terminal?.focused).toBe(false);
+
+  await act(async () => {
+    await setup.mockMouse.click(terminal!.screenX + 1, terminal!.screenY + 1);
+  });
+  expect(terminal?.focused).toBe(false);
+  expect(setup.renderer.root.findDescendantById("dialog")).toBeDefined();
+
+  await act(async () => setup.mockInput.pressEscape());
+  expect(terminal?.focused).toBe(true);
+  act(() => setup.renderer.destroy());
+});
+
 test("spatial focus moves between workbench panes", async () => {
   const commands: Command[] = [];
   const setup = await testRender(
@@ -720,6 +746,68 @@ test("a late create response cannot activate an item after cancelling its dialog
   expect(setup.renderer.root.findDescendantById("dialog")).toBeUndefined();
   expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBeDefined();
   expect(setup.renderer.root.findDescendantById("terminal:pane-2")).toBeUndefined();
+  act(() => setup.renderer.destroy());
+});
+
+test("a create prompt submits only once while its command is pending", async () => {
+  const create = deferred<CommandResponse>();
+  let creates = 0;
+  const setup = await testRender(
+    <WorkCraftShell
+      workCraft={workCraftStateFixture({
+        snapshot: surfaceSnapshot(),
+        command: async (command) => {
+          if (command.type === "item.create") {
+            creates += 1;
+            return create.promise;
+          }
+          return { ok: true, revision: 1, result: { id: "result-1" } };
+        },
+      })}
+    />,
+    { width: 120, height: 40, kittyKeyboard: true },
+  );
+  await setup.flush();
+  await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
+  await act(async () => setup.mockInput.pressKey(" ", { ctrl: true }));
+  await act(async () => setup.mockInput.pressKey("n"));
+  await act(async () => setup.mockInput.typeText("One item"));
+  await act(async () => setup.mockInput.pressEnter());
+  await act(async () => setup.mockInput.pressEnter());
+
+  expect(creates).toBe(1);
+  await act(async () => {
+    create.resolve({ ok: true, revision: 2, result: { id: "item-2" } });
+    await create.promise;
+  });
+  await setup.flush();
+  act(() => setup.renderer.destroy());
+});
+
+test("creating an item expands its collapsed project before activation", async () => {
+  const setup = await testRender(
+    <WorkCraftShell
+      workCraft={workCraftStateFixture({
+        snapshot: surfaceSnapshot(),
+        command: async (command) => ({
+          ok: true,
+          revision: 2,
+          result: { id: command.type === "item.create" ? "item-1" : "result-1" },
+        }),
+      })}
+    />,
+    { width: 120, height: 40, kittyKeyboard: true },
+  );
+  await setup.flush();
+  await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
+  await act(async () => setup.mockInput.pressKey(" ", { ctrl: true }));
+  await act(async () => setup.mockInput.pressKey("n"));
+  await act(async () => setup.mockInput.typeText("Visible item"));
+  await act(async () => setup.mockInput.pressEnter());
+  await setup.flush();
+
+  expect(setup.renderer.root.findDescendantById("navigator-row:item:item-1")).toBeDefined();
+  expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBeDefined();
   act(() => setup.renderer.destroy());
 });
 

@@ -135,6 +135,20 @@ test("terminal double prefix passes through only inside one second", () => {
   ).toBeUndefined();
 });
 
+test("terminal double prefix rejects additional modifiers", () => {
+  const entered = routeKey(initialRouterState, { name: "space", ctrl: true }, terminalContext, 100);
+  for (const modifiers of [{ shift: true }, { meta: true }, { option: true }, { super: true }]) {
+    const result = routeKey(
+      entered.state,
+      { name: "space", ctrl: true, ...modifiers },
+      terminalContext,
+      200,
+    );
+    expect(result.passthroughLeader).toBeUndefined();
+    expect(result.statusMode).toBe("ERROR");
+  }
+});
+
 test("invalid leader input is consumed and reports for one second", () => {
   const entered = routeKey(initialRouterState, { name: "space", ctrl: true }, terminalContext, 100);
   const invalid = routeKey(entered.state, { name: "x" }, terminalContext, 200);

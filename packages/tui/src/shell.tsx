@@ -1,4 +1,4 @@
-import type { EmbeddedTerminalRenderable } from "@opentui/core";
+import { RGBA, type EmbeddedTerminalRenderable } from "@opentui/core";
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react";
 import type { CategoryKind, Command, CommandResponse, Snapshot } from "@work-craft/server/client";
 import { useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode } from "react";
@@ -135,6 +135,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     navigationKey: "",
     dialog: null,
   });
+  const submittingDialogRef = useRef<Exclude<DialogState, null> | null>(null);
   const snapshot = workCraft.snapshot;
 
   useEffect(() => {
@@ -679,9 +680,17 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
   });
 
   async function submitCreate(value: string): Promise<void> {
-    if (snapshot === null || state.dialog?.kind !== "create") return;
-    const { createKind, returnFocus } = state.dialog;
+    if (
+      snapshot === null ||
+      state.dialog?.kind !== "create" ||
+      submittingDialogRef.current === state.dialog
+    ) {
+      return;
+    }
+    const dialog = state.dialog;
+    const { createKind, returnFocus } = dialog;
     let command: Command | undefined;
+    let projectId: string | undefined;
     if (createKind === "session") {
       command = durableCommands.createSession(value);
     } else if (createKind === "workspace" && state.activeSessionId !== null) {
@@ -689,19 +698,36 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     } else if (createKind === "project" && state.activeWorkspaceId !== null) {
       command = durableCommands.createProject(state.activeWorkspaceId, state.activeCategory, value);
     } else {
-      const projectId = projectIdForShellContext(state, snapshot);
-      if (projectId !== undefined) command = durableCommands.createItem(projectId, value);
+      projectId = projectIdForShellContext(state, snapshot);
+      if (projectId !== undefined) {
+        command = durableCommands.createItem(projectId, value);
+      }
     }
-    if (command === undefined) return;
+    if (command === undefined) {
+      return;
+    }
+    submittingDialogRef.current = dialog;
     const result = await runCommand(command, commandRegion(returnFocus));
+    if (submittingDialogRef.current === dialog) {
+      submittingDialogRef.current = null;
+    }
     const id = result?.itemId ?? result?.id;
-    if (id === undefined) return;
+    if (id === undefined) {
+      return;
+    }
     dispatch({ type: "dialog.close" });
-    if (createKind === "session") dispatch({ type: "session.activate", id });
-    else if (createKind === "workspace") dispatch({ type: "workspace.activate", id });
-    else if (createKind === "project")
+    if (createKind === "session") {
+      dispatch({ type: "session.activate", id });
+    } else if (createKind === "workspace") {
+      dispatch({ type: "workspace.activate", id });
+    } else if (createKind === "project") {
       dispatch({ type: "navigator.activate", key: `project:${id}` });
-    else dispatch({ type: "navigator.activate", key: `item:${id}` });
+    } else {
+      if (projectId !== undefined && !state.expandedProjectIds.has(projectId)) {
+        dispatch({ type: "project.toggle", projectId });
+      }
+      dispatch({ type: "navigator.activate", key: `item:${id}` });
+    }
   }
 
   const mode =
@@ -829,7 +855,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
                 surface={surface}
                 terminals={workCraft.terminals}
                 undersized={undersized}
-                workbenchFocused={focus.region === "workbench"}
+                workbenchFocused={state.dialog === null && focus.region === "workbench"}
                 onFocusPane={(paneId) =>
                   dispatch({ type: "focus.set", focus: { region: "workbench", paneId } })
                 }
@@ -845,34 +871,49 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
       {status}
       {state.dialog === null ? null : (
         <box
-          id="dialog"
+          id="dialog-overlay"
           position="absolute"
-          left="20%"
-          top="20%"
-          width="60%"
-          height="60%"
-          backgroundColor={theme.colors.background}
+          left={0}
+          top={0}
+          width={dimensions.width}
+          height={dimensions.height}
+          zIndex={1}
+          backgroundColor={RGBA.fromInts(0, 0, 0, 128)}
+          onMouseDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
         >
-          {state.dialog.kind === "sessions" ? (
-            <SessionChooser
-              cursorId={sessionCursor}
-              sessions={sessions}
-              onCreate={() => openCreate("session")}
-              onFocus={setSessionCursorId}
-              onSelect={(id) => {
-                dispatch({ type: "session.activate", id });
-                reconcile();
-              }}
-            />
-          ) : (
-            <CreatePrompt
-              error={state.errors[commandRegion(state.dialog.returnFocus)] ?? null}
-              kind={state.dialog.createKind}
-              value={state.promptValue}
-              onChange={(value) => dispatch({ type: "prompt.set", value })}
-              onSubmit={(value) => void submitCreate(value)}
-            />
-          )}
+          <box
+            id="dialog"
+            position="absolute"
+            left="20%"
+            top="20%"
+            width="60%"
+            height="60%"
+            backgroundColor={theme.colors.background}
+          >
+            {state.dialog.kind === "sessions" ? (
+              <SessionChooser
+                cursorId={sessionCursor}
+                sessions={sessions}
+                onCreate={() => openCreate("session")}
+                onFocus={setSessionCursorId}
+                onSelect={(id) => {
+                  dispatch({ type: "session.activate", id });
+                  reconcile();
+                }}
+              />
+            ) : (
+              <CreatePrompt
+                error={state.errors[commandRegion(state.dialog.returnFocus)] ?? null}
+                kind={state.dialog.createKind}
+                value={state.promptValue}
+                onChange={(value) => dispatch({ type: "prompt.set", value })}
+                onSubmit={(value) => void submitCreate(value)}
+              />
+            )}
+          </box>
         </box>
       )}
     </box>

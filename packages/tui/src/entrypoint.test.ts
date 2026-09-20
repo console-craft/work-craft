@@ -12,6 +12,7 @@ import {
 
 const ROOT = resolve(import.meta.dir, "../../..");
 const CONNECTED_COLOR = "38;2;34;197;94m";
+const DIMMED_CONNECTED_COLOR = "38;2;17;98;47m";
 const CONNECTING_COLOR = "38;2;234;179;8m";
 const kitty = {
   hyper(keyCode: number): string {
@@ -133,7 +134,7 @@ test("an empty installation offers session creation from the chooser", async () 
       () =>
         tui.output().includes("sessions.") &&
         tui.output().includes("create") &&
-        tui.output().includes(CONNECTED_COLOR),
+        tui.output().includes(DIMMED_CONNECTED_COLOR),
       "the empty session chooser",
       () => `\n${tui.output()}`,
     );
@@ -169,7 +170,7 @@ test("the switch key makes the chooser authoritative", async () => {
       () =>
         tui.output().includes("Session: choose") &&
         tui.output().includes("Sessions") &&
-        tui.output().includes(CONNECTED_COLOR),
+        tui.output().includes(DIMMED_CONNECTED_COLOR),
       "the initial session chooser",
       () => `\n${tui.output()}`,
     );
@@ -290,10 +291,10 @@ test("session selection remains local to each TUI client", async () => {
       () =>
         first.output().includes("Session: choose") &&
         first.output().includes("Sessions") &&
-        first.output().includes(CONNECTED_COLOR) &&
+        first.output().includes(DIMMED_CONNECTED_COLOR) &&
         second.output().includes("Session: choose") &&
         second.output().includes("Sessions") &&
-        second.output().includes(CONNECTED_COLOR),
+        second.output().includes(DIMMED_CONNECTED_COLOR),
       "both session choosers",
       () => `\nFirst:\n${first.output()}\nSecond:\n${second.output()}`,
     );

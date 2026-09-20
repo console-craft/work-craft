@@ -24,12 +24,15 @@ function fakeClient(replacement: Snapshot): WorkCraftClient & { refreshCount(): 
 function deferred<T>(): {
   promise: Promise<T>;
   resolve(value: T): void;
+  reject(reason?: unknown): void;
 } {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((next) => {
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((next, fail) => {
     resolve = next;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 test("force reload closes the old stream and retains coherent state while connecting", async () => {
@@ -149,6 +152,35 @@ test("an old stream close callback cannot start a competing reconnect", async ()
   await Bun.sleep(0);
 
   expect(streams).toBe(2);
+  expect(store.getState().status).toBe("connected");
+});
+
+test("obsolete recovery failure cannot disconnect a successful reload", async () => {
+  const client = fakeClient(snapshotFixture());
+  const recovery = deferred<void>();
+  const closeHandlers: (() => void)[] = [];
+  let recoveries = 0;
+  client.ensureDaemon = async () => {
+    recoveries += 1;
+    if (recoveries > 1) {
+      await recovery.promise;
+    }
+  };
+  client.stream = async (handlers) => {
+    closeHandlers.push(() => handlers.onClose?.());
+    return { close() {}, sendInput() {}, resize() {} };
+  };
+  const store = createWorkCraftStore(client, { retryDelays: [] });
+  await store.start();
+
+  closeHandlers[0]?.();
+  await Bun.sleep(0);
+  await store.reload();
+  expect(store.getState().status).toBe("connected");
+
+  recovery.reject(new Error("obsolete recovery failed"));
+  await Bun.sleep(0);
+
   expect(store.getState().status).toBe("connected");
 });
 

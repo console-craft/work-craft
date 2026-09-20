@@ -246,7 +246,9 @@ export function createWorkCraftStore(
       }
       await connect(activeRun);
     } catch {
-      update({ status: "disconnected", stream: null });
+      if (run === activeRun) {
+        update({ status: "disconnected", stream: null });
+      }
     }
   }
 

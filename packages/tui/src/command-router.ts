@@ -420,6 +420,10 @@ export function routeKey(
       key.name === "space" &&
       key.ctrl === true &&
       !isHyperKey(key) &&
+      !key.meta &&
+      !key.option &&
+      !key.shift &&
+      !key.super &&
       now - state.leaderStartedAt < 1_000
     ) {
       return {
