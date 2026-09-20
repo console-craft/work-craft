@@ -10,5 +10,8 @@ declare module "@opentui/react" {
 
 extend({ terminal: EmbeddedTerminalRenderable });
 
-const renderer = await createCliRenderer({ exitOnCtrlC: true });
+const renderer = await createCliRenderer({
+  exitOnCtrlC: false,
+  useKittyKeyboard: { disambiguate: true },
+});
 createRoot(renderer).render(<App />);

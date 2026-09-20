@@ -4,14 +4,24 @@ import { useEffect, useRef } from "react";
 import type { TerminalBuffer } from "./use-work-craft.ts";
 
 export type TerminalPaneProps = {
-  active: boolean;
   buffer: TerminalBuffer | undefined;
+  focused: boolean;
   pane: Snapshot["panes"][number];
+  resizeEnabled: boolean;
   stream: StreamConnection | null;
-  onActivate(): void;
+  onFocus(): void;
+  onTerminalReady(paneId: string, terminal: EmbeddedTerminalRenderable | null): void;
 };
 
-export function TerminalPane({ active, buffer, pane, stream, onActivate }: TerminalPaneProps) {
+export function TerminalPane({
+  buffer,
+  focused,
+  pane,
+  resizeEnabled,
+  stream,
+  onFocus,
+  onTerminalReady,
+}: TerminalPaneProps) {
   const terminal = useRef<EmbeddedTerminalRenderable>(null);
   const rendered = useRef({ paneId: "", epoch: "", cursor: 0 });
 
@@ -37,10 +47,17 @@ export function TerminalPane({ active, buffer, pane, stream, onActivate }: Termi
   }, [buffer, pane.id]);
 
   useEffect(() => {
-    if (active) {
+    if (focused) {
       terminal.current?.focus();
+    } else {
+      terminal.current?.blur();
     }
-  }, [active]);
+  }, [focused]);
+
+  useEffect(() => {
+    onTerminalReady(pane.id, terminal.current);
+    return () => onTerminalReady(pane.id, null);
+  }, [onTerminalReady, pane.id]);
 
   const showStatus = pane.processStatus === "failed" || pane.processStatus === "interrupted";
   return (
@@ -52,16 +69,17 @@ export function TerminalPane({ active, buffer, pane, stream, onActivate }: Termi
         </text>
       ) : null}
       <terminal
+        id={`terminal:${pane.id}`}
         ref={terminal}
         flexGrow={1}
         width="100%"
         onData={(data) => stream?.sendInput(pane.id, data)}
         onMouseDown={() => {
-          onActivate();
+          onFocus();
           terminal.current?.focus();
         }}
         onTerminalResize={(cols, rows) => {
-          if (Number.isInteger(cols) && cols > 0 && Number.isInteger(rows) && rows > 0) {
+          if (resizeEnabled && cols >= 20 && rows >= 5) {
             stream?.resize(pane.id, cols, rows);
           }
         }}

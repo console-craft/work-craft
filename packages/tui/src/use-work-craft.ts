@@ -23,6 +23,7 @@ export type WorkCraftState = {
   snapshot: Snapshot | null;
   status: ConnectionStatus;
   command(command: Command): Promise<CommandResponse>;
+  reload(): Promise<void>;
   stream: StreamConnection | null;
   terminals: ReadonlyMap<string, TerminalBuffer>;
 };
@@ -30,10 +31,16 @@ export type WorkCraftState = {
 export type WorkCraftStore = {
   apply(message: ServerMessage): Promise<void>;
   getState(): WorkCraftState;
+  reload(): Promise<void>;
   snapshot(): Snapshot | null;
   start(): Promise<void>;
   stop(): void;
   subscribe(listener: () => void): () => void;
+};
+
+type WorkCraftStoreOptions = {
+  retryDelays?: readonly number[];
+  sleep?(milliseconds: number): Promise<void>;
 };
 
 const RETRY_DELAYS = [100, 250, 500, 1000, 2000] as const;
@@ -103,14 +110,25 @@ function appendTerminalChunk(
   return { ...buffer, chunks };
 }
 
-export function createWorkCraftStore(client: WorkCraftClient): WorkCraftStore {
+export function createWorkCraftStore(
+  client: WorkCraftClient,
+  options: WorkCraftStoreOptions = {},
+): WorkCraftStore {
   const listeners = new Set<() => void>();
+  const retryDelays = options.retryDelays ?? RETRY_DELAYS;
+  const sleep = options.sleep ?? Bun.sleep;
   let run = 0;
   let applying = Promise.resolve();
   let state: WorkCraftState = {
     snapshot: null,
     status: "connecting",
-    command: (command) => client.command(command),
+    command: async (command) => {
+      if (state.status !== "connected") {
+        throw new Error("Cannot mutate while disconnected");
+      }
+      return client.command(command);
+    },
+    reload,
     stream: null,
     terminals: new Map(),
   };
@@ -138,11 +156,16 @@ export function createWorkCraftStore(client: WorkCraftClient): WorkCraftStore {
     }
   }
 
-  async function refresh(): Promise<void> {
-    replaceSnapshot(await client.snapshot());
+  async function refresh(activeRun?: number): Promise<boolean> {
+    const snapshot = await client.snapshot();
+    if (activeRun !== undefined && run !== activeRun) {
+      return false;
+    }
+    replaceSnapshot(snapshot);
+    return true;
   }
 
-  async function applyMessage(message: ServerMessage): Promise<void> {
+  async function applyMessage(message: ServerMessage, activeRun?: number): Promise<void> {
     if (message.type === "terminal.output") {
       if (message.epoch !== state.snapshot?.epoch) {
         return;
@@ -173,7 +196,7 @@ export function createWorkCraftStore(client: WorkCraftClient): WorkCraftStore {
     if (current === null || next.epoch !== current.epoch || next.revision <= current.revision + 1) {
       replaceSnapshot(next);
     } else if (next.revision > current.revision + 1) {
-      await refresh();
+      await refresh(activeRun);
     }
   }
 
@@ -181,7 +204,7 @@ export function createWorkCraftStore(client: WorkCraftClient): WorkCraftStore {
     let stream: StreamConnection | undefined;
     stream = await client.stream({
       onMessage(message) {
-        void apply(message).catch(() => stream?.close());
+        void apply(message, activeRun).catch(() => stream?.close());
       },
       onClose() {
         if (run === activeRun) {
@@ -197,9 +220,12 @@ export function createWorkCraftStore(client: WorkCraftClient): WorkCraftStore {
   }
 
   async function reconnect(activeRun: number): Promise<void> {
-    update({ status: "disconnected", stream: null });
-    for (const delay of RETRY_DELAYS) {
-      await Bun.sleep(delay);
+    if (run !== activeRun) {
+      return;
+    }
+    update({ status: "connecting", stream: null });
+    for (const delay of retryDelays) {
+      await sleep(delay);
       if (run !== activeRun) {
         return;
       }
@@ -215,15 +241,53 @@ export function createWorkCraftStore(client: WorkCraftClient): WorkCraftStore {
     }
     try {
       await client.ensureDaemon();
-      await refresh();
+      if (run !== activeRun || !(await refresh(activeRun))) {
+        return;
+      }
       await connect(activeRun);
     } catch {
-      update({ status: "disconnected", stream: null });
+      if (run === activeRun) {
+        update({ status: "disconnected", stream: null });
+      }
     }
   }
 
-  function apply(message: ServerMessage): Promise<void> {
-    const result = applying.then(() => applyMessage(message));
+  async function establish(activeRun: number, recoverDaemon: boolean): Promise<void> {
+    update({ status: "connecting", stream: null });
+    try {
+      if (recoverDaemon) {
+        await client.ensureDaemon();
+      }
+      if (run !== activeRun || !(await refresh(activeRun))) {
+        return;
+      }
+      await connect(activeRun);
+    } catch {
+      if (run === activeRun) {
+        await reconnect(activeRun);
+      }
+    }
+  }
+
+  async function reload(): Promise<void> {
+    const activeRun = ++run;
+    const oldStream = state.stream;
+    update({ status: "connecting", stream: null });
+    oldStream?.close();
+    await sleep(0);
+    if (run !== activeRun) {
+      return;
+    }
+    await establish(activeRun, false);
+  }
+
+  function apply(message: ServerMessage, activeRun?: number): Promise<void> {
+    const result = applying.then(() => {
+      if (activeRun !== undefined && run !== activeRun) {
+        return;
+      }
+      return applyMessage(message, activeRun);
+    });
     applying = result.catch(() => {});
     return result;
   }
@@ -231,19 +295,11 @@ export function createWorkCraftStore(client: WorkCraftClient): WorkCraftStore {
   return {
     apply,
     getState: () => state,
+    reload,
     snapshot: () => state.snapshot,
     async start() {
       const activeRun = ++run;
-      update({ status: "connecting", stream: null });
-      try {
-        await client.ensureDaemon();
-        await refresh();
-        await connect(activeRun);
-      } catch {
-        if (run === activeRun) {
-          await reconnect(activeRun);
-        }
-      }
+      await establish(activeRun, true);
     },
     stop() {
       run += 1;

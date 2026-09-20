@@ -11,6 +11,7 @@ const installDirectory = join(temporaryDirectory, "install");
 const installedExecutable = join(installDirectory, "work-craft");
 const home = join(temporaryDirectory, "state");
 const socketPath = join(home, "work-craft.sock");
+const dimmedConnectedColor = "38;2;17;98;47m";
 
 await mkdir(installDirectory);
 await copyFile(executable, installedExecutable);
@@ -61,21 +62,31 @@ async function smokeTui(): Promise<void> {
 
   try {
     const deadline = Date.now() + 3_000;
-    while (!output.includes("connected") && child.exitCode === null && Date.now() < deadline) {
+    while (
+      !output.includes(dimmedConnectedColor) &&
+      child.exitCode === null &&
+      Date.now() < deadline
+    ) {
       await Bun.sleep(20);
     }
-    if (!output.includes("connected")) {
+    if (!output.includes(dimmedConnectedColor)) {
       throw new Error(`compiled TUI did not connect: ${output.trim()}`);
     }
   } finally {
     if (child.exitCode === null) {
-      terminal.write(Uint8Array.of(3));
+      try {
+        process.kill(-child.pid, "SIGTERM");
+      } catch {
+        // The TUI and its process group already exited.
+      }
       await Promise.race([child.exited, Bun.sleep(500)]);
     }
-    try {
-      process.kill(-child.pid, "SIGKILL");
-    } catch {
-      // The TUI and its process group already exited.
+    if (child.exitCode === null) {
+      try {
+        process.kill(-child.pid, "SIGKILL");
+      } catch {
+        // The TUI and its process group exited after SIGTERM.
+      }
     }
     await child.exited;
     terminal.close();
