@@ -164,9 +164,20 @@ export function reduceShellState(state: ShellState, action: ShellAction): ShellS
     case "dialog.open":
       return { ...state, dialog: action.dialog, promptValue: "" };
     case "dialog.close":
-      return state.dialog === null
-        ? state
-        : { ...state, dialog: null, focus: state.dialog.returnFocus, promptValue: "" };
+      if (state.dialog === null) {
+        return state;
+      }
+      return {
+        ...state,
+        dialog:
+          state.dialog.kind === "create" &&
+          state.dialog.createKind === "session" &&
+          state.activeSessionId === null
+            ? { kind: "sessions", returnFocus: state.dialog.returnFocus }
+            : null,
+        focus: state.dialog.returnFocus,
+        promptValue: "",
+      };
     case "prompt.set":
       return { ...state, promptValue: action.value };
     case "error.set": {
@@ -246,15 +257,10 @@ export function reconcileShellState(state: ShellState, snapshot: Snapshot): Shel
       : (tabs[0]?.id ?? null);
   const activeTab = tabs.find(({ id }) => id === surface?.activeTabId) ?? tabs[0];
   const panes = paneIds(activeTab?.layout ?? null);
-  const lastWorkbenchPaneId = panes.includes(state.lastWorkbenchPaneId ?? "")
-    ? state.lastWorkbenchPaneId
-    : (panes[0] ?? null);
+  const lastWorkbenchPaneId = state.lastWorkbenchPaneId;
   let focus = state.focus;
   if (focus.region === "workbench" && !panes.includes(focus.paneId)) {
-    focus =
-      lastWorkbenchPaneId === null
-        ? { region: "category" }
-        : { region: "workbench", paneId: lastWorkbenchPaneId };
+    focus = { region: "tabs" };
   }
   if (focus.region === "navigator" && state.navigatorPreference === "hidden") {
     focus = focusAfterNavigatorHide(focus, lastWorkbenchPaneId, panes.length > 0);

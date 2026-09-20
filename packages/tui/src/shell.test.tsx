@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { BoxRenderable, EmbeddedTerminalRenderable } from "@opentui/core";
 import { extend } from "@opentui/react";
 import { testRender } from "@opentui/react/test-utils";
-import type { Command, Snapshot } from "@work-craft/server/client";
+import type { Command, CommandResponse, Snapshot } from "@work-craft/server/client";
 import { act } from "react";
 import { CreatePrompt } from "./create-prompt.tsx";
 import { NavigationPane } from "./navigation-pane.tsx";
@@ -33,6 +33,14 @@ const entries: NavigatorEntry[] = [
     depth: 1,
   },
 ];
+
+function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
 
 function workCraftStateFixture(overrides: Partial<WorkCraftState> = {}): WorkCraftState {
   const snapshot = snapshotFixture({
@@ -113,6 +121,29 @@ function splitSurfaceSnapshot(): Snapshot {
   };
 }
 
+function twoSurfaceSnapshot(): Snapshot {
+  const snapshot = surfaceSnapshot();
+  return {
+    ...snapshot,
+    items: [
+      ...snapshot.items,
+      { ...snapshot.items[0]!, id: "item-2", title: "Second item", position: 1 },
+    ],
+    surfaces: [...snapshot.surfaces, { id: "surface-2", itemId: "item-2", activeTabId: "tab-2" }],
+    tabs: [
+      ...snapshot.tabs,
+      {
+        id: "tab-2",
+        surfaceId: "surface-2",
+        title: "Second",
+        position: 0,
+        layout: { type: "pane" as const, paneId: "pane-2" },
+      },
+    ],
+    panes: [...snapshot.panes, { ...snapshot.panes[0]!, id: "pane-2", surfaceId: "surface-2" }],
+  };
+}
+
 async function openFixtureItem(setup: Awaited<ReturnType<typeof testRender>>): Promise<void> {
   await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
   await act(async () => setup.mockInput.pressKey("l"));
@@ -141,6 +172,26 @@ test("chooser and prompt keep every shell region mounted", async () => {
     (setup.renderer.root.findDescendantById("dialog") as BoxRenderable).backgroundColor.a,
   ).toBe(1);
   expect(setup.renderer.root.findDescendantById("region:workbench")).toBeDefined();
+  act(() => setup.renderer.destroy());
+});
+
+test("cancelling session creation in an empty installation returns to the chooser", async () => {
+  const setup = await testRender(
+    <WorkCraftShell
+      workCraft={workCraftStateFixture({ snapshot: snapshotFixture({ sessions: [] }) })}
+    />,
+    { width: 120, height: 40, kittyKeyboard: true },
+  );
+  await setup.flush();
+  await act(async () => setup.mockInput.pressKey("n"));
+  await setup.flush();
+  expect(setup.captureCharFrame()).toContain("New session");
+
+  await act(async () => setup.mockInput.pressEscape());
+  await setup.flush();
+
+  expect(setup.captureCharFrame()).toContain("No sessions. Press n to create one.");
+  expect(setup.renderer.root.findDescendantById("dialog")).toBeDefined();
   act(() => setup.renderer.destroy());
 });
 
@@ -283,6 +334,45 @@ test("workbench warns before its content narrows below 60 columns", async () => 
   act(() => small.renderer.destroy());
 });
 
+test("undersizing a focused workbench moves focus to its tab", async () => {
+  const setup = await testRender(
+    <WorkCraftShell workCraft={workCraftStateFixture({ snapshot: surfaceSnapshot() })} />,
+    { width: 120, height: 40, kittyKeyboard: true },
+  );
+  await setup.flush();
+  await openFixtureItem(setup);
+  await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
+  expect(setup.renderer.root.findDescendantById("terminal:pane-1")?.focused).toBe(true);
+
+  act(() => setup.resize(32, 10));
+  await setup.flush();
+
+  expect(setup.renderer.root.findDescendantById("terminal:pane-1")?.focused).toBe(false);
+
+  act(() => setup.resize(120, 40));
+  await setup.flush();
+  expect(setup.renderer.root.findDescendantById("terminal:pane-1")?.focused).toBe(true);
+  act(() => setup.renderer.destroy());
+});
+
+test("changing the active item leaves stale workbench focus on the tab strip", async () => {
+  const setup = await testRender(
+    <WorkCraftShell workCraft={workCraftStateFixture({ snapshot: twoSurfaceSnapshot() })} />,
+    { width: 120, height: 40, kittyKeyboard: true },
+  );
+  await setup.flush();
+  await openFixtureItem(setup);
+  await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
+  await act(async () => setup.mockInput.pressKey("j", { hyper: true }));
+  await setup.flush();
+
+  expect(setup.renderer.root.findDescendantById("terminal:pane-2")?.focused).toBe(false);
+
+  await act(async () => setup.mockInput.pressKey("j", { ctrl: true }));
+  expect(setup.renderer.root.findDescendantById("terminal:pane-2")?.focused).toBe(true);
+  act(() => setup.renderer.destroy());
+});
+
 test("disconnected durable commands are disabled while reload remains available", async () => {
   let commands = 0;
   let reloads = 0;
@@ -392,6 +482,42 @@ test("splitting focuses the new pane returned by the server", async () => {
   act(() => setup.renderer.destroy());
 });
 
+test("a late split response cannot focus a pane after changing surfaces", async () => {
+  const split = deferred<CommandResponse>();
+  const setup = await testRender(
+    <WorkCraftShell
+      workCraft={workCraftStateFixture({
+        snapshot: twoSurfaceSnapshot(),
+        command: async (command) =>
+          command.type === "pane.split"
+            ? split.promise
+            : { ok: true, revision: 1, result: { id: "result-1" } },
+      })}
+    />,
+    { width: 120, height: 40, kittyKeyboard: true },
+  );
+  await setup.flush();
+  await openFixtureItem(setup);
+  await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
+  await act(async () => setup.mockInput.pressKey(" ", { ctrl: true }));
+  await act(async () => setup.mockInput.pressKey("s"));
+  await act(async () => setup.mockInput.pressKey("j", { hyper: true }));
+
+  await act(async () => {
+    split.resolve({
+      ok: true,
+      revision: 2,
+      result: { id: "pane-new", surfaceId: "surface-1", tabId: "tab-1", paneId: "pane-new" },
+    });
+    await split.promise;
+  });
+  await act(async () => setup.mockInput.pressKey("k", { hyper: true }));
+  await setup.flush();
+
+  expect(setup.renderer.root.findDescendantById("terminal:pane-1")?.focused).toBe(true);
+  act(() => setup.renderer.destroy());
+});
+
 test("a rejected pane command stays visible in the workbench region", async () => {
   const setup = await testRender(
     <WorkCraftShell
@@ -418,6 +544,31 @@ test("a rejected pane command stays visible in the workbench region", async () =
   act(() => setup.renderer.destroy());
 });
 
+test("a rejected tab command stays visible in the tab region", async () => {
+  const setup = await testRender(
+    <WorkCraftShell
+      workCraft={workCraftStateFixture({
+        snapshot: surfaceSnapshot(),
+        command: async (command) => {
+          if (command.type === "surface.ensure") {
+            return { ok: true, revision: 1, result: { id: "surface-1" } };
+          }
+          throw new Error("tab failed");
+        },
+      })}
+    />,
+    { width: 120, height: 40, kittyKeyboard: true },
+  );
+  await setup.flush();
+  await openFixtureItem(setup);
+  await act(async () => setup.mockInput.pressKey("n", { hyper: true }));
+  await setup.flush();
+
+  expect(setup.renderer.root.findDescendantById("tab-error")).toBeDefined();
+  expect(setup.captureCharFrame()).toContain("tab failed");
+  act(() => setup.renderer.destroy());
+});
+
 test("opening a collapsed project terminal expands and activates its item", async () => {
   const setup = await testRender(
     <WorkCraftShell
@@ -438,6 +589,74 @@ test("opening a collapsed project terminal expands and activates its item", asyn
   await setup.flush();
   expect(setup.renderer.root.findDescendantById("navigator-row:item:item-1")).toBeDefined();
   expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBeDefined();
+  act(() => setup.renderer.destroy());
+});
+
+test("a late project-open response cannot activate an item behind a dialog", async () => {
+  const open = deferred<CommandResponse>();
+  const setup = await testRender(
+    <WorkCraftShell
+      workCraft={workCraftStateFixture({
+        snapshot: surfaceSnapshot(),
+        command: async (command) =>
+          command.type === "surface.ensureHere"
+            ? open.promise
+            : { ok: true, revision: 1, result: { id: "result-1" } },
+      })}
+    />,
+    { width: 120, height: 40, kittyKeyboard: true },
+  );
+  await setup.flush();
+  await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
+  await act(async () => setup.mockInput.pressKey("o"));
+  await act(async () => setup.mockInput.pressKey("s", { hyper: true }));
+
+  await act(async () => {
+    open.resolve({
+      ok: true,
+      revision: 2,
+      result: { id: "surface-1", itemId: "item-1" },
+    });
+    await open.promise;
+  });
+  await setup.flush();
+
+  expect(setup.renderer.root.findDescendantById("dialog")).toBeDefined();
+  expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBeUndefined();
+  act(() => setup.renderer.destroy());
+});
+
+test("a late create response cannot activate an item after cancelling its dialog", async () => {
+  const create = deferred<CommandResponse>();
+  const setup = await testRender(
+    <WorkCraftShell
+      workCraft={workCraftStateFixture({
+        snapshot: twoSurfaceSnapshot(),
+        command: async (command) =>
+          command.type === "item.create"
+            ? create.promise
+            : { ok: true, revision: 1, result: { id: "result-1" } },
+      })}
+    />,
+    { width: 120, height: 40, kittyKeyboard: true },
+  );
+  await setup.flush();
+  await openFixtureItem(setup);
+  await act(async () => setup.mockInput.pressKey(" ", { ctrl: true }));
+  await act(async () => setup.mockInput.pressKey("n"));
+  await act(async () => setup.mockInput.typeText("Late item"));
+  await act(async () => setup.mockInput.pressEnter());
+  await act(async () => setup.mockInput.pressEscape());
+
+  await act(async () => {
+    create.resolve({ ok: true, revision: 2, result: { id: "item-2" } });
+    await create.promise;
+  });
+  await setup.flush();
+
+  expect(setup.renderer.root.findDescendantById("dialog")).toBeUndefined();
+  expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBeDefined();
+  expect(setup.renderer.root.findDescendantById("terminal:pane-2")).toBeUndefined();
   act(() => setup.renderer.destroy());
 });
 

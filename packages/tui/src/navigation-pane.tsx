@@ -34,7 +34,7 @@ export function NavigationPane({
     if (cursorKey !== null) {
       scrollbox.current?.scrollChildIntoView(`navigator-row:${cursorKey}`);
     }
-  }, [cursorKey]);
+  }, [cursorKey, entries.length, height]);
 
   return (
     <box

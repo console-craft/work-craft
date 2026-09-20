@@ -346,7 +346,8 @@ The navigator has three client-local states.
 
 ### Hidden
 
-- The navigator never hides automatically.
+- Hidden is the user-controlled preference; responsive width changes never
+  select it automatically.
 - `leader+b` hides either visible form.
 - Invoking `leader+b` while hidden restores responsive auto mode.
 - Hiding preserves the adjusted expanded width. Showing and later automatic
@@ -375,6 +376,12 @@ Below the minimum workbench size, the workbench shows a message instructing the
 user to resize or use `leader+b`. It does not send invalid tiny PTY dimensions.
 The last valid terminal dimensions remain in effect. Header, category rail, and
 status bar stay mounted.
+
+At unusably small heights where the navigator cannot render its contents, its
+rendering is temporarily suppressed and navigator focus falls back to the
+category rail. This safety behavior does not change the user-controlled hidden
+preference; the navigator returns in its preferred responsive mode when enough
+height is available.
 
 The constants may be calibrated during implementation only if OpenTUI's
 rendered border accounting differs from logical cell measurements. The

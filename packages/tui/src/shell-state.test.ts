@@ -86,6 +86,33 @@ test("focusing a pane records it for composite-region restoration", () => {
   expect(state.lastWorkbenchPaneId).toBe("pane-2");
 });
 
+test("reconciliation leaves an unavailable remembered pane on the tab strip", () => {
+  const snapshot = snapshotFixture({
+    surfaces: [{ id: "surface-1", itemId: "item-1", activeTabId: "tab-1" }],
+    tabs: [
+      {
+        id: "tab-1",
+        surfaceId: "surface-1",
+        title: "Shell",
+        position: 0,
+        layout: { type: "pane", paneId: "pane-new" },
+      },
+    ],
+  });
+  const current = {
+    ...reconcileShellState(createInitialShellState(), snapshot),
+    activeNavigatorKey: "item:item-1",
+    expandedProjectIds: new Set(["project-1"]),
+    focus: { region: "workbench" as const, paneId: "pane-old" },
+    lastWorkbenchPaneId: "pane-old",
+  };
+
+  const state = reconcileShellState(current, snapshot);
+
+  expect(state.focus).toEqual({ region: "tabs" });
+  expect(state.lastWorkbenchPaneId).toBe("pane-old");
+});
+
 test("item creation outside the navigator requires an active item", () => {
   const snapshot = snapshotFixture();
   const projectState = {

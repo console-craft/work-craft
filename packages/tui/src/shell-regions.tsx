@@ -114,6 +114,7 @@ export type TabStripProps = {
   activeId: string | null;
   cursorId: string | null;
   focused: boolean;
+  error: string | null;
   onActivate(id: string): void;
   onFocus(id: string): void;
 };
@@ -121,6 +122,7 @@ export type TabStripProps = {
 export function TabStrip({
   activeId,
   cursorId,
+  error,
   focused,
   tabs,
   onActivate,
@@ -144,6 +146,11 @@ export function TabStrip({
           </text>
         );
       })}
+      {error === null ? null : (
+        <text id="tab-error" fg="#EF4444">
+          {` ${error}`}
+        </text>
+      )}
     </box>
   );
 }
