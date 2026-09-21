@@ -1,12 +1,14 @@
 import { expect, test } from "bun:test";
+import { EmbeddedTerminalRenderable } from "@opentui/core";
+import { extend } from "@opentui/react";
 import { testRender } from "@opentui/react/test-utils";
 import type { Snapshot } from "@work-craft/server/client";
 import { act } from "react";
-import type { WorkCraftState } from "../client/use-work-craft.ts";
-import { WorkCraftShell } from "../shell/shell.tsx";
 import { snapshotFixture } from "../test-fixtures.ts";
-import { terminalPaneKey } from "./surface-view.tsx";
+import { SurfaceView, terminalPaneKey } from "./surface-view.tsx";
 import { TabBar } from "./tab-bar.tsx";
+
+extend({ terminal: EmbeddedTerminalRenderable });
 
 function surfaceSnapshot(): Snapshot {
   return snapshotFixture({
@@ -46,25 +48,6 @@ function surfaceSnapshot(): Snapshot {
   });
 }
 
-function workCraftStateFixture(): WorkCraftState {
-  return {
-    snapshot: surfaceSnapshot(),
-    status: "connected",
-    command: async () => ({ ok: true, revision: 1, result: { id: "result-1" } }),
-    reload: async () => {},
-    stream: null,
-    terminals: new Map(),
-  };
-}
-
-async function openFixtureItem(setup: Awaited<ReturnType<typeof testRender>>): Promise<void> {
-  await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
-  await act(async () => setup.mockInput.pressKey("l"));
-  await act(async () => setup.mockInput.pressKey("j"));
-  await act(async () => setup.mockInput.pressEnter());
-  await setup.flush();
-}
-
 test("terminal renderer identity includes the daemon epoch and replay cursor", () => {
   expect(terminalPaneKey("pane-1", undefined)).toBe("pane-1:pending:0");
   expect(terminalPaneKey("pane-1", { epoch: "epoch-2", historyCursor: 42 })).toBe(
@@ -73,14 +56,21 @@ test("terminal renderer identity includes the daemon epoch and replay cursor", (
 });
 
 test("workbench warns before its content narrows below 60 columns", async () => {
-  const small = await testRender(<WorkCraftShell workCraft={workCraftStateFixture()} />, {
-    width: 120,
-    height: 40,
-    kittyKeyboard: true,
-  });
-  await small.flush();
-  await openFixtureItem(small);
-  act(() => small.resize(73, 20));
+  const snapshot = surfaceSnapshot();
+  const small = await testRender(
+    <SurfaceView
+      focusedPaneId={null}
+      snapshot={snapshot}
+      stream={null}
+      surface={snapshot.surfaces[0]!}
+      terminals={new Map()}
+      undersized
+      workbenchFocused={false}
+      onFocusPane={() => {}}
+      onTerminalReady={() => {}}
+    />,
+    { width: 73, height: 20 },
+  );
   await small.flush();
   expect(small.captureCharFrame()).toContain("too small.");
   act(() => small.renderer.destroy());
