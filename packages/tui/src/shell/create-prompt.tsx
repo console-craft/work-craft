@@ -1,7 +1,6 @@
 import { Panel } from "@/components/ui/panel";
 import { useTheme } from "@/hooks/use-theme";
-
-export type CreateKind = "session" | "workspace" | "project" | "item";
+import type { CreateKind } from "./model.ts";
 
 export type CreatePromptProps = {
   kind: CreateKind;

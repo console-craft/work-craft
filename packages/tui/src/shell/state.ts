@@ -1,13 +1,12 @@
 import type { CategoryKind, Snapshot } from "@work-craft/server/client";
-import type { CreateKind } from "./create-prompt.tsx";
 import { focusAfterNavigatorHide, type FocusTarget } from "../input/focus.ts";
-import { navigatorEntries, projectIdForEntry, workspacesForSession } from "../navigation/model.ts";
+import { navigatorEntries, workspacesForSession } from "../navigation/model.ts";
 import {
   DEFAULT_NAVIGATOR_WIDTH,
   resizeNavigatorWidth,
   type NavigatorPreference,
 } from "./layout.ts";
-import { paneIds } from "../workbench/layout.ts";
+import type { CreateKind } from "./model.ts";
 
 export type ShellRegion = "workspace" | "session" | "category" | "navigator" | "tabs" | "workbench";
 
@@ -247,16 +246,6 @@ export function reconcileShellState(state: ShellState, snapshot: Snapshot): Shel
     : tabs.some(({ id }) => id === surface?.activeTabId)
       ? surface!.activeTabId
       : (tabs[0]?.id ?? null);
-  const activeTab = tabs.find(({ id }) => id === surface?.activeTabId) ?? tabs[0];
-  const panes = paneIds(activeTab?.layout ?? null);
-  const lastWorkbenchPaneId = state.lastWorkbenchPaneId;
-  let focus = state.focus;
-  if (focus.region === "workbench" && !panes.includes(focus.paneId)) {
-    focus = { region: "tabs" };
-  }
-  if (focus.region === "navigator" && state.navigatorPreference === "hidden") {
-    focus = focusAfterNavigatorHide(focus, lastWorkbenchPaneId, panes.length > 0);
-  }
   const dialog =
     activeSessionId === null
       ? { kind: "sessions" as const, returnFocus: state.focus }
@@ -278,32 +267,8 @@ export function reconcileShellState(state: ShellState, snapshot: Snapshot): Shel
       : activeCategory,
     navigatorCursorKey,
     tabCursorId,
-    focus,
-    lastWorkbenchPaneId,
     expandedProjectIds,
     dialog,
     promptValue: dialog?.kind === "create" ? state.promptValue : "",
   };
-}
-
-export function projectIdForShellContext(
-  state: ShellState,
-  snapshot: Snapshot,
-): string | undefined {
-  if (state.activeWorkspaceId === null) {
-    return undefined;
-  }
-  const entries = navigatorEntries(
-    snapshot,
-    state.activeWorkspaceId,
-    state.activeCategory,
-    state.expandedProjectIds,
-  );
-  if (state.focus.region === "navigator") {
-    return projectIdForEntry(entries.find((entry) => entry.key === state.navigatorCursorKey));
-  }
-  const itemId = state.activeNavigatorKey?.startsWith("item:")
-    ? state.activeNavigatorKey.slice("item:".length)
-    : undefined;
-  return snapshot.items.find(({ id }) => id === itemId)?.projectId;
 }

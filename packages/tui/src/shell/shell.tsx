@@ -1,6 +1,6 @@
 import type { EmbeddedTerminalRenderable } from "@opentui/core";
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react";
-import type { CategoryKind, Command, CommandResponse, Snapshot } from "@work-craft/server/client";
+import type { CategoryKind, Command, CommandResponse } from "@work-craft/server/client";
 import { useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode } from "react";
 import { Box } from "@/components/ui/box";
 import {
@@ -11,51 +11,28 @@ import {
   type CommandId,
   type KeyLike,
 } from "../input/command-router.ts";
-import type { CreateKind } from "./create-prompt.tsx";
-import {
-  moveFocus,
-  projectPaneFocusNodes,
-  type FocusNode,
-  type FocusTarget,
-} from "../input/focus.ts";
-import {
-  categoriesForWorkspace,
-  navigatorEntries,
-  workspacesForSession,
-  type NavigatorEntry,
-} from "../navigation/model.ts";
+import { moveFocus, type FocusTarget } from "../input/focus.ts";
+import type { NavigatorEntry } from "../navigation/model.ts";
 import { CategoryRail } from "../navigation/category-rail.tsx";
 import { Navigator } from "../navigation/navigator.tsx";
-import {
-  CATEGORY_RAIL_WIDTH,
-  COMPACT_NAVIGATOR_WIDTH,
-  MIN_WORKBENCH_HEIGHT,
-  MIN_WORKBENCH_WIDTH,
-  resolveNavigatorMode,
-  workspaceViewport,
-} from "./layout.ts";
+import { calculateShellLayout } from "./layout.ts";
 import { Workbench } from "../workbench/workbench.tsx";
 import { DialogOverlay } from "./dialog-overlay.tsx";
 import { Header } from "./header.tsx";
 import { StatusBar, statusModeFor, type StatusBarProps } from "./status-bar.tsx";
 import {
   createInitialShellState,
-  projectIdForShellContext,
   reduceShellState,
   type DialogState,
   type ShellRegion,
 } from "./state.ts";
 import type { WorkCraftState } from "../client/use-work-craft.ts";
-import { paneIds } from "../workbench/layout.ts";
-
-const FIXED_CATEGORIES: readonly { kind: CategoryKind; title: string }[] = [
-  { kind: "inbox", title: "Inbox" },
-  { kind: "today", title: "Today" },
-  { kind: "design", title: "Design" },
-  { kind: "implementation", title: "Implementation" },
-  { kind: "collaboration", title: "Collaboration" },
-  { kind: "operations", title: "Operations" },
-];
+import {
+  deriveShellModel,
+  projectIdForShellContext,
+  resolveShellFocus,
+  type CreateKind,
+} from "./model.ts";
 
 const durableCommands = {
   createSession: (name: string): Command => ({ type: "session.create", name }),
@@ -105,16 +82,6 @@ type CompletionContext = {
   dialog: DialogState;
 };
 
-function orderedSessions(snapshot: Snapshot | null): Snapshot["sessions"] {
-  return [...(snapshot?.sessions ?? [])].sort(
-    (a, b) => a.position - b.position || a.id.localeCompare(b.id),
-  );
-}
-
-function entryIndex(entries: readonly NavigatorEntry[], key: string | null): number {
-  return entries.findIndex((entry) => entry.key === key);
-}
-
 function adjacent<T>(values: readonly T[], index: number, offset: -1 | 1): T | undefined {
   return index < 0 ? undefined : values[index + offset];
 }
@@ -159,50 +126,52 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     return () => clearTimeout(timeout);
   }, [routerState.invalidMessageUntil]);
 
-  const sessions = orderedSessions(snapshot);
-  const activeSession = sessions.find(({ id }) => id === state.activeSessionId);
-  const workspaces =
-    snapshot === null || state.activeSessionId === null
-      ? []
-      : workspacesForSession(snapshot, state.activeSessionId);
-  const categories =
-    snapshot === null || state.activeWorkspaceId === null
-      ? []
-      : categoriesForWorkspace(snapshot, state.activeWorkspaceId);
-  const renderedCategories: Snapshot["categories"] =
-    categories.length > 0
-      ? categories
-      : FIXED_CATEGORIES.map((category, position) => ({
-          ...category,
-          workspaceId: state.activeWorkspaceId ?? "",
-          position,
-        }));
-  const entries =
-    snapshot === null || state.activeWorkspaceId === null
-      ? []
-      : navigatorEntries(
-          snapshot,
-          state.activeWorkspaceId,
-          state.activeCategory,
-          state.expandedProjectIds,
-        );
-  const activeEntry = entries.find(({ key }) => key === state.activeNavigatorKey);
-  const surface =
-    snapshot === null || activeEntry?.kind !== "item"
-      ? undefined
-      : snapshot.surfaces.find(({ itemId }) => itemId === activeEntry.id);
-  const tabs = [...(snapshot?.tabs ?? [])]
-    .filter(({ surfaceId }) => surfaceId === surface?.id)
-    .sort((a, b) => a.position - b.position || a.id.localeCompare(b.id));
-  const activeTab = tabs.find(({ id }) => id === surface?.activeTabId) ?? tabs[0];
-  const layout = activeTab?.layout ?? null;
-  const currentPaneIds = paneIds(layout);
-  const navigatorMode = resolveNavigatorMode({
+  const model = deriveShellModel({ snapshot, state, sessionCursorId });
+  const {
+    activeCategoryTitle,
+    activeSession,
+    activeTab,
+    categories: renderedCategories,
+    categoryCursorIndex,
+    categoryIndex,
+    cursorEntry,
+    entries,
+    navigatorActiveIndex,
+    navigatorCursorIndex,
+    paneIds: currentPaneIds,
+    sessionCursor,
+    sessionCursorIndex,
+    sessions,
+    surface,
+    tabActiveIndex,
+    tabCursorIndex,
+    tabs,
+    workspaceCursorIndex,
+    workspaces,
+  } = model;
+  const paneLayout = activeTab?.layout ?? null;
+  const shellLayout = calculateShellLayout({
     terminalWidth: dimensions.width,
-    preference: state.navigatorPreference,
+    terminalHeight: dimensions.height,
+    navigatorPreference: state.navigatorPreference,
+    preferredNavigatorWidth: state.navigatorWidth,
+    activeSessionName: activeSession?.name ?? null,
+    workspaces: workspaces.map(({ id, name }) => ({ id, label: name })),
+    activeWorkspaceId: state.activeWorkspaceId,
+    workspaceCursorId: state.workspaceCursorId,
+    paneLayout,
   });
-  const workbenchHeight = Math.max(0, dimensions.height - 3);
-  const navigatorVisible = navigatorMode !== "hidden" && workbenchHeight >= 2;
+  const {
+    focusNodes,
+    navigatorMode,
+    navigatorVisible,
+    navigatorWidth,
+    sessionWidth,
+    undersized,
+    workbenchHeight,
+    workspaceViewport: viewport,
+    workspaceWidth,
+  } = shellLayout;
 
   useEffect(() => {
     if (!navigatorVisible && state.focus.region === "navigator") {
@@ -210,27 +179,12 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     }
   }, [navigatorVisible, state.focus.region]);
 
-  const navigatorWidth = !navigatorVisible
-    ? 0
-    : navigatorMode === "expanded"
-      ? state.navigatorWidth
-      : navigatorMode === "compact"
-        ? COMPACT_NAVIGATOR_WIDTH
-        : 0;
-  const workbenchWidth = dimensions.width - CATEGORY_RAIL_WIDTH - navigatorWidth;
-  const undersized =
-    workbenchWidth - 2 < MIN_WORKBENCH_WIDTH || workbenchHeight - 2 < MIN_WORKBENCH_HEIGHT;
-  const focus: FocusTarget =
-    state.focus.region === "workbench" &&
-    (undersized || !currentPaneIds.includes(state.focus.paneId))
-      ? { region: "tabs" }
-      : state.focus;
-  const focusedPaneId =
-    focus.region === "workbench"
-      ? focus.paneId
-      : currentPaneIds.includes(state.lastWorkbenchPaneId ?? "")
-        ? state.lastWorkbenchPaneId
-        : (currentPaneIds[0] ?? null);
+  const { focus, focusedPaneId } = resolveShellFocus({
+    focus: state.focus,
+    lastWorkbenchPaneId: state.lastWorkbenchPaneId,
+    paneIds: currentPaneIds,
+    undersized,
+  });
   function navigationContextKey(navigatorKey: string | null): string {
     return JSON.stringify([
       snapshot?.epoch ?? null,
@@ -255,77 +209,6 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
       dialog: state.dialog,
     };
   }, [completionContextKey, completionNavigationKey, state.dialog]);
-  const sessionWidth = Math.min(
-    Math.max(18, Bun.stringWidth(activeSession?.name ?? "choose") + 14),
-    Math.max(18, dimensions.width - 1),
-  );
-  const viewport = workspaceViewport(
-    workspaces.map(({ id, name }) => ({ id, label: name })),
-    state.activeWorkspaceId,
-    state.workspaceCursorId,
-    Math.max(0, dimensions.width - sessionWidth),
-  );
-  const sessionCursor = sessions.some(({ id }) => id === sessionCursorId)
-    ? sessionCursorId
-    : sessions.some(({ id }) => id === state.activeSessionId)
-      ? state.activeSessionId
-      : (sessions[0]?.id ?? null);
-  const categoryIndex = renderedCategories.findIndex(({ kind }) => kind === state.activeCategory);
-  const navigatorActiveIndex = entryIndex(entries, state.activeNavigatorKey);
-  const navigatorCursorIndex = entryIndex(entries, state.navigatorCursorKey);
-  const tabActiveIndex = tabs.findIndex(({ id }) => id === activeTab?.id);
-  const tabCursorIndex = tabs.findIndex(({ id }) => id === state.tabCursorId);
-  const workspaceCursorIndex = workspaces.findIndex(({ id }) => id === state.workspaceCursorId);
-  const categoryCursorIndex = renderedCategories.findIndex(
-    ({ kind }) => kind === state.categoryCursor,
-  );
-  const sessionCursorIndex = sessions.findIndex(({ id }) => id === sessionCursor);
-
-  function focusNodes(): FocusNode[] {
-    const bodyHeight = Math.max(0, dimensions.height - 2);
-    const workbenchX = CATEGORY_RAIL_WIDTH + navigatorWidth;
-    const nodes: FocusNode[] = [
-      {
-        target: { region: "workspace" },
-        rect: { x: 0, y: 0, width: Math.max(1, dimensions.width - sessionWidth), height: 1 },
-      },
-      {
-        target: { region: "session" },
-        rect: {
-          x: Math.max(0, dimensions.width - sessionWidth),
-          y: 0,
-          width: sessionWidth,
-          height: 1,
-        },
-      },
-      {
-        target: { region: "category" },
-        rect: { x: 0, y: 1, width: CATEGORY_RAIL_WIDTH, height: bodyHeight },
-      },
-      {
-        target: { region: "tabs" },
-        rect: { x: workbenchX, y: 1, width: Math.max(0, workbenchWidth), height: 1 },
-      },
-    ];
-    if (navigatorVisible) {
-      nodes.push({
-        target: { region: "navigator" },
-        rect: { x: CATEGORY_RAIL_WIDTH, y: 1, width: navigatorWidth, height: bodyHeight },
-      });
-    }
-    if (layout !== null && !undersized) {
-      nodes.push(
-        ...projectPaneFocusNodes(layout, {
-          x: workbenchX,
-          y: 2,
-          width: Math.max(0, workbenchWidth),
-          height: Math.max(0, dimensions.height - 3),
-        }),
-      );
-    }
-    return nodes;
-  }
-
   const availableCommands = new Set<CommandId>([
     "focus.left",
     "focus.down",
@@ -516,7 +399,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
   async function executeCommand(command: CommandId): Promise<void> {
     if (command.startsWith("focus.")) {
       const direction = command.slice(6) as "left" | "right" | "up" | "down";
-      const next = moveFocus(focus, direction, focusNodes());
+      const next = moveFocus(focus, direction, focusNodes);
       const restored =
         focus.region !== "workbench" &&
         next.region === "workbench" &&
@@ -737,14 +620,11 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
           routerState.leaderStartedAt !== null,
           navigatorMode === "compact" && focus.region === "navigator",
         );
-  const cursorEntry = entries.find(({ key }) => key === state.navigatorCursorKey);
   const hints = commandHints(routerState, commandContext);
   const statusProps: StatusBarProps =
     mode === "INFO"
       ? { mode: "INFO", text: routerState.invalidMessage ?? cursorEntry?.label ?? "" }
       : { mode, hints, text: routerState.invalidMessage ?? undefined };
-  const activeCategoryTitle =
-    renderedCategories.find(({ kind }) => kind === state.activeCategory)?.title ?? "Work";
   const workspaceProps = {
     activeId: state.activeWorkspaceId,
     cursorId: state.workspaceCursorId,
@@ -752,7 +632,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     hasNext: viewport.hasNext,
     hasPrevious: viewport.hasPrevious,
     visibleIds: viewport.ids,
-    width: Math.max(0, dimensions.width - sessionWidth),
+    width: workspaceWidth,
     workspaces,
     onActivate: (id: string) => {
       dispatch({ type: "focus.set", focus: { region: "workspace" } });
@@ -795,7 +675,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
         error: state.errors.navigator ?? null,
         focused: focus.region === "navigator",
         height: workbenchHeight,
-        mode: navigatorMode,
+        mode: navigatorMode === "hidden" ? "compact" : navigatorMode,
         title: activeCategoryTitle,
         width: navigatorWidth,
         onActivate: (key: string) => {
