@@ -124,6 +124,7 @@ The server is the sole authority for:
 
 The React/OpenTUI client:
 
+- uses vendored termcn components for reusable UI primitives while Work Craft behavior remains in application code;
 - renders category-specific navigation and project/item screens;
 - renders execution surfaces and terminal output;
 - sends semantic commands rather than mutating state locally;

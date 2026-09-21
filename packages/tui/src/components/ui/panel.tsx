@@ -1,3 +1,5 @@
+// @ts-nocheck
+/* @jsxImportSource @opentui/react */
 import type { ReactNode } from "react";
 
 import { useTheme } from "@/hooks/use-theme";

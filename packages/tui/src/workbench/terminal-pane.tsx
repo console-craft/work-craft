@@ -1,7 +1,9 @@
 import type { EmbeddedTerminalRenderable } from "@opentui/core";
 import type { Snapshot, StreamConnection } from "@work-craft/server/client";
 import { useEffect, useRef } from "react";
-import type { TerminalBuffer } from "./use-work-craft.ts";
+import { Box } from "@/components/ui/box";
+import { useTheme } from "@/hooks/use-theme";
+import type { TerminalBuffer } from "../client/use-work-craft.ts";
 
 export type TerminalPaneProps = {
   buffer: TerminalBuffer | undefined;
@@ -22,6 +24,7 @@ export function TerminalPane({
   onFocus,
   onTerminalReady,
 }: TerminalPaneProps) {
+  const theme = useTheme();
   const terminal = useRef<EmbeddedTerminalRenderable>(null);
   const rendered = useRef({ paneId: "", epoch: "", cursor: 0 });
 
@@ -61,9 +64,9 @@ export function TerminalPane({
 
   const showStatus = pane.processStatus === "failed" || pane.processStatus === "interrupted";
   return (
-    <box flexDirection="column" width="100%" height="100%">
+    <Box flexDirection="column" width="100%" height="100%">
       {showStatus ? (
-        <text fg="#EF4444">
+        <text fg={theme.colors.error}>
           {pane.processStatus}
           {pane.errorText === null ? "" : `: ${pane.errorText}`}
         </text>
@@ -84,6 +87,6 @@ export function TerminalPane({
           }
         }}
       />
-    </box>
+    </Box>
   );
 }

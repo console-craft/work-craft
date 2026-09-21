@@ -20,6 +20,7 @@
     "packages/*"
   ],
   "scripts": {
+    "dev": "bun  --watch src/main.ts",
     "build": "mkdir -p dist && bun build --compile src/main.ts --outfile dist/work-craft",
     "build:install": "bun run build && sh scripts/install.sh",
     "build:smoke": "bun scripts/smoke-build.ts",

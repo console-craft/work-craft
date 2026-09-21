@@ -35,10 +35,11 @@ Intel macOS, Linux ARM64, and musl Linux do not currently have supported prebuil
 
 Development requires [Bun](https://bun.sh/) 1.4 or newer on macOS or Linux.
 
-Install dependencies and run from source:
+Install dependencies and run from source. `bun run dev` restarts the TUI when source files change, while `bun run tui` runs it once:
 
 ```sh
 bun install
+bun run dev
 bun run tui
 bun run cli -- snapshot
 bun run cli -- session create --name Main --json
@@ -94,7 +95,7 @@ After a daemon or machine restart, Work Craft reloads SQLite state, retains boun
 
 Category-specific screens, `gh`/`az` views, Neovim/OpenCode metadata integration, remote access, and agent automation are outside this slice.
 
-Run the complete correctness gate with `bun run check`. It includes linting, formatting, typechecking, tests, a current-host standalone build, and a packaged daemon smoke test.
+Run the complete correctness gate with `bun run check`. It includes linting, formatting, typechecking, tests, a current-host standalone build, and a packaged executable smoke test covering daemon startup and the compiled TUI.
 
 To run checks individually, use `bun run lint`, `bun run format:check`, `bun run typecheck`, or `bun run test`.
 

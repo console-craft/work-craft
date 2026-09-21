@@ -1,3 +1,6 @@
+import type { LayoutNode } from "@work-craft/server/client";
+import { projectPaneFocusNodes, type FocusNode } from "../input/focus.ts";
+
 export const CATEGORY_RAIL_WIDTH = 5;
 export const DEFAULT_NAVIGATOR_WIDTH = 32;
 export const COMPACT_NAVIGATOR_WIDTH = 7;
@@ -9,6 +12,31 @@ export const MIN_EXPANDED_NAVIGATOR_WIDTH = 16;
 export type NavigatorMode = "expanded" | "compact" | "hidden";
 export type NavigatorPreference = "auto" | "expanded" | "hidden";
 
+export type ShellLayoutInput = {
+  terminalWidth: number;
+  terminalHeight: number;
+  navigatorPreference: NavigatorPreference;
+  preferredNavigatorWidth: number;
+  activeSessionName: string | null;
+  workspaces: readonly { id: string; label: string }[];
+  activeWorkspaceId: string | null;
+  workspaceCursorId: string | null;
+  paneLayout: LayoutNode | null;
+};
+
+export type ShellLayout = {
+  sessionWidth: number;
+  workspaceWidth: number;
+  workspaceViewport: WorkspaceViewport;
+  navigatorMode: NavigatorMode;
+  navigatorVisible: boolean;
+  navigatorWidth: number;
+  workbenchWidth: number;
+  workbenchHeight: number;
+  undersized: boolean;
+  focusNodes: readonly FocusNode[];
+};
+
 export function resolveNavigatorMode(input: {
   terminalWidth: number;
   preference: NavigatorPreference;
@@ -17,6 +45,91 @@ export function resolveNavigatorMode(input: {
     return input.preference;
   }
   return input.terminalWidth >= MIN_EXPANDED_SHELL_WIDTH ? "expanded" : "compact";
+}
+
+export function calculateShellLayout(input: ShellLayoutInput): ShellLayout {
+  const sessionWidth = Math.min(
+    Math.max(18, Bun.stringWidth(input.activeSessionName ?? "choose") + 14),
+    Math.max(18, input.terminalWidth - 1),
+  );
+  const workspaceWidth = Math.max(0, input.terminalWidth - sessionWidth);
+  const navigatorMode = resolveNavigatorMode({
+    terminalWidth: input.terminalWidth,
+    preference: input.navigatorPreference,
+  });
+  const workbenchHeight = Math.max(0, input.terminalHeight - 3);
+  const navigatorVisible = navigatorMode !== "hidden" && workbenchHeight >= 2;
+  const navigatorWidth = !navigatorVisible
+    ? 0
+    : navigatorMode === "expanded"
+      ? input.preferredNavigatorWidth
+      : COMPACT_NAVIGATOR_WIDTH;
+  const workbenchWidth = input.terminalWidth - CATEGORY_RAIL_WIDTH - navigatorWidth;
+  const undersized =
+    workbenchWidth - 2 < MIN_WORKBENCH_WIDTH || workbenchHeight - 2 < MIN_WORKBENCH_HEIGHT;
+  const workbenchX = CATEGORY_RAIL_WIDTH + navigatorWidth;
+  const focusNodes: FocusNode[] = [
+    {
+      target: { region: "workspace" },
+      rect: { x: 0, y: 0, width: Math.max(1, workspaceWidth), height: 1 },
+    },
+    {
+      target: { region: "session" },
+      rect: {
+        x: Math.max(0, input.terminalWidth - sessionWidth),
+        y: 0,
+        width: sessionWidth,
+        height: 1,
+      },
+    },
+    {
+      target: { region: "category" },
+      rect: {
+        x: 0,
+        y: 1,
+        width: CATEGORY_RAIL_WIDTH,
+        height: Math.max(0, input.terminalHeight - 2),
+      },
+    },
+    {
+      target: { region: "tabs" },
+      rect: { x: workbenchX, y: 1, width: Math.max(0, workbenchWidth), height: 1 },
+    },
+  ];
+  if (navigatorVisible) {
+    focusNodes.push({
+      target: { region: "navigator" },
+      rect: { x: CATEGORY_RAIL_WIDTH, y: 1, width: navigatorWidth, height: workbenchHeight },
+    });
+  }
+  if (input.paneLayout !== null && !undersized) {
+    focusNodes.push(
+      ...projectPaneFocusNodes(input.paneLayout, {
+        x: workbenchX,
+        y: 2,
+        width: Math.max(0, workbenchWidth),
+        height: workbenchHeight,
+      }),
+    );
+  }
+
+  return {
+    sessionWidth,
+    workspaceWidth,
+    workspaceViewport: workspaceViewport(
+      input.workspaces,
+      input.activeWorkspaceId,
+      input.workspaceCursorId,
+      workspaceWidth,
+    ),
+    navigatorMode,
+    navigatorVisible,
+    navigatorWidth,
+    workbenchWidth,
+    workbenchHeight,
+    undersized,
+    focusNodes,
+  };
 }
 
 export function resizeNavigatorWidth(
@@ -104,21 +217,6 @@ export function workspaceViewport(
     hasPrevious: best.start > 0,
     hasNext: best.end < workspaces.length - 1,
   };
-}
-
-export function projectInitials(label: string): string {
-  const words = label.trim().split(/\s+/u).filter(Boolean);
-  if (words.length > 1) {
-    return words
-      .slice(0, 2)
-      .map((word) => Array.from(word)[0])
-      .join("")
-      .toUpperCase();
-  }
-  return Array.from(words[0] ?? "")
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
 }
 
 export function ellipsize(label: string, width: number): string {

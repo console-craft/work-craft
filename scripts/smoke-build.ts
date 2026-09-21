@@ -3,6 +3,7 @@ import { chmod, copyFile, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createClient } from "../packages/server/src/client.ts";
+import { gruvboxTheme } from "../packages/tui/src/lib/terminal-themes/gruvbox.ts";
 
 const root = resolve(import.meta.dir, "..");
 const executable = join(root, "dist", "work-craft");
@@ -11,7 +12,17 @@ const installDirectory = join(temporaryDirectory, "install");
 const installedExecutable = join(installDirectory, "work-craft");
 const home = join(temporaryDirectory, "state");
 const socketPath = join(home, "work-craft.sock");
-const dimmedConnectedColor = "38;2;17;98;47m";
+
+function colorChannels(color: string): number[] {
+  const value = Number.parseInt(color.slice(1), 16);
+  return [(value >> 16) & 255, (value >> 8) & 255, value & 255];
+}
+
+const dimmedConnectedColor = `38;2;${colorChannels(gruvboxTheme.colors.success)
+  .map((channel, index) =>
+    Math.floor(channel * 0.5 + colorChannels(gruvboxTheme.colors.background)[index]! * 0.5),
+  )
+  .join(";")}m`;
 
 await mkdir(installDirectory);
 await copyFile(executable, installedExecutable);

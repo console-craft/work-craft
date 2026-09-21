@@ -1,6 +1,6 @@
 import { Panel } from "@/components/ui/panel";
-
-export type CreateKind = "session" | "workspace" | "project" | "item";
+import { useTheme } from "@/hooks/use-theme";
+import type { CreateKind } from "./model.ts";
 
 export type CreatePromptProps = {
   kind: CreateKind;
@@ -11,6 +11,7 @@ export type CreatePromptProps = {
 };
 
 export function CreatePrompt({ error, kind, value, onChange, onSubmit }: CreatePromptProps) {
+  const theme = useTheme();
   return (
     <Panel title={`New ${kind}`}>
       <input
@@ -28,7 +29,7 @@ export function CreatePrompt({ error, kind, value, onChange, onSubmit }: CreateP
           }
         }}
       />
-      {error === null ? null : <text fg="#EF4444">{error}</text>}
+      {error === null ? null : <text fg={theme.colors.error}>{error}</text>}
     </Panel>
   );
 }

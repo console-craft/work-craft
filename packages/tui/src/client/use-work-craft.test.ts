@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { Snapshot, StreamHandlers, WorkCraftClient } from "@work-craft/server/client";
-import { snapshotFixture } from "./test-fixtures.ts";
+import { snapshotFixture } from "../test-fixtures.ts";
 import { createWorkCraftStore } from "./use-work-craft.ts";
 
 function fakeClient(replacement: Snapshot): WorkCraftClient & { refreshCount(): number } {

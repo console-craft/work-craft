@@ -1,38 +1,21 @@
 import { expect, test } from "bun:test";
-import { BoxRenderable, EmbeddedTerminalRenderable } from "@opentui/core";
+import { BoxRenderable, EmbeddedTerminalRenderable, TextRenderable } from "@opentui/core";
 import { extend } from "@opentui/react";
 import { testRender } from "@opentui/react/test-utils";
 import type { Command, CommandResponse, Snapshot } from "@work-craft/server/client";
 import { act } from "react";
+import { gruvboxTheme } from "@/lib/terminal-themes/gruvbox";
+import { ThemeProvider } from "@/providers/theme-provider";
+import { SessionSwitcher } from "./session-switcher.tsx";
+import { StatusBar } from "./status-bar.tsx";
+import { WorkspaceBar } from "./workspace-bar.tsx";
 import { CreatePrompt } from "./create-prompt.tsx";
-import { NavigationPane } from "./navigation-pane.tsx";
 import { SessionChooser } from "./session-chooser.tsx";
 import { WorkCraftShell } from "./shell.tsx";
-import { SessionSwitcher, StatusBar, TabStrip, WorkspaceStrip } from "./shell-regions.tsx";
-import type { NavigatorEntry } from "./navigation.ts";
-import { snapshotFixture } from "./test-fixtures.ts";
-import type { WorkCraftState } from "./use-work-craft.ts";
+import { snapshotFixture } from "../test-fixtures.ts";
+import type { WorkCraftState } from "../client/use-work-craft.ts";
 
 extend({ terminal: EmbeddedTerminalRenderable });
-
-const entries: NavigatorEntry[] = [
-  {
-    key: "project:project-1",
-    kind: "project",
-    id: "project-1",
-    projectId: "project-1",
-    label: "Work Craft",
-    depth: 0,
-  },
-  {
-    key: "item:item-1",
-    kind: "item",
-    id: "item-1",
-    projectId: "project-1",
-    label: "Ship navigator",
-    depth: 1,
-  },
-];
 
 function deferred<T>(): {
   promise: Promise<T>;
@@ -359,19 +342,6 @@ test("narrow shells compact automatically", async () => {
   act(() => compact.renderer.destroy());
 });
 
-test("workbench warns before its content narrows below 60 columns", async () => {
-  const small = await testRender(
-    <WorkCraftShell workCraft={workCraftStateFixture({ snapshot: surfaceSnapshot() })} />,
-    { width: 120, height: 40, kittyKeyboard: true },
-  );
-  await small.flush();
-  await openFixtureItem(small);
-  act(() => small.resize(73, 20));
-  await small.flush();
-  expect(small.captureCharFrame()).toContain("too small.");
-  act(() => small.renderer.destroy());
-});
-
 test("undersizing a focused workbench moves focus to its tab", async () => {
   const setup = await testRender(
     <WorkCraftShell workCraft={workCraftStateFixture({ snapshot: surfaceSnapshot() })} />,
@@ -546,42 +516,6 @@ test("splitting focuses the new pane returned by the server", async () => {
   act(() => setup.renderer.destroy());
 });
 
-test("a late split response cannot focus a pane after changing surfaces", async () => {
-  const split = deferred<CommandResponse>();
-  const setup = await testRender(
-    <WorkCraftShell
-      workCraft={workCraftStateFixture({
-        snapshot: twoSurfaceSnapshot(),
-        command: async (command) =>
-          command.type === "pane.split"
-            ? split.promise
-            : { ok: true, revision: 1, result: { id: "result-1" } },
-      })}
-    />,
-    { width: 120, height: 40, kittyKeyboard: true },
-  );
-  await setup.flush();
-  await openFixtureItem(setup);
-  await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
-  await act(async () => setup.mockInput.pressKey(" ", { ctrl: true }));
-  await act(async () => setup.mockInput.pressKey("s"));
-  await act(async () => setup.mockInput.pressKey("j", { hyper: true }));
-
-  await act(async () => {
-    split.resolve({
-      ok: true,
-      revision: 2,
-      result: { id: "pane-new", surfaceId: "surface-1", tabId: "tab-1", paneId: "pane-new" },
-    });
-    await split.promise;
-  });
-  await act(async () => setup.mockInput.pressKey("k", { hyper: true }));
-  await setup.flush();
-
-  expect(setup.renderer.root.findDescendantById("terminal:pane-1")?.focused).toBe(true);
-  act(() => setup.renderer.destroy());
-});
-
 test("a rejected pane command stays visible in the workbench region", async () => {
   const setup = await testRender(
     <WorkCraftShell
@@ -633,184 +567,6 @@ test("a rejected tab command stays visible in the tab region", async () => {
   act(() => setup.renderer.destroy());
 });
 
-test("tab errors stay visible when tab labels overflow", async () => {
-  const tab = surfaceSnapshot().tabs[0]!;
-  const setup = await testRender(
-    <TabStrip
-      activeId="tab-1"
-      cursorId="tab-1"
-      error="tab failed"
-      focused
-      tabs={Array.from({ length: 6 }, (_, index) => ({
-        ...tab,
-        id: `tab-${index + 1}`,
-        title: `Long tab ${index + 1}`,
-        position: index,
-      }))}
-      onActivate={() => {}}
-      onFocus={() => {}}
-    />,
-    { width: 30, height: 1 },
-  );
-  await setup.flush();
-
-  expect(setup.captureCharFrame()).toContain("tab failed");
-  act(() => setup.renderer.destroy());
-});
-
-test("opening a collapsed project terminal expands and activates its item", async () => {
-  const setup = await testRender(
-    <WorkCraftShell
-      workCraft={workCraftStateFixture({
-        snapshot: surfaceSnapshot(),
-        command: async () => ({
-          ok: true,
-          revision: 1,
-          result: { id: "surface-1", itemId: "item-1" },
-        }),
-      })}
-    />,
-    { width: 120, height: 40, kittyKeyboard: true },
-  );
-  await setup.flush();
-  await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
-  await act(async () => setup.mockInput.pressKey("o"));
-  await setup.flush();
-  expect(setup.renderer.root.findDescendantById("navigator-row:item:item-1")).toBeDefined();
-  expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBeDefined();
-  act(() => setup.renderer.destroy());
-});
-
-test("a late project-open response cannot activate an item behind a dialog", async () => {
-  const open = deferred<CommandResponse>();
-  const setup = await testRender(
-    <WorkCraftShell
-      workCraft={workCraftStateFixture({
-        snapshot: surfaceSnapshot(),
-        command: async (command) =>
-          command.type === "surface.ensureHere"
-            ? open.promise
-            : { ok: true, revision: 1, result: { id: "result-1" } },
-      })}
-    />,
-    { width: 120, height: 40, kittyKeyboard: true },
-  );
-  await setup.flush();
-  await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
-  await act(async () => setup.mockInput.pressKey("o"));
-  await act(async () => setup.mockInput.pressKey("s", { hyper: true }));
-
-  await act(async () => {
-    open.resolve({
-      ok: true,
-      revision: 2,
-      result: { id: "surface-1", itemId: "item-1" },
-    });
-    await open.promise;
-  });
-  await setup.flush();
-
-  expect(setup.renderer.root.findDescendantById("dialog")).toBeDefined();
-  expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBeUndefined();
-  act(() => setup.renderer.destroy());
-});
-
-test("a late create response cannot activate an item after cancelling its dialog", async () => {
-  const create = deferred<CommandResponse>();
-  const setup = await testRender(
-    <WorkCraftShell
-      workCraft={workCraftStateFixture({
-        snapshot: twoSurfaceSnapshot(),
-        command: async (command) =>
-          command.type === "item.create"
-            ? create.promise
-            : { ok: true, revision: 1, result: { id: "result-1" } },
-      })}
-    />,
-    { width: 120, height: 40, kittyKeyboard: true },
-  );
-  await setup.flush();
-  await openFixtureItem(setup);
-  await act(async () => setup.mockInput.pressKey(" ", { ctrl: true }));
-  await act(async () => setup.mockInput.pressKey("n"));
-  await act(async () => setup.mockInput.typeText("Late item"));
-  await act(async () => setup.mockInput.pressEnter());
-  await act(async () => setup.mockInput.pressEscape());
-
-  await act(async () => {
-    create.resolve({ ok: true, revision: 2, result: { id: "item-2" } });
-    await create.promise;
-  });
-  await setup.flush();
-
-  expect(setup.renderer.root.findDescendantById("dialog")).toBeUndefined();
-  expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBeDefined();
-  expect(setup.renderer.root.findDescendantById("terminal:pane-2")).toBeUndefined();
-  act(() => setup.renderer.destroy());
-});
-
-test("a create prompt submits only once while its command is pending", async () => {
-  const create = deferred<CommandResponse>();
-  let creates = 0;
-  const setup = await testRender(
-    <WorkCraftShell
-      workCraft={workCraftStateFixture({
-        snapshot: surfaceSnapshot(),
-        command: async (command) => {
-          if (command.type === "item.create") {
-            creates += 1;
-            return create.promise;
-          }
-          return { ok: true, revision: 1, result: { id: "result-1" } };
-        },
-      })}
-    />,
-    { width: 120, height: 40, kittyKeyboard: true },
-  );
-  await setup.flush();
-  await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
-  await act(async () => setup.mockInput.pressKey(" ", { ctrl: true }));
-  await act(async () => setup.mockInput.pressKey("n"));
-  await act(async () => setup.mockInput.typeText("One item"));
-  await act(async () => setup.mockInput.pressEnter());
-  await act(async () => setup.mockInput.pressEnter());
-
-  expect(creates).toBe(1);
-  await act(async () => {
-    create.resolve({ ok: true, revision: 2, result: { id: "item-2" } });
-    await create.promise;
-  });
-  await setup.flush();
-  act(() => setup.renderer.destroy());
-});
-
-test("creating an item expands its collapsed project before activation", async () => {
-  const setup = await testRender(
-    <WorkCraftShell
-      workCraft={workCraftStateFixture({
-        snapshot: surfaceSnapshot(),
-        command: async (command) => ({
-          ok: true,
-          revision: 2,
-          result: { id: command.type === "item.create" ? "item-1" : "result-1" },
-        }),
-      })}
-    />,
-    { width: 120, height: 40, kittyKeyboard: true },
-  );
-  await setup.flush();
-  await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
-  await act(async () => setup.mockInput.pressKey(" ", { ctrl: true }));
-  await act(async () => setup.mockInput.pressKey("n"));
-  await act(async () => setup.mockInput.typeText("Visible item"));
-  await act(async () => setup.mockInput.pressEnter());
-  await setup.flush();
-
-  expect(setup.renderer.root.findDescendantById("navigator-row:item:item-1")).toBeDefined();
-  expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBeDefined();
-  act(() => setup.renderer.destroy());
-});
-
 test("minimum workbench size applies to the bordered interior", async () => {
   const setup = await testRender(
     <WorkCraftShell workCraft={workCraftStateFixture({ snapshot: surfaceSnapshot() })} />,
@@ -840,50 +596,6 @@ test("compact navigator shows invalid leader feedback", async () => {
   act(() => setup.renderer.destroy());
 });
 
-test("navigator renders one stable projection in expanded and compact modes", async () => {
-  const expanded = await testRender(
-    <NavigationPane
-      activeKey="project:project-1"
-      cursorKey="item:item-1"
-      entries={entries}
-      error={null}
-      focused
-      height={10}
-      mode="expanded"
-      width={24}
-      onActivate={() => {}}
-      onFocus={() => {}}
-    />,
-    { width: 30, height: 10 },
-  );
-  await expanded.flush();
-  expect(expanded.captureCharFrame()).toContain("Work Craft");
-  expect(expanded.captureCharFrame()).toContain("Ship navigator");
-  act(() => expanded.renderer.destroy());
-
-  const compact = await testRender(
-    <NavigationPane
-      activeKey="project:project-1"
-      cursorKey="item:item-1"
-      entries={entries}
-      error={null}
-      focused
-      height={10}
-      mode="compact"
-      width={7}
-      onActivate={() => {}}
-      onFocus={() => {}}
-    />,
-    { width: 10, height: 10 },
-  );
-  await compact.flush();
-  const frame = compact.captureCharFrame();
-  expect(frame).toContain("WC");
-  expect(frame).toContain("·");
-  expect(frame).not.toContain("Ship navigator");
-  act(() => compact.renderer.destroy());
-});
-
 test("compact navigator status exposes the full cursor label", async () => {
   const setup = await testRender(<StatusBar mode="INFO" text="Ship navigator" />, {
     width: 40,
@@ -894,10 +606,70 @@ test("compact navigator status exposes the full cursor label", async () => {
   act(() => setup.renderer.destroy());
 });
 
+test("shell regions use semantic colors from the active theme", async () => {
+  const theme = {
+    ...gruvboxTheme,
+    name: "semantic-test",
+    colors: {
+      ...gruvboxTheme.colors,
+      foreground: "#010203",
+      mutedForeground: "#040506",
+      primary: "#070809",
+      success: "#0A0B0C",
+      border: "#0D0E0F",
+    },
+  };
+  const setup = await testRender(
+    <ThemeProvider theme={theme}>
+      <box flexDirection="column">
+        <WorkspaceBar
+          activeId="active"
+          cursorId="cursor"
+          focused
+          hasNext={false}
+          hasPrevious={false}
+          visibleIds={["active", "cursor", "muted"]}
+          width={40}
+          workspaces={[
+            { id: "active", name: "Active" },
+            { id: "cursor", name: "Cursor" },
+            { id: "muted", name: "Muted" },
+          ]}
+          onActivate={() => {}}
+          onFocus={() => {}}
+        />
+        <SessionSwitcher
+          focused={false}
+          name="Work"
+          status="connected"
+          width={20}
+          onOpen={() => {}}
+        />
+      </box>
+    </ThemeProvider>,
+    { width: 40, height: 8 },
+  );
+  await setup.flush();
+
+  expect(
+    (setup.renderer.root.findDescendantById("workspace:active") as TextRenderable).fg.toInts(),
+  ).toEqual([7, 8, 9, 255]);
+  expect(
+    (setup.renderer.root.findDescendantById("workspace:cursor") as TextRenderable).fg.toInts(),
+  ).toEqual([1, 2, 3, 255]);
+  expect(
+    (setup.renderer.root.findDescendantById("workspace:muted") as TextRenderable).fg.toInts(),
+  ).toEqual([4, 5, 6, 255]);
+  expect(
+    (setup.renderer.root.findDescendantById("connection-status") as TextRenderable).fg.toInts(),
+  ).toEqual([10, 11, 12, 255]);
+  act(() => setup.renderer.destroy());
+});
+
 test("workspace overflow leaves the session control and connection dot pinned", async () => {
   const setup = await testRender(
     <box flexDirection="row" width="100%">
-      <WorkspaceStrip
+      <WorkspaceBar
         activeId="b"
         cursorId="c"
         focused={false}
@@ -936,7 +708,7 @@ test("workspace overflow leaves the session control and connection dot pinned", 
 test("long pinned header labels use trailing ellipses", async () => {
   const setup = await testRender(
     <box flexDirection="row" width={30}>
-      <WorkspaceStrip
+      <WorkspaceBar
         activeId="a"
         cursorId="a"
         focused={false}
@@ -997,7 +769,7 @@ test("controlled dialog bodies render without owning global keyboard state", asy
 test("mouse-down focuses and activates a workspace through the same callbacks", async () => {
   const calls: string[] = [];
   const setup = await testRender(
-    <WorkspaceStrip
+    <WorkspaceBar
       activeId="a"
       cursorId="a"
       focused

@@ -1,5 +1,7 @@
 import type { Snapshot } from "@work-craft/server/client";
+import { Box } from "@/components/ui/box";
 import { Panel } from "@/components/ui/panel";
+import { useTheme } from "@/hooks/use-theme";
 
 export type SessionChooserProps = {
   sessions: Snapshot["sessions"];
@@ -16,11 +18,12 @@ export function SessionChooser({
   onSelect,
   onCreate,
 }: SessionChooserProps) {
+  const theme = useTheme();
   const ordered = [...sessions].sort((a, b) => a.position - b.position || a.id.localeCompare(b.id));
 
   return (
     <Panel title="Sessions">
-      <box flexDirection="column">
+      <Box flexDirection="column">
         {ordered.length === 0 ? (
           <text>No sessions. Press n to create one.</text>
         ) : (
@@ -29,7 +32,9 @@ export function SessionChooser({
               <text
                 id={`session:${session.id}`}
                 key={session.id}
-                fg={session.id === cursorId ? "#FFFFFF" : "#9CA3AF"}
+                fg={
+                  session.id === cursorId ? theme.colors.foreground : theme.colors.mutedForeground
+                }
                 onMouseDown={() => {
                   onFocus(session.id);
                   onSelect(session.id);
@@ -43,7 +48,7 @@ export function SessionChooser({
             </text>
           </>
         )}
-      </box>
+      </Box>
     </Panel>
   );
 }

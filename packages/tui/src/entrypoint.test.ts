@@ -3,17 +3,33 @@ import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { RGBA } from "@opentui/core";
 import {
   createClient,
   decodeBytes,
   type Snapshot,
   type WorkCraftClient,
 } from "@work-craft/server/client";
+import { gruvboxTheme } from "@/lib/terminal-themes/gruvbox";
 
 const ROOT = resolve(import.meta.dir, "../../..");
-const CONNECTED_COLOR = "38;2;34;197;94m";
-const DIMMED_CONNECTED_COLOR = "38;2;17;98;47m";
-const CONNECTING_COLOR = "38;2;234;179;8m";
+
+function foregroundSequence(color: string, background = color, opacity = 1): string {
+  const foreground = RGBA.fromHex(color).toInts();
+  const backdrop = RGBA.fromHex(background).toInts();
+  const channels = foreground
+    .slice(0, 3)
+    .map((channel, index) => Math.floor(channel * opacity + backdrop[index]! * (1 - opacity)));
+  return `38;2;${channels.join(";")}m`;
+}
+
+const CONNECTED_COLOR = foregroundSequence(gruvboxTheme.colors.success);
+const DIMMED_CONNECTED_COLOR = foregroundSequence(
+  gruvboxTheme.colors.success,
+  gruvboxTheme.colors.background,
+  0.5,
+);
+const CONNECTING_COLOR = foregroundSequence(gruvboxTheme.colors.warning);
 const kitty = {
   hyper(keyCode: number): string {
     return `\x1b[${keyCode};15u`;
