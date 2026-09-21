@@ -4,8 +4,8 @@ import {
   navigatorEntries,
   projectIdForEntry,
   workspacesForSession,
-} from "./navigation.ts";
-import { snapshotFixture } from "./test-fixtures.ts";
+} from "./model.ts";
+import { snapshotFixture } from "../test-fixtures.ts";
 
 test("projects and visible items are projected only for one workspace category", () => {
   const entries = navigatorEntries(

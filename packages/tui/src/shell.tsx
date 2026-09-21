@@ -24,8 +24,8 @@ import {
   navigatorEntries,
   workspacesForSession,
   type NavigatorEntry,
-} from "./navigation.ts";
-import { NavigationPane } from "./navigation-pane.tsx";
+} from "./navigation/model.ts";
+import { Navigator } from "./navigation/navigator.tsx";
 import { SessionChooser } from "./session-chooser.tsx";
 import {
   CATEGORY_RAIL_WIDTH,
@@ -804,27 +804,25 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
           }}
         />
         {!navigatorVisible ? null : (
-          <Box flexDirection="column" minHeight={0} width={navigatorWidth}>
-            <text height={1}>{activeCategoryTitle}</text>
-            <NavigationPane
-              activeKey={state.activeNavigatorKey}
-              cursorKey={state.navigatorCursorKey}
-              entries={entries}
-              error={state.errors.navigator ?? null}
-              focused={focus.region === "navigator"}
-              height={workbenchHeight}
-              mode={navigatorMode}
-              width={navigatorWidth}
-              onActivate={(key) => {
-                dispatch({ type: "focus.set", focus: { region: "navigator" } });
-                activateNavigator(entries.find((entry) => entry.key === key));
-              }}
-              onFocus={(key) => {
-                dispatch({ type: "focus.set", focus: { region: "navigator" } });
-                dispatch({ type: "navigator.cursor", key });
-              }}
-            />
-          </Box>
+          <Navigator
+            activeKey={state.activeNavigatorKey}
+            cursorKey={state.navigatorCursorKey}
+            entries={entries}
+            error={state.errors.navigator ?? null}
+            focused={focus.region === "navigator"}
+            height={workbenchHeight}
+            mode={navigatorMode}
+            title={activeCategoryTitle}
+            width={navigatorWidth}
+            onActivate={(key) => {
+              dispatch({ type: "focus.set", focus: { region: "navigator" } });
+              activateNavigator(entries.find((entry) => entry.key === key));
+            }}
+            onFocus={(key) => {
+              dispatch({ type: "focus.set", focus: { region: "navigator" } });
+              dispatch({ type: "navigator.cursor", key });
+            }}
+          />
         )}
         <Box flexDirection="column" flexGrow={1} minWidth={0}>
           <TabStrip

@@ -7,34 +7,13 @@ import { act } from "react";
 import { gruvboxTheme } from "@/lib/terminal-themes/gruvbox";
 import { ThemeProvider } from "@/providers/theme-provider";
 import { CreatePrompt } from "./create-prompt.tsx";
-import { NavigationPane } from "./navigation-pane.tsx";
 import { SessionChooser } from "./session-chooser.tsx";
 import { WorkCraftShell } from "./shell.tsx";
 import { SessionSwitcher, StatusBar, TabStrip, WorkspaceStrip } from "./shell-regions.tsx";
-import type { NavigatorEntry } from "./navigation.ts";
 import { snapshotFixture } from "./test-fixtures.ts";
 import type { WorkCraftState } from "./client/use-work-craft.ts";
 
 extend({ terminal: EmbeddedTerminalRenderable });
-
-const entries: NavigatorEntry[] = [
-  {
-    key: "project:project-1",
-    kind: "project",
-    id: "project-1",
-    projectId: "project-1",
-    label: "Work Craft",
-    depth: 0,
-  },
-  {
-    key: "item:item-1",
-    kind: "item",
-    id: "item-1",
-    projectId: "project-1",
-    label: "Ship navigator",
-    depth: 1,
-  },
-];
 
 function deferred<T>(): {
   promise: Promise<T>;
@@ -842,50 +821,6 @@ test("compact navigator shows invalid leader feedback", async () => {
   act(() => setup.renderer.destroy());
 });
 
-test("navigator renders one stable projection in expanded and compact modes", async () => {
-  const expanded = await testRender(
-    <NavigationPane
-      activeKey="project:project-1"
-      cursorKey="item:item-1"
-      entries={entries}
-      error={null}
-      focused
-      height={10}
-      mode="expanded"
-      width={24}
-      onActivate={() => {}}
-      onFocus={() => {}}
-    />,
-    { width: 30, height: 10 },
-  );
-  await expanded.flush();
-  expect(expanded.captureCharFrame()).toContain("Work Craft");
-  expect(expanded.captureCharFrame()).toContain("Ship navigator");
-  act(() => expanded.renderer.destroy());
-
-  const compact = await testRender(
-    <NavigationPane
-      activeKey="project:project-1"
-      cursorKey="item:item-1"
-      entries={entries}
-      error={null}
-      focused
-      height={10}
-      mode="compact"
-      width={7}
-      onActivate={() => {}}
-      onFocus={() => {}}
-    />,
-    { width: 10, height: 10 },
-  );
-  await compact.flush();
-  const frame = compact.captureCharFrame();
-  expect(frame).toContain("WC");
-  expect(frame).toContain("·");
-  expect(frame).not.toContain("Ship navigator");
-  act(() => compact.renderer.destroy());
-});
-
 test("compact navigator status exposes the full cursor label", async () => {
   const setup = await testRender(<StatusBar mode="INFO" text="Ship navigator" />, {
     width: 40,
@@ -935,18 +870,6 @@ test("shell regions use semantic colors from the active theme", async () => {
           width={20}
           onOpen={() => {}}
         />
-        <NavigationPane
-          activeKey={null}
-          cursorKey={null}
-          entries={[]}
-          error={null}
-          focused={false}
-          height={3}
-          mode="expanded"
-          width={20}
-          onActivate={() => {}}
-          onFocus={() => {}}
-        />
       </box>
     </ThemeProvider>,
     { width: 40, height: 8 },
@@ -965,11 +888,6 @@ test("shell regions use semantic colors from the active theme", async () => {
   expect(
     (setup.renderer.root.findDescendantById("connection-status") as TextRenderable).fg.toInts(),
   ).toEqual([10, 11, 12, 255]);
-  expect(
-    (
-      setup.renderer.root.findDescendantById("region:navigator") as BoxRenderable
-    ).borderColor.toInts(),
-  ).toEqual([13, 14, 15, 255]);
   act(() => setup.renderer.destroy());
 });
 

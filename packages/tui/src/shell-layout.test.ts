@@ -1,7 +1,6 @@
 import { expect, test } from "bun:test";
 import {
   ellipsize,
-  projectInitials,
   resizeNavigatorWidth,
   resolveNavigatorMode,
   visibleNavigatorWindow,
@@ -62,7 +61,6 @@ test("workspace viewport keeps both active and cursor tabs when they fit", () =>
   expect(result.hasNext).toBe(true);
 });
 
-test("labels use stable initials and trailing ellipsis", () => {
-  expect(projectInitials("Marketing Site")).toBe("MS");
+test("labels use trailing ellipsis", () => {
   expect(ellipsize("configure analytics", 10)).toBe("configur…");
 });

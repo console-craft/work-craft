@@ -106,21 +106,6 @@ export function workspaceViewport(
   };
 }
 
-export function projectInitials(label: string): string {
-  const words = label.trim().split(/\s+/u).filter(Boolean);
-  if (words.length > 1) {
-    return words
-      .slice(0, 2)
-      .map((word) => Array.from(word)[0])
-      .join("")
-      .toUpperCase();
-  }
-  return Array.from(words[0] ?? "")
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
-}
-
 export function ellipsize(label: string, width: number): string {
   if (Bun.stringWidth(label) <= width) {
     return label;
