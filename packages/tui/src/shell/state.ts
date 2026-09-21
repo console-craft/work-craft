@@ -1,6 +1,7 @@
 import type { CategoryKind, Snapshot } from "@work-craft/server/client";
 import { focusAfterNavigatorHide, type FocusTarget } from "../input/focus.ts";
 import { navigatorEntries, workspacesForSession } from "../navigation/model.ts";
+import { paneIds } from "../workbench/layout.ts";
 import {
   DEFAULT_NAVIGATOR_WIDTH,
   resizeNavigatorWidth,
@@ -246,6 +247,12 @@ export function reconcileShellState(state: ShellState, snapshot: Snapshot): Shel
     : tabs.some(({ id }) => id === surface?.activeTabId)
       ? surface!.activeTabId
       : (tabs[0]?.id ?? null);
+  const activeTab = tabs.find(({ id }) => id === surface?.activeTabId) ?? tabs[0];
+  const panes = paneIds(activeTab?.layout ?? null);
+  const focus =
+    state.focus.region === "workbench" && !panes.includes(state.focus.paneId)
+      ? { region: "tabs" as const }
+      : state.focus;
   const dialog =
     activeSessionId === null
       ? { kind: "sessions" as const, returnFocus: state.focus }
@@ -267,6 +274,7 @@ export function reconcileShellState(state: ShellState, snapshot: Snapshot): Shel
       : activeCategory,
     navigatorCursorKey,
     tabCursorId,
+    focus,
     expandedProjectIds,
     dialog,
     promptValue: dialog?.kind === "create" ? state.promptValue : "",

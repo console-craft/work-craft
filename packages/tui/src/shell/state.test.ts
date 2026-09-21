@@ -80,3 +80,34 @@ test("focusing a pane records it for composite-region restoration", () => {
   expect(state.focus).toEqual({ region: "workbench", paneId: "pane-2" });
   expect(state.lastWorkbenchPaneId).toBe("pane-2");
 });
+
+test("reconciliation persists tab focus when the focused pane leaves the active tab", () => {
+  const snapshot = snapshotFixture({
+    surfaces: [{ id: "surface-1", itemId: "item-1", activeTabId: "tab-2" }],
+    tabs: [
+      {
+        id: "tab-2",
+        surfaceId: "surface-1",
+        title: "Second",
+        position: 0,
+        layout: { type: "pane", paneId: "pane-2" },
+      },
+    ],
+  });
+  const current = {
+    ...createInitialShellState(),
+    activeSessionId: "session-work",
+    activeWorkspaceId: "workspace-shared",
+    activeCategory: "implementation" as const,
+    activeNavigatorKey: "item:item-1",
+    navigatorCursorKey: "item:item-1",
+    expandedProjectIds: new Set(["project-1"]),
+    focus: { region: "workbench" as const, paneId: "pane-1" },
+    lastWorkbenchPaneId: "pane-1",
+  };
+
+  const state = reconcileShellState(current, snapshot);
+
+  expect(state.focus).toEqual({ region: "tabs" });
+  expect(state.lastWorkbenchPaneId).toBe("pane-1");
+});
