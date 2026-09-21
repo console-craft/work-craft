@@ -73,6 +73,50 @@ test("navigator renders one stable projection in expanded and compact modes", as
   act(() => compact.renderer.destroy());
 });
 
+test("navigator renders Unicode initials and truncates ANSI labels by visible width", async () => {
+  const compact = await testRender(
+    <Navigator
+      title="Projects"
+      activeKey={null}
+      cursorKey={null}
+      entries={[{ ...entries[0], label: "🧠 Craft" }]}
+      error={null}
+      focused={false}
+      height={5}
+      mode="compact"
+      width={7}
+      onActivate={() => {}}
+      onFocus={() => {}}
+    />,
+    { width: 10, height: 6 },
+  );
+  await compact.flush();
+  expect(compact.captureCharFrame()).toContain("🧠C");
+  act(() => compact.renderer.destroy());
+
+  const narrow = await testRender(
+    <Navigator
+      title="Projects"
+      activeKey={null}
+      cursorKey={null}
+      entries={[{ ...entries[0], label: "\x1b[31mNavigator\x1b[0m" }]}
+      error={null}
+      focused={false}
+      height={5}
+      mode="expanded"
+      width={10}
+      onActivate={() => {}}
+      onFocus={() => {}}
+    />,
+    { width: 12, height: 6 },
+  );
+  await narrow.flush();
+  const frame = narrow.captureCharFrame();
+  expect(frame).toContain("Nav…");
+  expect(frame).not.toContain("Navigator");
+  act(() => narrow.renderer.destroy());
+});
+
 test("navigator border uses the active theme", async () => {
   const theme = {
     ...gruvboxTheme,
