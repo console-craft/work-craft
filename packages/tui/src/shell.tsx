@@ -50,8 +50,9 @@ import {
   type DialogState,
   type ShellRegion,
 } from "./shell-state.ts";
-import { paneIds, projectLayout, SurfaceView } from "./surface-view.tsx";
 import type { WorkCraftState } from "./client/use-work-craft.ts";
+import { paneIds } from "./workbench/layout.ts";
+import { SurfaceView } from "./workbench/surface-view.tsx";
 
 const FIXED_CATEGORIES: readonly { kind: CategoryKind; title: string }[] = [
   { kind: "inbox", title: "Inbox" },
@@ -202,7 +203,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     .sort((a, b) => a.position - b.position || a.id.localeCompare(b.id));
   const activeTab = tabs.find(({ id }) => id === surface?.activeTabId) ?? tabs[0];
   const layout = activeTab?.layout ?? null;
-  const currentPaneIds = layout === null ? [] : paneIds(projectLayout(layout));
+  const currentPaneIds = paneIds(layout);
   const navigatorMode = resolveNavigatorMode({
     terminalWidth: dimensions.width,
     preference: state.navigatorPreference,

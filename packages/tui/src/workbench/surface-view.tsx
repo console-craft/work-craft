@@ -1,43 +1,16 @@
 import type { EmbeddedTerminalRenderable } from "@opentui/core";
-import type { LayoutNode, Snapshot, StreamConnection } from "@work-craft/server/client";
+import type { Snapshot, StreamConnection } from "@work-craft/server/client";
 import { Box } from "@/components/ui/box";
 import { useTheme } from "@/hooks/use-theme";
+import type { TerminalBuffer } from "../client/use-work-craft.ts";
+import { projectLayout, type ProjectedLayout } from "./layout.ts";
 import { TerminalPane } from "./terminal-pane.tsx";
-import type { TerminalBuffer } from "./client/use-work-craft.ts";
-
-export type ProjectedLayout =
-  | { paneId: string }
-  | {
-      direction: "row" | "column";
-      ratio: number;
-      children: [ProjectedLayout, ProjectedLayout];
-    };
-
-export function projectLayout(layout: LayoutNode): ProjectedLayout {
-  if (layout.type === "pane") {
-    return { paneId: layout.paneId };
-  }
-  return {
-    direction: layout.direction === "vertical" ? "row" : "column",
-    ratio: layout.ratio,
-    children: [projectLayout(layout.first), projectLayout(layout.second)],
-  };
-}
 
 export function terminalPaneKey(
   paneId: string,
   buffer: Pick<TerminalBuffer, "epoch" | "historyCursor"> | undefined,
 ): string {
   return `${paneId}:${buffer?.epoch ?? "pending"}:${buffer?.historyCursor ?? 0}`;
-}
-
-export function adjacentTab<T extends { id: string }>(
-  tabs: readonly T[],
-  activeTabId: string,
-  offset: -1 | 1,
-): T | undefined {
-  const index = tabs.findIndex(({ id }) => id === activeTabId);
-  return index < 0 ? undefined : tabs[index + offset];
 }
 
 export type SurfaceViewProps = {
@@ -60,10 +33,6 @@ type LayoutViewProps = Pick<SurfaceViewProps, "snapshot" | "stream" | "terminals
   onFocusPane(paneId: string): void;
   onTerminalReady(paneId: string, terminal: EmbeddedTerminalRenderable | null): void;
 };
-
-export function paneIds(layout: ProjectedLayout): string[] {
-  return "paneId" in layout ? [layout.paneId] : layout.children.flatMap(paneIds);
-}
 
 function LayoutView({
   focusedPaneId,

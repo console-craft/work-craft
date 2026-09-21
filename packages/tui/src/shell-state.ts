@@ -1,4 +1,4 @@
-import type { CategoryKind, LayoutNode, Snapshot } from "@work-craft/server/client";
+import type { CategoryKind, Snapshot } from "@work-craft/server/client";
 import type { CreateKind } from "./create-prompt.tsx";
 import { focusAfterNavigatorHide, type FocusTarget } from "./input/focus.ts";
 import { navigatorEntries, projectIdForEntry, workspacesForSession } from "./navigation.ts";
@@ -7,6 +7,7 @@ import {
   resizeNavigatorWidth,
   type NavigatorPreference,
 } from "./shell-layout.ts";
+import { paneIds } from "./workbench/layout.ts";
 
 export type ShellRegion = "workspace" | "session" | "category" | "navigator" | "tabs" | "workbench";
 
@@ -190,15 +191,6 @@ export function reduceShellState(state: ShellState, action: ShellAction): ShellS
       return { ...state, errors };
     }
   }
-}
-
-function paneIds(layout: LayoutNode | null): string[] {
-  if (layout === null) {
-    return [];
-  }
-  return layout.type === "pane"
-    ? [layout.paneId]
-    : [...paneIds(layout.first), ...paneIds(layout.second)];
 }
 
 export function reconcileShellState(state: ShellState, snapshot: Snapshot): ShellState {
