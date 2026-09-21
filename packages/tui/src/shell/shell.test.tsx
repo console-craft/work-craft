@@ -9,9 +9,9 @@ import { ThemeProvider } from "@/providers/theme-provider";
 import { CreatePrompt } from "./create-prompt.tsx";
 import { SessionChooser } from "./session-chooser.tsx";
 import { WorkCraftShell } from "./shell.tsx";
-import { SessionSwitcher, StatusBar, TabStrip, WorkspaceStrip } from "./shell-regions.tsx";
-import { snapshotFixture } from "./test-fixtures.ts";
-import type { WorkCraftState } from "./client/use-work-craft.ts";
+import { SessionSwitcher, StatusBar, TabStrip, WorkspaceStrip } from "../shell-regions.tsx";
+import { snapshotFixture } from "../test-fixtures.ts";
+import type { WorkCraftState } from "../client/use-work-craft.ts";
 
 extend({ terminal: EmbeddedTerminalRenderable });
 

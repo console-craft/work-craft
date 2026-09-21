@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 import { testRender } from "@opentui/react/test-utils";
 import { act } from "react";
-import { ThemeProvider } from "@/providers/theme-provider";
-import { useTheme } from "@/hooks/use-theme";
-import { gruvboxTheme } from "@/lib/terminal-themes/gruvbox";
+import { ThemeProvider } from "./theme-provider";
+import { useTheme } from "../hooks/use-theme";
+import { gruvboxTheme } from "../lib/terminal-themes/gruvbox";
 
 function ThemeName() {
   return <text>{useTheme().name}</text>;

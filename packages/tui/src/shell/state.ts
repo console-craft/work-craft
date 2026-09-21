@@ -1,13 +1,13 @@
 import type { CategoryKind, Snapshot } from "@work-craft/server/client";
 import type { CreateKind } from "./create-prompt.tsx";
-import { focusAfterNavigatorHide, type FocusTarget } from "./input/focus.ts";
-import { navigatorEntries, projectIdForEntry, workspacesForSession } from "./navigation/model.ts";
+import { focusAfterNavigatorHide, type FocusTarget } from "../input/focus.ts";
+import { navigatorEntries, projectIdForEntry, workspacesForSession } from "../navigation/model.ts";
 import {
   DEFAULT_NAVIGATOR_WIDTH,
   resizeNavigatorWidth,
   type NavigatorPreference,
-} from "./shell-layout.ts";
-import { paneIds } from "./workbench/layout.ts";
+} from "./layout.ts";
+import { paneIds } from "../workbench/layout.ts";
 
 export type ShellRegion = "workspace" | "session" | "category" | "navigator" | "tabs" | "workbench";
 

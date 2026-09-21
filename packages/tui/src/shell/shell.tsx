@@ -11,21 +11,21 @@ import {
   type CommandContext,
   type CommandId,
   type KeyLike,
-} from "./input/command-router.ts";
+} from "../input/command-router.ts";
 import { CreatePrompt, type CreateKind } from "./create-prompt.tsx";
 import {
   moveFocus,
   projectPaneFocusNodes,
   type FocusNode,
   type FocusTarget,
-} from "./input/focus.ts";
+} from "../input/focus.ts";
 import {
   categoriesForWorkspace,
   navigatorEntries,
   workspacesForSession,
   type NavigatorEntry,
-} from "./navigation/model.ts";
-import { Navigator } from "./navigation/navigator.tsx";
+} from "../navigation/model.ts";
+import { Navigator } from "../navigation/navigator.tsx";
 import { SessionChooser } from "./session-chooser.tsx";
 import {
   CATEGORY_RAIL_WIDTH,
@@ -34,7 +34,7 @@ import {
   MIN_WORKBENCH_WIDTH,
   resolveNavigatorMode,
   workspaceViewport,
-} from "./shell-layout.ts";
+} from "./layout.ts";
 import {
   CategoryRail,
   SessionSwitcher,
@@ -42,17 +42,17 @@ import {
   TabStrip,
   WorkspaceStrip,
   statusModeFor,
-} from "./shell-regions.tsx";
+} from "../shell-regions.tsx";
 import {
   createInitialShellState,
   projectIdForShellContext,
   reduceShellState,
   type DialogState,
   type ShellRegion,
-} from "./shell-state.ts";
-import type { WorkCraftState } from "./client/use-work-craft.ts";
-import { paneIds } from "./workbench/layout.ts";
-import { SurfaceView } from "./workbench/surface-view.tsx";
+} from "./state.ts";
+import type { WorkCraftState } from "../client/use-work-craft.ts";
+import { paneIds } from "../workbench/layout.ts";
+import { SurfaceView } from "../workbench/surface-view.tsx";
 
 const FIXED_CATEGORIES: readonly { kind: CategoryKind; title: string }[] = [
   { kind: "inbox", title: "Inbox" },

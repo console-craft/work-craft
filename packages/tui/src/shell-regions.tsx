@@ -3,7 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Box } from "@/components/ui/box";
 import { useTheme } from "@/hooks/use-theme";
 import type { CommandHint, StatusMode } from "./input/command-router.ts";
-import { ellipsize } from "./shell-layout.ts";
+import { ellipsize } from "./shell/layout.ts";
 import type { ConnectionStatus } from "./client/use-work-craft.ts";
 
 export type WorkspaceStripProps = {

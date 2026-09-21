@@ -5,7 +5,7 @@ import {
   resolveNavigatorMode,
   visibleNavigatorWindow,
   workspaceViewport,
-} from "./shell-layout.ts";
+} from "./layout.ts";
 
 test("navigator compacts below 120 columns in auto mode", () => {
   expect(

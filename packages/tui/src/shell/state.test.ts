@@ -4,8 +4,8 @@ import {
   projectIdForShellContext,
   reconcileShellState,
   reduceShellState,
-} from "./shell-state.ts";
-import { snapshotFixture } from "./test-fixtures.ts";
+} from "./state.ts";
+import { snapshotFixture } from "../test-fixtures.ts";
 
 test("one session is selected automatically without opening the chooser", () => {
   const state = reconcileShellState(
