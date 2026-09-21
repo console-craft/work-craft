@@ -1,4 +1,7 @@
 import type { CategoryKind, Snapshot } from "@work-craft/server/client";
+import { Badge } from "@/components/ui/badge";
+import { Box } from "@/components/ui/box";
+import { useTheme } from "@/hooks/use-theme";
 import type { CommandHint, StatusMode } from "./command-router.ts";
 import { ellipsize } from "./shell-layout.ts";
 import type { ConnectionStatus } from "./use-work-craft.ts";
@@ -28,8 +31,9 @@ export function WorkspaceStrip({
   onActivate,
   onFocus,
 }: WorkspaceStripProps) {
+  const theme = useTheme();
   return (
-    <box id="region:workspace" flexDirection="row" width={width} overflow="hidden">
+    <Box id="region:workspace" flexDirection="row" width={width} overflow="hidden">
       {hasPrevious ? <text>{"<"}</text> : null}
       {visibleIds.map((id) => {
         const workspace = workspaces.find((candidate) => candidate.id === id);
@@ -46,7 +50,13 @@ export function WorkspaceStrip({
           <text
             id={`workspace:${id}`}
             key={id}
-            fg={cursor ? "#FFFFFF" : active ? "#60A5FA" : "#9CA3AF"}
+            fg={
+              cursor
+                ? theme.colors.foreground
+                : active
+                  ? theme.colors.primary
+                  : theme.colors.mutedForeground
+            }
             onMouseDown={() => {
               onFocus(id);
               onActivate(id);
@@ -57,7 +67,7 @@ export function WorkspaceStrip({
         );
       })}
       {hasNext ? <text>{">"}</text> : null}
-    </box>
+    </Box>
   );
 }
 
@@ -87,15 +97,22 @@ export function CategoryRail({
   onActivate,
   onFocus,
 }: CategoryRailProps) {
+  const theme = useTheme();
   return (
-    <box id="region:category" flexDirection="column" width={5}>
+    <Box id="region:category" flexDirection="column" width={5}>
       {categories.map((category) => {
         const selected = focused && category.kind === cursor;
         return (
           <text
             id={`category:${category.kind}`}
             key={category.kind}
-            fg={selected ? "#FFFFFF" : category.kind === active ? "#60A5FA" : "#9CA3AF"}
+            fg={
+              selected
+                ? theme.colors.foreground
+                : category.kind === active
+                  ? theme.colors.primary
+                  : theme.colors.mutedForeground
+            }
             onMouseDown={() => {
               onFocus(category.kind);
               onActivate(category.kind);
@@ -105,7 +122,7 @@ export function CategoryRail({
           </text>
         );
       })}
-    </box>
+    </Box>
   );
 }
 
@@ -128,16 +145,23 @@ export function TabStrip({
   onActivate,
   onFocus,
 }: TabStripProps) {
+  const theme = useTheme();
   return (
-    <box id="region:tabs" flexDirection="row" height={1}>
-      <box flexDirection="row" flexGrow={1} minWidth={0} overflow="hidden">
+    <Box id="region:tabs" flexDirection="row" height={1}>
+      <Box flexDirection="row" flexGrow={1} minWidth={0} overflow="hidden">
         {tabs.map((tab) => {
           const cursor = focused && tab.id === cursorId;
           return (
             <text
               id={`tab:${tab.id}`}
               key={tab.id}
-              fg={cursor ? "#FFFFFF" : tab.id === activeId ? "#60A5FA" : "#9CA3AF"}
+              fg={
+                cursor
+                  ? theme.colors.foreground
+                  : tab.id === activeId
+                    ? theme.colors.primary
+                    : theme.colors.mutedForeground
+              }
               onMouseDown={() => {
                 onFocus(tab.id);
                 onActivate(tab.id);
@@ -147,21 +171,15 @@ export function TabStrip({
             </text>
           );
         })}
-      </box>
+      </Box>
       {error === null ? null : (
-        <text id="tab-error" flexShrink={0} fg="#EF4444">
+        <text id="tab-error" flexShrink={0} fg={theme.colors.error}>
           {` ${error}`}
         </text>
       )}
-    </box>
+    </Box>
   );
 }
-
-const CONNECTION_COLORS: Record<ConnectionStatus, string> = {
-  connected: "#22C55E",
-  connecting: "#EAB308",
-  disconnected: "#EF4444",
-};
 
 export type SessionSwitcherProps = {
   name: string | null;
@@ -172,14 +190,22 @@ export type SessionSwitcherProps = {
 };
 
 export function SessionSwitcher({ focused, name, status, width, onOpen }: SessionSwitcherProps) {
+  const theme = useTheme();
   const label = ellipsize(name ?? "choose", width - 12);
+  const statusColor: Record<ConnectionStatus, string> = {
+    connected: theme.colors.success,
+    connecting: theme.colors.warning,
+    disconnected: theme.colors.error,
+  };
   return (
-    <box id="region:session" flexDirection="row" flexShrink={0} width={width} onMouseDown={onOpen}>
-      <text fg={focused ? "#FFFFFF" : "#9CA3AF"}>{` Session: ${label} `}</text>
-      <text id="connection-status" fg={CONNECTION_COLORS[status]}>
+    <Box id="region:session" flexDirection="row" flexShrink={0} width={width} onMouseDown={onOpen}>
+      <text fg={focused ? theme.colors.foreground : theme.colors.mutedForeground}>
+        {` Session: ${label} `}
+      </text>
+      <text id="connection-status" fg={statusColor[status]}>
         ●
       </text>
-    </box>
+    </Box>
   );
 }
 
@@ -193,12 +219,23 @@ export function StatusBar(props: StatusBarProps) {
       ? props.text
       : (props.text ?? props.hints.map(({ keys, label }) => `${keys} ${label}`).join("  "));
   return (
-    <box id="status" height={1} flexDirection="row">
-      <text
-        fg={props.mode === "ERROR" ? "#EF4444" : props.mode === "LEADER" ? "#EAB308" : "#60A5FA"}
-      >{`${props.mode}  `}</text>
+    <Box id="status" height={1} flexDirection="row">
+      <Badge
+        bordered={false}
+        variant={
+          props.mode === "ERROR"
+            ? "error"
+            : props.mode === "LEADER"
+              ? "warning"
+              : props.mode === "INFO"
+                ? "info"
+                : "default"
+        }
+      >
+        {`${props.mode}  `}
+      </Badge>
       <text>{content}</text>
-    </box>
+    </Box>
   );
 }
 

@@ -1,7 +1,8 @@
-import { RGBA, type EmbeddedTerminalRenderable } from "@opentui/core";
+import { RGBA, type EmbeddedTerminalRenderable, type MouseEvent } from "@opentui/core";
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react";
 import type { CategoryKind, Command, CommandResponse, Snapshot } from "@work-craft/server/client";
 import { useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode } from "react";
+import { Box } from "@/components/ui/box";
 import { useTheme } from "@/hooks/use-theme";
 import {
   commandHints,
@@ -747,10 +748,12 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     );
   const activeCategoryTitle =
     renderedCategories.find(({ kind }) => kind === state.activeCategory)?.title ?? "Work";
+  const dialogOverlayColor = RGBA.fromHex(theme.colors.background);
+  dialogOverlayColor.a = 0.5;
 
   return (
-    <box id="work-craft-shell" flexDirection="column" width="100%" height="100%">
-      <box flexDirection="row" height={1}>
+    <Box id="work-craft-shell" flexDirection="column" width="100%" height="100%">
+      <Box flexDirection="row" height={1}>
         <WorkspaceStrip
           activeId={state.activeWorkspaceId}
           cursorId={state.workspaceCursorId}
@@ -777,8 +780,8 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
           width={sessionWidth}
           onOpen={() => void executeCommand("session.open")}
         />
-      </box>
-      <box flexDirection="row" flexGrow={1}>
+      </Box>
+      <Box flexDirection="row" flexGrow={1}>
         <CategoryRail
           active={state.activeCategory}
           categories={renderedCategories}
@@ -795,7 +798,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
           }}
         />
         {!navigatorVisible ? null : (
-          <box flexDirection="column" minHeight={0} width={navigatorWidth}>
+          <Box flexDirection="column" minHeight={0} width={navigatorWidth}>
             <text height={1}>{activeCategoryTitle}</text>
             <NavigationPane
               activeKey={state.activeNavigatorKey}
@@ -815,9 +818,9 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
                 dispatch({ type: "navigator.cursor", key });
               }}
             />
-          </box>
+          </Box>
         )}
-        <box flexDirection="column" flexGrow={1} minWidth={0}>
+        <Box flexDirection="column" flexGrow={1} minWidth={0}>
           <TabStrip
             activeId={activeTab?.id ?? null}
             cursorId={state.tabCursorId}
@@ -835,7 +838,8 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
               dispatch({ type: "tab.cursor", id });
             }}
           />
-          <box
+          <Box
+            border
             id="region:workbench"
             flexDirection="column"
             flexGrow={1}
@@ -843,10 +847,12 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
             borderStyle="single"
           >
             {state.errors.workbench === undefined ? null : (
-              <text fg="#EF4444">{state.errors.workbench}</text>
+              <text fg={theme.colors.error}>{state.errors.workbench}</text>
             )}
             {surface === undefined || snapshot === null ? (
-              <text fg="#9CA3AF">Select an item with an execution surface</text>
+              <text fg={theme.colors.mutedForeground}>
+                Select an item with an execution surface
+              </text>
             ) : (
               <SurfaceView
                 focusedPaneId={focusedPaneId}
@@ -865,12 +871,12 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
                 }}
               />
             )}
-          </box>
-        </box>
-      </box>
+          </Box>
+        </Box>
+      </Box>
       {status}
       {state.dialog === null ? null : (
-        <box
+        <Box
           id="dialog-overlay"
           position="absolute"
           left={0}
@@ -878,13 +884,13 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
           width={dimensions.width}
           height={dimensions.height}
           zIndex={1}
-          backgroundColor={RGBA.fromInts(0, 0, 0, 128)}
-          onMouseDown={(event) => {
+          backgroundColor={dialogOverlayColor}
+          onMouseDown={(event: MouseEvent) => {
             event.preventDefault();
             event.stopPropagation();
           }}
         >
-          <box
+          <Box
             id="dialog"
             position="absolute"
             left="20%"
@@ -913,9 +919,9 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
                 onSubmit={(value) => void submitCreate(value)}
               />
             )}
-          </box>
-        </box>
+          </Box>
+        </Box>
       )}
-    </box>
+    </Box>
   );
 }

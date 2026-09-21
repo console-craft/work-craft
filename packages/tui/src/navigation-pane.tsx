@@ -1,5 +1,7 @@
 import type { ScrollBoxRenderable } from "@opentui/core";
 import { useEffect, useRef } from "react";
+import { Box } from "@/components/ui/box";
+import { useTheme } from "@/hooks/use-theme";
 import type { NavigatorEntry } from "./navigation.ts";
 import { ellipsize, projectInitials, type NavigatorMode } from "./shell-layout.ts";
 
@@ -28,6 +30,7 @@ export function NavigationPane({
   onActivate,
   onFocus,
 }: NavigationPaneProps) {
+  const theme = useTheme();
   const scrollbox = useRef<ScrollBoxRenderable>(null);
 
   useEffect(() => {
@@ -37,7 +40,8 @@ export function NavigationPane({
   }, [cursorKey, entries.length, height]);
 
   return (
-    <box
+    <Box
+      border
       id="region:navigator"
       flexDirection="column"
       height={height}
@@ -58,7 +62,13 @@ export function NavigationPane({
             <text
               id={`navigator-row:${entry.key}`}
               key={entry.key}
-              fg={cursor ? "#FFFFFF" : active ? "#60A5FA" : "#9CA3AF"}
+              fg={
+                cursor
+                  ? theme.colors.foreground
+                  : active
+                    ? theme.colors.primary
+                    : theme.colors.mutedForeground
+              }
               onMouseDown={() => {
                 onFocus(entry.key);
                 onActivate(entry.key);
@@ -69,7 +79,7 @@ export function NavigationPane({
           );
         })}
       </scrollbox>
-      {error === null ? null : <text fg="#EF4444">{ellipsize(error, width - 2)}</text>}
-    </box>
+      {error === null ? null : <text fg={theme.colors.error}>{ellipsize(error, width - 2)}</text>}
+    </Box>
   );
 }

@@ -1,9 +1,11 @@
 import { expect, test } from "bun:test";
-import { BoxRenderable, EmbeddedTerminalRenderable } from "@opentui/core";
+import { BoxRenderable, EmbeddedTerminalRenderable, TextRenderable } from "@opentui/core";
 import { extend } from "@opentui/react";
 import { testRender } from "@opentui/react/test-utils";
 import type { Command, CommandResponse, Snapshot } from "@work-craft/server/client";
 import { act } from "react";
+import { gruvboxTheme } from "@/lib/terminal-themes/gruvbox";
+import { ThemeProvider } from "@/providers/theme-provider";
 import { CreatePrompt } from "./create-prompt.tsx";
 import { NavigationPane } from "./navigation-pane.tsx";
 import { SessionChooser } from "./session-chooser.tsx";
@@ -891,6 +893,83 @@ test("compact navigator status exposes the full cursor label", async () => {
   });
   await setup.flush();
   expect(setup.captureCharFrame()).toContain("INFO  Ship navigator");
+  act(() => setup.renderer.destroy());
+});
+
+test("shell regions use semantic colors from the active theme", async () => {
+  const theme = {
+    ...gruvboxTheme,
+    name: "semantic-test",
+    colors: {
+      ...gruvboxTheme.colors,
+      foreground: "#010203",
+      mutedForeground: "#040506",
+      primary: "#070809",
+      success: "#0A0B0C",
+      border: "#0D0E0F",
+    },
+  };
+  const setup = await testRender(
+    <ThemeProvider theme={theme}>
+      <box flexDirection="column">
+        <WorkspaceStrip
+          activeId="active"
+          cursorId="cursor"
+          focused
+          hasNext={false}
+          hasPrevious={false}
+          visibleIds={["active", "cursor", "muted"]}
+          width={40}
+          workspaces={[
+            { id: "active", name: "Active" },
+            { id: "cursor", name: "Cursor" },
+            { id: "muted", name: "Muted" },
+          ]}
+          onActivate={() => {}}
+          onFocus={() => {}}
+        />
+        <SessionSwitcher
+          focused={false}
+          name="Work"
+          status="connected"
+          width={20}
+          onOpen={() => {}}
+        />
+        <NavigationPane
+          activeKey={null}
+          cursorKey={null}
+          entries={[]}
+          error={null}
+          focused={false}
+          height={3}
+          mode="expanded"
+          width={20}
+          onActivate={() => {}}
+          onFocus={() => {}}
+        />
+      </box>
+    </ThemeProvider>,
+    { width: 40, height: 8 },
+  );
+  await setup.flush();
+
+  expect(
+    (setup.renderer.root.findDescendantById("workspace:active") as TextRenderable).fg.toInts(),
+  ).toEqual([7, 8, 9, 255]);
+  expect(
+    (setup.renderer.root.findDescendantById("workspace:cursor") as TextRenderable).fg.toInts(),
+  ).toEqual([1, 2, 3, 255]);
+  expect(
+    (setup.renderer.root.findDescendantById("workspace:muted") as TextRenderable).fg.toInts(),
+  ).toEqual([4, 5, 6, 255]);
+  expect(
+    (setup.renderer.root.findDescendantById("connection-status") as TextRenderable).fg.toInts(),
+  ).toEqual([10, 11, 12, 255]);
+  expect(
+    (
+      setup.renderer.root.findDescendantById("region:navigator") as BoxRenderable
+    ).borderColor.toInts(),
+  ).toEqual([13, 14, 15, 255]);
   act(() => setup.renderer.destroy());
 });
 

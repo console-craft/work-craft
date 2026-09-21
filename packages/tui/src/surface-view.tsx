@@ -1,5 +1,7 @@
 import type { EmbeddedTerminalRenderable } from "@opentui/core";
 import type { LayoutNode, Snapshot, StreamConnection } from "@work-craft/server/client";
+import { Box } from "@/components/ui/box";
+import { useTheme } from "@/hooks/use-theme";
 import { TerminalPane } from "./terminal-pane.tsx";
 import type { TerminalBuffer } from "./use-work-craft.ts";
 
@@ -74,11 +76,12 @@ function LayoutView({
   onFocusPane,
   onTerminalReady,
 }: LayoutViewProps) {
+  const theme = useTheme();
   if ("paneId" in layout) {
     const pane = snapshot.panes.find(({ id }) => id === layout.paneId);
     const buffer = terminals.get(layout.paneId);
     return pane === undefined ? (
-      <text fg="#EF4444">Missing pane: {layout.paneId}</text>
+      <text fg={theme.colors.error}>Missing pane: {layout.paneId}</text>
     ) : (
       <TerminalPane
         key={terminalPaneKey(pane.id, buffer)}
@@ -96,8 +99,8 @@ function LayoutView({
   const secondSize = `${(1 - layout.ratio) * 100}%` as `${number}%`;
   const size = layout.direction === "row" ? "width" : "height";
   return (
-    <box flexDirection={layout.direction} width="100%" height="100%">
-      <box {...{ [size]: firstSize }}>
+    <Box flexDirection={layout.direction} width="100%" height="100%">
+      <Box {...{ [size]: firstSize }}>
         <LayoutView
           {...{
             focusedPaneId,
@@ -111,8 +114,8 @@ function LayoutView({
           }}
           layout={layout.children[0]}
         />
-      </box>
-      <box {...{ [size]: secondSize }}>
+      </Box>
+      <Box {...{ [size]: secondSize }}>
         <LayoutView
           {...{
             focusedPaneId,
@@ -126,8 +129,8 @@ function LayoutView({
           }}
           layout={layout.children[1]}
         />
-      </box>
-    </box>
+      </Box>
+    </Box>
   );
 }
 
@@ -142,6 +145,7 @@ export function SurfaceView({
   undersized,
   workbenchFocused,
 }: SurfaceViewProps) {
+  const theme = useTheme();
   const tabs = snapshot.tabs
     .filter(({ surfaceId }) => surfaceId === surface.id)
     .sort((a, b) => a.position - b.position);
@@ -152,11 +156,11 @@ export function SurfaceView({
       : projectLayout(activeTab.layout);
 
   return (
-    <box flexGrow={1} width="100%" height="100%">
+    <Box flexGrow={1} width="100%" height="100%">
       {layout === undefined ? (
-        <text fg="#9CA3AF">No terminal panes</text>
+        <text fg={theme.colors.mutedForeground}>No terminal panes</text>
       ) : (
-        <box visible={!undersized} width="100%" height="100%">
+        <Box visible={!undersized} width="100%" height="100%">
           <LayoutView
             focusedPaneId={focusedPaneId}
             layout={layout}
@@ -168,9 +172,9 @@ export function SurfaceView({
             onFocusPane={onFocusPane}
             onTerminalReady={onTerminalReady}
           />
-        </box>
+        </Box>
       )}
       {undersized ? <text>Workbench too small. Resize terminal or use leader+b.</text> : null}
-    </box>
+    </Box>
   );
 }
