@@ -6,6 +6,8 @@
 - Optimize for a small codebase that one person can maintain.
 - Preserve the local-first, single-daemon architecture: the server owns durable state and runtimes; the TUI and CLI are disposable clients.
 - Use React with OpenTUI and termcn for the TUI. Do not introduce Solid.
+- Add termcn source from the `opentui` registry variant. Treat every copied termcn TypeScript file as vendored: preserve its registry contents and prepend only `// @ts-nocheck`; exclude it from formatting and linting; keep application-specific behavior in callers or wrappers.
+- Prefer termcn components over native OpenTUI primitives when an equivalent exists, and migrate existing primitives only when explicitly in scope.
 - Keep the CLI non-interactive and Unix-like, with plain-text or JSON output.
 - Do not introduce remote, distributed, or plugin-system abstractions without an explicit requirement.
 - Run `bun run check` before completing work.

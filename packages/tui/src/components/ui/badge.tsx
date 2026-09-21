@@ -1,7 +1,15 @@
+// @ts-nocheck
+/* @jsxImportSource @opentui/react */
 import { useTheme } from "@/hooks/use-theme";
 import type { BorderStyle } from "@/components/ui/types";
 
-export type BadgeVariant = "default" | "success" | "warning" | "error" | "info" | "secondary";
+export type BadgeVariant =
+  | "default"
+  | "success"
+  | "warning"
+  | "error"
+  | "info"
+  | "secondary";
 
 export interface BadgeProps {
   children: string;

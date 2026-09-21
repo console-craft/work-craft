@@ -1,3 +1,4 @@
+// @ts-nocheck
 import type { ReactNode } from "react";
 
 export type BorderStyle = "single" | "double" | "rounded" | "heavy";

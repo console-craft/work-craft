@@ -1,5 +1,11 @@
 {
   "$schema": "../../node_modules/oxlint/configuration_schema.json",
+  "ignorePatterns": [
+    "src/components/ui/**",
+    "src/hooks/use-theme.ts",
+    "src/lib/terminal-themes/**",
+    "src/providers/theme-provider.tsx"
+  ],
   "rules": {
     "no-restricted-imports": [
       "error",
