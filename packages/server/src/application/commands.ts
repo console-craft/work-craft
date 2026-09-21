@@ -1,7 +1,8 @@
 import type { Database } from "bun:sqlite";
-import { splitLayout } from "./layout.ts";
+
 import { ProtocolError } from "../api/protocol.ts";
 import type { Command, CommandResult, LayoutNode } from "../api/protocol.ts";
+import { splitLayout } from "./layout.ts";
 
 export type DomainEffect =
   | { type: "spawn-pane"; paneId: string }

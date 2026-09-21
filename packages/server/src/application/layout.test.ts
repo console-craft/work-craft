@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { splitLayout } from "./layout.ts";
 
 test("replaces one leaf with a stable recursive split", () => {

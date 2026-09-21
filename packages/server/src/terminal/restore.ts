@@ -1,4 +1,5 @@
 import { existsSync, statSync } from "node:fs";
+
 import type { Snapshot } from "../api/protocol.ts";
 
 export type SpawnSpec = {

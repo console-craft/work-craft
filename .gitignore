@@ -4,3 +4,4 @@ dist/
 .superpowers/
 docs/responses/
 docs/superpowers/plans/
+.DS_Store

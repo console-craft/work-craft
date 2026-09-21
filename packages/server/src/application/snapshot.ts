@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import type { TerminalHistory } from "../terminal/history.ts";
+
 import { encodeBytes } from "../api/protocol.ts";
 import type {
   CategoryKind,
@@ -8,6 +8,7 @@ import type {
   ShellRestorePolicy,
   Snapshot,
 } from "../api/protocol.ts";
+import type { TerminalHistory } from "../terminal/history.ts";
 
 export const CATEGORIES: readonly { kind: CategoryKind; title: string; position: number }[] = [
   { kind: "inbox", title: "Inbox", position: 0 },

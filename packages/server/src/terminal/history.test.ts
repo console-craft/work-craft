@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { openDatabase } from "../persistence/database.ts";
 import { TerminalHistory } from "./history.ts";
 

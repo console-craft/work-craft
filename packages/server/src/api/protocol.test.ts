@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test";
+
 import {
-  ProtocolError,
   decodeBytes,
   encodeBytes,
   parseClientMessage,
   parseCommand,
+  ProtocolError,
 } from "./protocol.ts";
 
 test("parses ensure and destroy commands", () => {

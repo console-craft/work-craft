@@ -1,10 +1,11 @@
-import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openDatabase } from "./database.ts";
+
 import { CATEGORIES, readSnapshot } from "../application/snapshot.ts";
+import { openDatabase } from "./database.ts";
 
 function seedSnapshot(db: ReturnType<typeof openDatabase>): void {
   db.exec(`

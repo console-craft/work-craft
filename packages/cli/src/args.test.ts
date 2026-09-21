@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { parseArgs, UsageError } from "./args.ts";
 
 test("parses resource-oriented commands", () => {

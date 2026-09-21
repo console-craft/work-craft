@@ -3,11 +3,12 @@ import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import type { PaneStatus } from "../api/protocol.ts";
 import { openDatabase } from "../persistence/database.ts";
 import { TerminalHistory } from "./history.ts";
-import type { PaneStatus } from "../api/protocol.ts";
 import { resolveShellSpawn, type RuntimePane } from "./restore.ts";
-import { RuntimeRegistry, type RuntimeCallbacks } from "./runtime.ts";
+import { type RuntimeCallbacks, RuntimeRegistry } from "./runtime.ts";
 
 const runtimes: RuntimeRegistry[] = [];
 

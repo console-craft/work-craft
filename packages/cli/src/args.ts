@@ -1,4 +1,5 @@
 import { parseArgs as parseNodeArgs } from "node:util";
+
 import type { CategoryKind } from "@work-craft/server/client";
 
 type OutputArgs = { json: boolean };

@@ -1,4 +1,5 @@
 import type { CommandResponse, WorkCraftClient } from "@work-craft/server/client";
+
 import type { CliArgs } from "./args.ts";
 
 type Snapshot = Awaited<ReturnType<WorkCraftClient["snapshot"]>>;

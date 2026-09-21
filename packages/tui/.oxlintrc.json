@@ -1,5 +1,6 @@
 {
   "$schema": "../../node_modules/oxlint/configuration_schema.json",
+  "extends": ["../../.oxlintrc.json"],
   "rules": {
     "no-restricted-imports": [
       "error",
@@ -8,6 +9,12 @@
           {
             "name": "@work-craft/server",
             "message": "Import client-safe APIs from @work-craft/server/client."
+          }
+        ],
+        "patterns": [
+          {
+            "regex": "^\\.\\.?/",
+            "message": "Use @/ aliases for internal TUI imports."
           }
         ]
       }

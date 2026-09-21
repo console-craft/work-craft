@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 
-import { createClient, resolvePaths, type Command } from "@work-craft/server/client";
-import { parseArgs, USAGE, UsageError, type CliArgs } from "./args.ts";
+import { type Command, createClient, resolvePaths } from "@work-craft/server/client";
+
+import { type CliArgs, parseArgs, USAGE, UsageError } from "./args.ts";
 import { formatResult, formatSnapshot, formatStatus, readStatus } from "./format.ts";
 
 function printJson(value: unknown): void {

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { resolvePaths } from "./paths.ts";
 
 test("uses WORK_CRAFT_HOME for every durable runtime path", () => {

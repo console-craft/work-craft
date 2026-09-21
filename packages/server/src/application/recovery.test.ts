@@ -1,12 +1,13 @@
-import { expect, test } from "bun:test";
 import type { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { decodeBytes, type Snapshot } from "../api/protocol.ts";
+import { openDatabase } from "../persistence/database.ts";
 import { createApp, type WorkCraftApp } from "./app.ts";
 import { applyCommand } from "./commands.ts";
-import { openDatabase } from "../persistence/database.ts";
-import { decodeBytes, type Snapshot } from "../api/protocol.ts";
 
 type AppOwner = { app: WorkCraftApp; db: Database };
 

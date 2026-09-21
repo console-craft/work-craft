@@ -1,10 +1,11 @@
 import { afterEach, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { decodeBytes, ProtocolError } from "../api/protocol.ts";
+import { openDatabase } from "../persistence/database.ts";
 import { createApp, type WorkCraftApp } from "./app.ts";
 import { applyCommand } from "./commands.ts";
-import { openDatabase } from "../persistence/database.ts";
-import { decodeBytes, ProtocolError } from "../api/protocol.ts";
 import { readSnapshot } from "./snapshot.ts";
 
 const apps: WorkCraftApp[] = [];

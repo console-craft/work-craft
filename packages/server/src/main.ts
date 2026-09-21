@@ -1,6 +1,6 @@
+import { INTERNAL_DESTROY_DAEMON_ARG } from "./client.ts";
 import { runDaemon } from "./daemon/lifecycle.ts";
 import { resolvePaths } from "./daemon/paths.ts";
-import { INTERNAL_DESTROY_DAEMON_ARG } from "./client.ts";
 
 try {
   await runDaemon(resolvePaths(), {

@@ -1,12 +1,14 @@
-import WebSocket from "ws";
 import { closeSync, openSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { resolvePaths } from "./daemon/paths.ts";
+
+import WebSocket from "ws";
+
 import { encodeBytes } from "./api/protocol.ts";
 import type { Command, CommandResponse, ServerMessage, Snapshot } from "./api/protocol.ts";
 import type { Health } from "./application/app.ts";
+import { resolvePaths } from "./daemon/paths.ts";
 
 export { decodeBytes } from "./api/protocol.ts";
 export type {
