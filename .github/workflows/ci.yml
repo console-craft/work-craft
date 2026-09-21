@@ -19,7 +19,7 @@ jobs:
       - run: bun run check
 
   package-macos:
-    runs-on: macos-14
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
