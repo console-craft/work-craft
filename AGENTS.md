@@ -3,6 +3,7 @@
 - Use Bun for dependencies and scripts.
 - Keep changes focused and follow existing project conventions.
 - Read `docs/superpowers/specs/2026-09-16-work-craft-architecture-design.md` before planning features or changing architectural boundaries.
+- Read `docs/superpowers/specs/2026-09-21-tui-source-organization-design.md` before changing TUI ownership or source organization.
 - Optimize for a small codebase that one person can maintain.
 - Preserve the local-first, single-daemon architecture: the server owns durable state and runtimes; the TUI and CLI are disposable clients.
 - Use React with OpenTUI and termcn for the TUI. Do not introduce Solid.

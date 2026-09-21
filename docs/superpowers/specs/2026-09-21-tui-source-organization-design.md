@@ -22,8 +22,8 @@ routing, responsive layout, terminal lifecycle, or visual design.
   replay behavior, input forwarding, and resize behavior.
 - Keep tests colocated with the source or visible component they exercise,
   except genuinely cross-capability acceptance support.
-- Keep vendored termcn files at their registry paths and do not modify their
-  contents as part of this refactor.
+- Keep vendored termcn files at their registry paths, preserve their registry
+  contents, and prepend only `// @ts-nocheck`.
 - Do not add barrel files, a generic `shared`, `utils`, or `helpers` directory,
   a state library, a command bus, or dependency-inversion abstractions.
 - Do not create category or built-in-pane structures before those capabilities
@@ -227,23 +227,22 @@ These files own meaningful regions rather than acting as one-line wrappers:
 - `surface-view.tsx` owns recursive layout rendering.
 - `terminal-pane.tsx` remains the lifecycle-sensitive terminal leaf.
 
-The current generic `shell-regions.tsx` is removed. Application components do
+The former generic `shell-regions.tsx` was removed. Application components do
 not move into a generic `components/` directory because their capability path
 already communicates ownership.
 
 ## Shell Decomposition
 
-The current `shell.tsx` combines data projection, geometry, command policy,
-protocol translation, async completion handling, input registration, dialogs,
-and rendering. The refactor separates those responsibilities without creating
-a framework:
+Before this refactor, `shell.tsx` combined data projection, geometry, command
+policy, protocol translation, async completion handling, input registration,
+dialogs, and rendering. The refactor separates those responsibilities without
+creating a framework:
 
 - `shell.tsx` retains React hooks and effects, terminal references, top-level
   composition, and capability wiring.
 - `model.ts` purely derives the visible session, workspace, category,
   navigation, surface, tab, pane, and cursor-index context from a snapshot and
-  local state. It consumes geometry calculated by `layout.ts` rather than
-  independently interpreting terminal dimensions.
+  local state. It does not interpret terminal dimensions.
 - `commands.ts` owns durable command constructors, command availability,
   stale-completion guards, semantic command execution, and create submission.
 - `state.ts` owns the local reducer and snapshot reconciliation. Shared active
@@ -339,8 +338,8 @@ Tests move with the behavior they verify:
   cross-capability rendering tests move to `shell/`;
 - real process and PTY acceptance remains in root `entrypoint.test.ts`.
 
-The current broad `shell.test.tsx` is split by these behavioral owners. Only
-cross-capability composition, routing, terminal mount preservation, and
+The former broad root `shell.test.tsx` was split by these behavioral owners.
+Only cross-capability composition, routing, terminal mount preservation, and
 regional failure behavior remain in `shell/shell.test.tsx`.
 
 File movement alone does not require new behavioral tests. Newly extracted
