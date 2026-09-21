@@ -13,7 +13,7 @@ import { WorkCraftShell } from "./shell.tsx";
 import { SessionSwitcher, StatusBar, TabStrip, WorkspaceStrip } from "./shell-regions.tsx";
 import type { NavigatorEntry } from "./navigation.ts";
 import { snapshotFixture } from "./test-fixtures.ts";
-import type { WorkCraftState } from "./use-work-craft.ts";
+import type { WorkCraftState } from "./client/use-work-craft.ts";
 
 extend({ terminal: EmbeddedTerminalRenderable });
 

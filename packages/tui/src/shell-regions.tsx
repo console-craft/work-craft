@@ -2,9 +2,9 @@ import type { CategoryKind, Snapshot } from "@work-craft/server/client";
 import { Badge } from "@/components/ui/badge";
 import { Box } from "@/components/ui/box";
 import { useTheme } from "@/hooks/use-theme";
-import type { CommandHint, StatusMode } from "./command-router.ts";
+import type { CommandHint, StatusMode } from "./input/command-router.ts";
 import { ellipsize } from "./shell-layout.ts";
-import type { ConnectionStatus } from "./use-work-craft.ts";
+import type { ConnectionStatus } from "./client/use-work-craft.ts";
 
 export type WorkspaceStripProps = {
   workspaces: readonly { id: string; name: string }[];

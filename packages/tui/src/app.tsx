@@ -1,7 +1,7 @@
 import { gruvboxTheme } from "@/lib/terminal-themes/gruvbox";
 import { ThemeProvider } from "@/providers/theme-provider";
 import { WorkCraftShell } from "./shell.tsx";
-import { useWorkCraft } from "./use-work-craft.ts";
+import { useWorkCraft } from "./client/use-work-craft.ts";
 
 export function App() {
   return (

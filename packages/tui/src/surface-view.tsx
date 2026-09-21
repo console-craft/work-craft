@@ -3,7 +3,7 @@ import type { LayoutNode, Snapshot, StreamConnection } from "@work-craft/server/
 import { Box } from "@/components/ui/box";
 import { useTheme } from "@/hooks/use-theme";
 import { TerminalPane } from "./terminal-pane.tsx";
-import type { TerminalBuffer } from "./use-work-craft.ts";
+import type { TerminalBuffer } from "./client/use-work-craft.ts";
 
 export type ProjectedLayout =
   | { paneId: string }

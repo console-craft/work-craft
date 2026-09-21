@@ -1,6 +1,6 @@
 import type { CategoryKind, LayoutNode, Snapshot } from "@work-craft/server/client";
 import type { CreateKind } from "./create-prompt.tsx";
-import { focusAfterNavigatorHide, type FocusTarget } from "./focus.ts";
+import { focusAfterNavigatorHide, type FocusTarget } from "./input/focus.ts";
 import { navigatorEntries, projectIdForEntry, workspacesForSession } from "./navigation.ts";
 import {
   DEFAULT_NAVIGATOR_WIDTH,

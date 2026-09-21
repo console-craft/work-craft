@@ -11,9 +11,14 @@ import {
   type CommandContext,
   type CommandId,
   type KeyLike,
-} from "./command-router.ts";
+} from "./input/command-router.ts";
 import { CreatePrompt, type CreateKind } from "./create-prompt.tsx";
-import { moveFocus, projectPaneFocusNodes, type FocusNode, type FocusTarget } from "./focus.ts";
+import {
+  moveFocus,
+  projectPaneFocusNodes,
+  type FocusNode,
+  type FocusTarget,
+} from "./input/focus.ts";
 import {
   categoriesForWorkspace,
   navigatorEntries,
@@ -46,7 +51,7 @@ import {
   type ShellRegion,
 } from "./shell-state.ts";
 import { paneIds, projectLayout, SurfaceView } from "./surface-view.tsx";
-import type { WorkCraftState } from "./use-work-craft.ts";
+import type { WorkCraftState } from "./client/use-work-craft.ts";
 
 const FIXED_CATEGORIES: readonly { kind: CategoryKind; title: string }[] = [
   { kind: "inbox", title: "Inbox" },

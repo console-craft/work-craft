@@ -3,7 +3,7 @@ import type { Snapshot, StreamConnection } from "@work-craft/server/client";
 import { useEffect, useRef } from "react";
 import { Box } from "@/components/ui/box";
 import { useTheme } from "@/hooks/use-theme";
-import type { TerminalBuffer } from "./use-work-craft.ts";
+import type { TerminalBuffer } from "./client/use-work-craft.ts";
 
 export type TerminalPaneProps = {
   buffer: TerminalBuffer | undefined;
