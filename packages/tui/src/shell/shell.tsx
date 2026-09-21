@@ -1,9 +1,8 @@
-import { RGBA, type EmbeddedTerminalRenderable, type MouseEvent } from "@opentui/core";
+import type { EmbeddedTerminalRenderable } from "@opentui/core";
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react";
 import type { CategoryKind, Command, CommandResponse, Snapshot } from "@work-craft/server/client";
 import { useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode } from "react";
 import { Box } from "@/components/ui/box";
-import { useTheme } from "@/hooks/use-theme";
 import {
   commandHints,
   initialRouterState,
@@ -12,7 +11,7 @@ import {
   type CommandId,
   type KeyLike,
 } from "../input/command-router.ts";
-import { CreatePrompt, type CreateKind } from "./create-prompt.tsx";
+import type { CreateKind } from "./create-prompt.tsx";
 import {
   moveFocus,
   projectPaneFocusNodes,
@@ -25,8 +24,8 @@ import {
   workspacesForSession,
   type NavigatorEntry,
 } from "../navigation/model.ts";
+import { CategoryRail } from "../navigation/category-rail.tsx";
 import { Navigator } from "../navigation/navigator.tsx";
-import { SessionChooser } from "./session-chooser.tsx";
 import {
   CATEGORY_RAIL_WIDTH,
   COMPACT_NAVIGATOR_WIDTH,
@@ -35,14 +34,10 @@ import {
   resolveNavigatorMode,
   workspaceViewport,
 } from "./layout.ts";
-import {
-  CategoryRail,
-  SessionSwitcher,
-  StatusBar,
-  TabStrip,
-  WorkspaceStrip,
-  statusModeFor,
-} from "../shell-regions.tsx";
+import { Workbench } from "../workbench/workbench.tsx";
+import { DialogOverlay } from "./dialog-overlay.tsx";
+import { Header } from "./header.tsx";
+import { StatusBar, statusModeFor, type StatusBarProps } from "./status-bar.tsx";
 import {
   createInitialShellState,
   projectIdForShellContext,
@@ -52,7 +47,6 @@ import {
 } from "./state.ts";
 import type { WorkCraftState } from "../client/use-work-craft.ts";
 import { paneIds } from "../workbench/layout.ts";
-import { SurfaceView } from "../workbench/surface-view.tsx";
 
 const FIXED_CATEGORIES: readonly { kind: CategoryKind; title: string }[] = [
   { kind: "inbox", title: "Inbox" },
@@ -131,7 +125,6 @@ function commandRegion(focus: FocusTarget): ShellRegion {
 
 export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
   const renderer = useRenderer();
-  const theme = useTheme();
   const dimensions = useTerminalDimensions();
   const [state, dispatch] = useReducer(reduceShellState, undefined, createInitialShellState);
   const [routerState, setRouterState] = useState(initialRouterState);
@@ -746,186 +739,140 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
         );
   const cursorEntry = entries.find(({ key }) => key === state.navigatorCursorKey);
   const hints = commandHints(routerState, commandContext);
-  const status =
-    mode === "INFO" ? (
-      <StatusBar mode="INFO" text={routerState.invalidMessage ?? cursorEntry?.label ?? ""} />
-    ) : (
-      <StatusBar mode={mode} hints={hints} text={routerState.invalidMessage ?? undefined} />
-    );
+  const statusProps: StatusBarProps =
+    mode === "INFO"
+      ? { mode: "INFO", text: routerState.invalidMessage ?? cursorEntry?.label ?? "" }
+      : { mode, hints, text: routerState.invalidMessage ?? undefined };
   const activeCategoryTitle =
     renderedCategories.find(({ kind }) => kind === state.activeCategory)?.title ?? "Work";
-  const dialogOverlayColor = RGBA.fromHex(theme.colors.background);
-  dialogOverlayColor.a = 0.5;
+  const workspaceProps = {
+    activeId: state.activeWorkspaceId,
+    cursorId: state.workspaceCursorId,
+    focused: focus.region === "workspace",
+    hasNext: viewport.hasNext,
+    hasPrevious: viewport.hasPrevious,
+    visibleIds: viewport.ids,
+    width: Math.max(0, dimensions.width - sessionWidth),
+    workspaces,
+    onActivate: (id: string) => {
+      dispatch({ type: "focus.set", focus: { region: "workspace" } });
+      dispatch({ type: "workspace.activate", id });
+      reconcile();
+    },
+    onFocus: (id: string) => {
+      dispatch({ type: "focus.set", focus: { region: "workspace" } });
+      dispatch({ type: "workspace.cursor", id });
+    },
+  };
+  const sessionProps = {
+    focused: focus.region === "session",
+    name: activeSession?.name ?? null,
+    status: workCraft.status,
+    width: sessionWidth,
+    onOpen: () => void executeCommand("session.open"),
+  };
+  const categoryProps = {
+    active: state.activeCategory,
+    categories: renderedCategories,
+    cursor: state.categoryCursor,
+    focused: focus.region === "category",
+    onActivate: (category: CategoryKind) => {
+      dispatch({ type: "focus.set", focus: { region: "category" } });
+      dispatch({ type: "category.activate", category });
+      reconcile();
+    },
+    onFocus: (category: CategoryKind) => {
+      dispatch({ type: "focus.set", focus: { region: "category" } });
+      dispatch({ type: "category.cursor", category });
+    },
+  };
+  const navigatorProps = !navigatorVisible
+    ? null
+    : {
+        activeKey: state.activeNavigatorKey,
+        cursorKey: state.navigatorCursorKey,
+        entries,
+        error: state.errors.navigator ?? null,
+        focused: focus.region === "navigator",
+        height: workbenchHeight,
+        mode: navigatorMode,
+        title: activeCategoryTitle,
+        width: navigatorWidth,
+        onActivate: (key: string) => {
+          dispatch({ type: "focus.set", focus: { region: "navigator" } });
+          activateNavigator(entries.find((entry) => entry.key === key));
+        },
+        onFocus: (key: string) => {
+          dispatch({ type: "focus.set", focus: { region: "navigator" } });
+          dispatch({ type: "navigator.cursor", key });
+        },
+      };
+  const workbenchProps = {
+    activeTabId: activeTab?.id ?? null,
+    focusedPaneId,
+    snapshot,
+    stream: workCraft.stream,
+    surface,
+    tabCursorId: state.tabCursorId,
+    tabError: state.errors.tabs ?? null,
+    tabs,
+    tabsFocused: focus.region === "tabs",
+    terminals: workCraft.terminals,
+    undersized,
+    workbenchError: state.errors.workbench ?? null,
+    workbenchFocused: state.dialog === null && focus.region === "workbench",
+    onActivateTab: (id: string) => {
+      dispatch({ type: "focus.set", focus: { region: "tabs" } });
+      dispatch({ type: "tab.cursor", id });
+      if (surface !== undefined) {
+        void runCommand(durableCommands.selectTab(surface.id, id), "tabs");
+      }
+    },
+    onFocusTab: (id: string) => {
+      dispatch({ type: "focus.set", focus: { region: "tabs" } });
+      dispatch({ type: "tab.cursor", id });
+    },
+    onFocusPane: (paneId: string) =>
+      dispatch({ type: "focus.set", focus: { region: "workbench", paneId } }),
+    onTerminalReady: (paneId: string, terminal: EmbeddedTerminalRenderable | null) => {
+      if (terminal === null) {
+        terminalRefs.current.delete(paneId);
+      } else {
+        terminalRefs.current.set(paneId, terminal);
+      }
+    },
+  };
+  const dialogProps =
+    state.dialog === null
+      ? null
+      : {
+          dialog: state.dialog,
+          width: dimensions.width,
+          height: dimensions.height,
+          sessions,
+          sessionCursorId: sessionCursor,
+          promptValue: state.promptValue,
+          error: state.errors[commandRegion(state.dialog.returnFocus)] ?? null,
+          onCreateSession: () => openCreate("session"),
+          onFocusSession: setSessionCursorId,
+          onSelectSession: (id: string) => {
+            dispatch({ type: "session.activate", id });
+            reconcile();
+          },
+          onPromptChange: (value: string) => dispatch({ type: "prompt.set", value }),
+          onPromptSubmit: (value: string) => void submitCreate(value),
+        };
 
   return (
     <Box id="work-craft-shell" flexDirection="column" width="100%" height="100%">
-      <Box flexDirection="row" height={1}>
-        <WorkspaceStrip
-          activeId={state.activeWorkspaceId}
-          cursorId={state.workspaceCursorId}
-          focused={focus.region === "workspace"}
-          hasNext={viewport.hasNext}
-          hasPrevious={viewport.hasPrevious}
-          visibleIds={viewport.ids}
-          width={Math.max(0, dimensions.width - sessionWidth)}
-          workspaces={workspaces}
-          onActivate={(id) => {
-            dispatch({ type: "focus.set", focus: { region: "workspace" } });
-            dispatch({ type: "workspace.activate", id });
-            reconcile();
-          }}
-          onFocus={(id) => {
-            dispatch({ type: "focus.set", focus: { region: "workspace" } });
-            dispatch({ type: "workspace.cursor", id });
-          }}
-        />
-        <SessionSwitcher
-          focused={focus.region === "session"}
-          name={activeSession?.name ?? null}
-          status={workCraft.status}
-          width={sessionWidth}
-          onOpen={() => void executeCommand("session.open")}
-        />
-      </Box>
+      <Header workspace={workspaceProps} session={sessionProps} />
       <Box flexDirection="row" flexGrow={1}>
-        <CategoryRail
-          active={state.activeCategory}
-          categories={renderedCategories}
-          cursor={state.categoryCursor}
-          focused={focus.region === "category"}
-          onActivate={(category) => {
-            dispatch({ type: "focus.set", focus: { region: "category" } });
-            dispatch({ type: "category.activate", category });
-            reconcile();
-          }}
-          onFocus={(category) => {
-            dispatch({ type: "focus.set", focus: { region: "category" } });
-            dispatch({ type: "category.cursor", category });
-          }}
-        />
-        {!navigatorVisible ? null : (
-          <Navigator
-            activeKey={state.activeNavigatorKey}
-            cursorKey={state.navigatorCursorKey}
-            entries={entries}
-            error={state.errors.navigator ?? null}
-            focused={focus.region === "navigator"}
-            height={workbenchHeight}
-            mode={navigatorMode}
-            title={activeCategoryTitle}
-            width={navigatorWidth}
-            onActivate={(key) => {
-              dispatch({ type: "focus.set", focus: { region: "navigator" } });
-              activateNavigator(entries.find((entry) => entry.key === key));
-            }}
-            onFocus={(key) => {
-              dispatch({ type: "focus.set", focus: { region: "navigator" } });
-              dispatch({ type: "navigator.cursor", key });
-            }}
-          />
-        )}
-        <Box flexDirection="column" flexGrow={1} minWidth={0}>
-          <TabStrip
-            activeId={activeTab?.id ?? null}
-            cursorId={state.tabCursorId}
-            error={state.errors.tabs ?? null}
-            focused={focus.region === "tabs"}
-            tabs={tabs}
-            onActivate={(id) => {
-              dispatch({ type: "focus.set", focus: { region: "tabs" } });
-              dispatch({ type: "tab.cursor", id });
-              if (surface !== undefined)
-                void runCommand(durableCommands.selectTab(surface.id, id), "tabs");
-            }}
-            onFocus={(id) => {
-              dispatch({ type: "focus.set", focus: { region: "tabs" } });
-              dispatch({ type: "tab.cursor", id });
-            }}
-          />
-          <Box
-            border
-            id="region:workbench"
-            flexDirection="column"
-            flexGrow={1}
-            minHeight={0}
-            borderStyle="single"
-          >
-            {state.errors.workbench === undefined ? null : (
-              <text fg={theme.colors.error}>{state.errors.workbench}</text>
-            )}
-            {surface === undefined || snapshot === null ? (
-              <text fg={theme.colors.mutedForeground}>
-                Select an item with an execution surface
-              </text>
-            ) : (
-              <SurfaceView
-                focusedPaneId={focusedPaneId}
-                snapshot={snapshot}
-                stream={workCraft.stream}
-                surface={surface}
-                terminals={workCraft.terminals}
-                undersized={undersized}
-                workbenchFocused={state.dialog === null && focus.region === "workbench"}
-                onFocusPane={(paneId) =>
-                  dispatch({ type: "focus.set", focus: { region: "workbench", paneId } })
-                }
-                onTerminalReady={(paneId, terminal) => {
-                  if (terminal === null) terminalRefs.current.delete(paneId);
-                  else terminalRefs.current.set(paneId, terminal);
-                }}
-              />
-            )}
-          </Box>
-        </Box>
+        <CategoryRail {...categoryProps} />
+        {navigatorProps === null ? null : <Navigator {...navigatorProps} />}
+        <Workbench {...workbenchProps} />
       </Box>
-      {status}
-      {state.dialog === null ? null : (
-        <Box
-          id="dialog-overlay"
-          position="absolute"
-          left={0}
-          top={0}
-          width={dimensions.width}
-          height={dimensions.height}
-          zIndex={1}
-          backgroundColor={dialogOverlayColor}
-          onMouseDown={(event: MouseEvent) => {
-            event.preventDefault();
-            event.stopPropagation();
-          }}
-        >
-          <Box
-            id="dialog"
-            position="absolute"
-            left="20%"
-            top="20%"
-            width="60%"
-            height="60%"
-            backgroundColor={theme.colors.background}
-          >
-            {state.dialog.kind === "sessions" ? (
-              <SessionChooser
-                cursorId={sessionCursor}
-                sessions={sessions}
-                onCreate={() => openCreate("session")}
-                onFocus={setSessionCursorId}
-                onSelect={(id) => {
-                  dispatch({ type: "session.activate", id });
-                  reconcile();
-                }}
-              />
-            ) : (
-              <CreatePrompt
-                error={state.errors[commandRegion(state.dialog.returnFocus)] ?? null}
-                kind={state.dialog.createKind}
-                value={state.promptValue}
-                onChange={(value) => dispatch({ type: "prompt.set", value })}
-                onSubmit={(value) => void submitCreate(value)}
-              />
-            )}
-          </Box>
-        </Box>
-      )}
+      <StatusBar {...statusProps} />
+      {dialogProps === null ? null : <DialogOverlay {...dialogProps} />}
     </Box>
   );
 }

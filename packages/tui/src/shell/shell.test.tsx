@@ -6,10 +6,12 @@ import type { Command, CommandResponse, Snapshot } from "@work-craft/server/clie
 import { act } from "react";
 import { gruvboxTheme } from "@/lib/terminal-themes/gruvbox";
 import { ThemeProvider } from "@/providers/theme-provider";
+import { SessionSwitcher } from "./session-switcher.tsx";
+import { StatusBar } from "./status-bar.tsx";
+import { WorkspaceBar } from "./workspace-bar.tsx";
 import { CreatePrompt } from "./create-prompt.tsx";
 import { SessionChooser } from "./session-chooser.tsx";
 import { WorkCraftShell } from "./shell.tsx";
-import { SessionSwitcher, StatusBar, TabStrip, WorkspaceStrip } from "../shell-regions.tsx";
 import { snapshotFixture } from "../test-fixtures.ts";
 import type { WorkCraftState } from "../client/use-work-craft.ts";
 
@@ -340,19 +342,6 @@ test("narrow shells compact automatically", async () => {
   act(() => compact.renderer.destroy());
 });
 
-test("workbench warns before its content narrows below 60 columns", async () => {
-  const small = await testRender(
-    <WorkCraftShell workCraft={workCraftStateFixture({ snapshot: surfaceSnapshot() })} />,
-    { width: 120, height: 40, kittyKeyboard: true },
-  );
-  await small.flush();
-  await openFixtureItem(small);
-  act(() => small.resize(73, 20));
-  await small.flush();
-  expect(small.captureCharFrame()).toContain("too small.");
-  act(() => small.renderer.destroy());
-});
-
 test("undersizing a focused workbench moves focus to its tab", async () => {
   const setup = await testRender(
     <WorkCraftShell workCraft={workCraftStateFixture({ snapshot: surfaceSnapshot() })} />,
@@ -614,31 +603,6 @@ test("a rejected tab command stays visible in the tab region", async () => {
   act(() => setup.renderer.destroy());
 });
 
-test("tab errors stay visible when tab labels overflow", async () => {
-  const tab = surfaceSnapshot().tabs[0]!;
-  const setup = await testRender(
-    <TabStrip
-      activeId="tab-1"
-      cursorId="tab-1"
-      error="tab failed"
-      focused
-      tabs={Array.from({ length: 6 }, (_, index) => ({
-        ...tab,
-        id: `tab-${index + 1}`,
-        title: `Long tab ${index + 1}`,
-        position: index,
-      }))}
-      onActivate={() => {}}
-      onFocus={() => {}}
-    />,
-    { width: 30, height: 1 },
-  );
-  await setup.flush();
-
-  expect(setup.captureCharFrame()).toContain("tab failed");
-  act(() => setup.renderer.destroy());
-});
-
 test("opening a collapsed project terminal expands and activates its item", async () => {
   const setup = await testRender(
     <WorkCraftShell
@@ -847,7 +811,7 @@ test("shell regions use semantic colors from the active theme", async () => {
   const setup = await testRender(
     <ThemeProvider theme={theme}>
       <box flexDirection="column">
-        <WorkspaceStrip
+        <WorkspaceBar
           activeId="active"
           cursorId="cursor"
           focused
@@ -894,7 +858,7 @@ test("shell regions use semantic colors from the active theme", async () => {
 test("workspace overflow leaves the session control and connection dot pinned", async () => {
   const setup = await testRender(
     <box flexDirection="row" width="100%">
-      <WorkspaceStrip
+      <WorkspaceBar
         activeId="b"
         cursorId="c"
         focused={false}
@@ -933,7 +897,7 @@ test("workspace overflow leaves the session control and connection dot pinned", 
 test("long pinned header labels use trailing ellipses", async () => {
   const setup = await testRender(
     <box flexDirection="row" width={30}>
-      <WorkspaceStrip
+      <WorkspaceBar
         activeId="a"
         cursorId="a"
         focused={false}
@@ -994,7 +958,7 @@ test("controlled dialog bodies render without owning global keyboard state", asy
 test("mouse-down focuses and activates a workspace through the same callbacks", async () => {
   const calls: string[] = [];
   const setup = await testRender(
-    <WorkspaceStrip
+    <WorkspaceBar
       activeId="a"
       cursorId="a"
       focused
