@@ -29,6 +29,8 @@ export type ShellModelState = {
 };
 
 export type ShellModel = {
+  navigationKey: string;
+  completionKey: string;
   sessions: Snapshot["sessions"];
   activeSession: Snapshot["sessions"][number] | undefined;
   workspaces: Snapshot["workspaces"];
@@ -105,6 +107,13 @@ export function deriveShellModel(input: {
     .filter(({ surfaceId }) => surfaceId === surface?.id)
     .sort((a, b) => a.position - b.position || a.id.localeCompare(b.id));
   const activeTab = tabs.find(({ id }) => id === surface?.activeTabId) ?? tabs[0];
+  const navigationKey = JSON.stringify([
+    snapshot?.epoch ?? null,
+    state.activeSessionId,
+    state.activeWorkspaceId,
+    state.activeCategory,
+    state.activeNavigatorKey,
+  ]);
   const sessionCursor = sessions.some(({ id }) => id === input.sessionCursorId)
     ? input.sessionCursorId
     : sessions.some(({ id }) => id === state.activeSessionId)
@@ -112,6 +121,8 @@ export function deriveShellModel(input: {
       : (sessions[0]?.id ?? null);
 
   return {
+    navigationKey,
+    completionKey: JSON.stringify([navigationKey, surface?.id ?? null, activeTab?.id ?? null]),
     sessions,
     activeSession,
     workspaces,
