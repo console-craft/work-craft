@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/console-craft/work-craft/compare/v0.6.0...v0.7.0) (2026-10-02)
+
+
+### Features
+
+* **tui:** implement focus and input contract ([#24](https://github.com/console-craft/work-craft/issues/24)) ([7e77ea0](https://github.com/console-craft/work-craft/commit/7e77ea068c0d92e2a9c21ec5e788790df695be12))
+
 ## [0.6.0](https://github.com/console-craft/work-craft/compare/v0.5.0...v0.6.0) (2026-09-20)
 
 
