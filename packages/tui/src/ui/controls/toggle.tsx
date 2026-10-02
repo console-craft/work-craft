@@ -139,8 +139,9 @@ export function ToggleGroup(props: ToggleGroupProps) {
 
     if (!item) return;
 
-    setActiveValue(value);
+    // Native focus initializes the candidate before the clicked value takes precedence.
     groupRef.current?.focus();
+    setActiveValue(value);
   }, []);
 
   function toggleValue(value: string) {

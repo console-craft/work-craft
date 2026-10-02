@@ -140,8 +140,9 @@ export function RadioGroup({
 
     if (!item) return;
 
-    setActiveValue(nextValue);
+    // Native focus initializes the candidate before the clicked value takes precedence.
     groupRef.current?.focus();
+    setActiveValue(nextValue);
   }, []);
 
   const selectValue = useCallback((nextValue: string) => {

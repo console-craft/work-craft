@@ -16,6 +16,54 @@ import { ThemeProvider } from "@/ui/theme-provider";
 import { defaultTheme } from "@/ui/themes/default";
 
 for (const kind of ["radio", "toggle"] as const) {
+  test(`${kind} mouse entry keeps keyboard activation on the clicked option`, async () => {
+    const changes: (string | undefined)[] = [];
+    function Fixture() {
+      const [value, setValue] = useState<string | undefined>("first");
+      function change(next: string | undefined) {
+        changes.push(next);
+        setValue(next);
+      }
+      return (
+        <ThemeProvider theme={defaultTheme}>
+          <Button focused>Outside</Button>
+          {kind === "radio" ? (
+            <RadioGroup id="group" value={value} onValueChange={change}>
+              <Radio value="first">First</Radio>
+              <Radio id="second" value="second">
+                Second
+              </Radio>
+            </RadioGroup>
+          ) : (
+            <ToggleGroup id="group" type="single" value={value} onValueChange={change}>
+              <Toggle value="first">First</Toggle>
+              <Toggle id="second" value="second">
+                Second
+              </Toggle>
+            </ToggleGroup>
+          )}
+        </ThemeProvider>
+      );
+    }
+    const { renderer, mockInput, mockMouse, flush } = await testRender(<Fixture />, {
+      width: 40,
+      height: 10,
+    });
+    try {
+      await flush();
+      const group = renderer.root.findDescendantById("group")!;
+      const second = renderer.root.findDescendantById("second")!;
+      expect(group.focused).toBe(false);
+      await act(async () => mockMouse.click(second.screenX + 1, second.screenY));
+      expect(renderer.currentFocusedRenderable).toBe(group);
+      expect(changes).toEqual(["second"]);
+      await act(async () => mockInput.pressKey(" "));
+      expect(changes).toEqual(kind === "radio" ? ["second"] : ["second", undefined]);
+    } finally {
+      act(() => renderer.destroy());
+    }
+  });
+
   test(`${kind} scope entry initializes its candidate and keeps local keys within one Tab stop`, async () => {
     const changes: (string | undefined)[] = [];
     let presses = 0;
