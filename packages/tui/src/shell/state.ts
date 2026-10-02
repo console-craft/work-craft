@@ -1,6 +1,6 @@
 import type { CategoryKind, Snapshot } from "@work-craft/server/client";
 
-import { focusAfterNavigatorHide, type FocusTarget } from "@/input/focus.ts";
+import { focusAfterNavigatorHide, focusKey, type FocusTarget } from "@/input/focus.ts";
 import { navigatorEntries, workspacesForSession } from "@/navigation/model.ts";
 import {
   DEFAULT_NAVIGATOR_WIDTH,
@@ -27,6 +27,8 @@ export type ShellState = {
   navigatorCursorKey: string | null;
   tabCursorId: string | null;
   focus: FocusTarget;
+  /** A successful split may precede the snapshot containing its requested endpoint. */
+  pendingWorkbenchFocus: { epoch: string; revision: number } | null;
   lastWorkbenchPaneId: string | null;
   navigatorPreference: NavigatorPreference;
   navigatorWidth: number;
@@ -41,7 +43,11 @@ export type ShellState = {
 export type ShellAction =
   | { type: "snapshot.reconcile"; snapshot: Snapshot }
   | { type: "session.activate"; id: string }
-  | { type: "focus.set"; focus: FocusTarget }
+  | {
+      type: "focus.set";
+      focus: FocusTarget;
+      pendingWorkbenchFocus?: NonNullable<ShellState["pendingWorkbenchFocus"]>;
+    }
   | { type: "workspace.cursor"; id: string | null }
   | { type: "workspace.activate"; id: string }
   | { type: "category.cursor"; category: CategoryKind }
@@ -70,6 +76,7 @@ export function createInitialShellState(): ShellState {
     navigatorCursorKey: null,
     tabCursorId: null,
     focus: { region: "category" },
+    pendingWorkbenchFocus: null,
     lastWorkbenchPaneId: null,
     navigatorPreference: "auto",
     navigatorWidth: DEFAULT_NAVIGATOR_WIDTH,
@@ -99,9 +106,17 @@ export function reduceShellState(state: ShellState, action: ShellAction): ShellS
         promptValue: "",
       };
     case "focus.set":
+      if (
+        focusKey(state.focus) === focusKey(action.focus) &&
+        state.pendingWorkbenchFocus === (action.pendingWorkbenchFocus ?? null) &&
+        (action.focus.region !== "workbench" || state.lastWorkbenchPaneId === action.focus.paneId)
+      ) {
+        return state;
+      }
       return {
         ...state,
         focus: action.focus,
+        pendingWorkbenchFocus: action.pendingWorkbenchFocus ?? null,
         lastWorkbenchPaneId:
           action.focus.region === "workbench" ? action.focus.paneId : state.lastWorkbenchPaneId,
       };
@@ -250,8 +265,17 @@ export function reconcileShellState(state: ShellState, snapshot: Snapshot): Shel
       : (tabs[0]?.id ?? null);
   const activeTab = tabs.find(({ id }) => id === surface?.activeTabId) ?? tabs[0];
   const panes = paneIds(activeTab?.layout ?? null);
+  const pendingWorkbenchFocus =
+    state.focus.region === "workbench" &&
+    !panes.includes(state.focus.paneId) &&
+    state.pendingWorkbenchFocus?.epoch === snapshot.epoch &&
+    snapshot.revision < state.pendingWorkbenchFocus.revision
+      ? state.pendingWorkbenchFocus
+      : null;
   const focus =
-    state.focus.region === "workbench" && !panes.includes(state.focus.paneId)
+    state.focus.region === "workbench" &&
+    !panes.includes(state.focus.paneId) &&
+    pendingWorkbenchFocus === null
       ? { region: "tabs" as const }
       : state.focus;
   const dialog =
@@ -276,6 +300,7 @@ export function reconcileShellState(state: ShellState, snapshot: Snapshot): Shel
     navigatorCursorKey,
     tabCursorId,
     focus,
+    pendingWorkbenchFocus,
     expandedProjectIds,
     dialog,
     promptValue: dialog?.kind === "create" ? state.promptValue : "",

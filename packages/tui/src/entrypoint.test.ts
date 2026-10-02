@@ -157,7 +157,7 @@ test("an empty installation offers session creation from the chooser", async () 
       () => `\n${tui.output()}`,
     );
     await Bun.sleep(100);
-    tui.terminal.write(new TextEncoder().encode("n"));
+    tui.terminal.write(new TextEncoder().encode("\r"));
     await waitFor(
       () => tui.output().includes("session name"),
       "the session prompt",
@@ -439,6 +439,46 @@ test("raw stage 1 key sequences drive the shell", async () => {
       client,
       (snapshot) => terminalText(snapshot, paneId).includes("WC-42"),
       "printable terminal output",
+    );
+
+    tui.terminal.write(
+      input.encode(
+        "stty -icanon -echo; printf 'WC-%s\\n' TAB-READY; " +
+          "b=$(dd bs=1 count=1 2>/dev/null | od -An -tx1); " +
+          "stty sane; printf 'TAB-%s\\n' \"$b\"\r",
+      ),
+    );
+    await waitForSnapshot(
+      client,
+      (snapshot) => terminalText(snapshot, paneId).includes("WC-TAB-READY"),
+      "raw tab reader",
+    );
+    tui.terminal.write(input.encode("\t"));
+    // od pads differently on macOS and Linux; require exactly the child-read bytes.
+    await waitForSnapshot(
+      client,
+      (snapshot) => /(?:^|\n)TAB-[ \t]+09[ \t]*\r?\n/.test(terminalText(snapshot, paneId)),
+      "Tab byte reaching the child",
+    );
+
+    tui.terminal.write(
+      input.encode(
+        "stty -icanon -echo; printf 'WC-%s\\n' BACKTAB-READY; " +
+          "b=$(dd bs=1 count=3 2>/dev/null | od -An -tx1); " +
+          "stty sane; printf 'BACKTAB-%s\\n' \"$b\"\r",
+      ),
+    );
+    await waitForSnapshot(
+      client,
+      (snapshot) => terminalText(snapshot, paneId).includes("WC-BACKTAB-READY"),
+      "raw backtab reader",
+    );
+    tui.terminal.write(input.encode("\x1b[Z"));
+    await waitForSnapshot(
+      client,
+      (snapshot) =>
+        /(?:^|\n)BACKTAB-[ \t]+1b[ \t]+5b[ \t]+5a[ \t]*\r?\n/.test(terminalText(snapshot, paneId)),
+      "Shift+Tab bytes reaching the child",
     );
 
     const horizontalOutputLength = tui.output().length;

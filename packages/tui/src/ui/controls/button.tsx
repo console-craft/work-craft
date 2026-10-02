@@ -7,12 +7,18 @@ import {
 } from "@opentui/core";
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 
+import { useControlHints } from "@/ui/control-hints";
 import { Box, type BoxProps } from "@/ui/primitives/box";
 import { Text } from "@/ui/primitives/text";
 import type { ThemeColor } from "@/ui/theme";
 import { assignRef } from "@/ui/utils";
 
 export type ButtonVariant = "primary" | "secondary" | "ghost" | "destructive";
+
+const activate = {
+  names: ["return", "linefeed", "space"],
+  hint: { keys: "Enter/Space", label: "Activate" },
+};
 
 type ButtonVisual = {
   bg?: ThemeColor;
@@ -69,6 +75,7 @@ export function Button({
   ...props
 }: ButtonProps) {
   const buttonRef = useRef<BoxRenderable | null>(null);
+  useControlHints(buttonRef, !disabled && onPress ? [activate.hint] : []);
   const mousePressedRef = useRef(false);
   const [isFocused, setIsFocused] = useState(false);
 
@@ -152,7 +159,7 @@ export function Button({
       return;
     }
 
-    if (event.name !== "return" && event.name !== "linefeed" && event.name !== "space") {
+    if (!activate.names.includes(event.name)) {
       return;
     }
 

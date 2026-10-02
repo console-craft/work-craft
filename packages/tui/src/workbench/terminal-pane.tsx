@@ -1,6 +1,6 @@
 import type { EmbeddedTerminalRenderable } from "@opentui/core";
 import type { Snapshot, StreamConnection } from "@work-craft/server/client";
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 
 import type { TerminalBuffer } from "@/client/use-work-craft.ts";
 import { Box } from "@/ui/primitives/box.tsx";
@@ -51,7 +51,7 @@ export function TerminalPane({
     }
   }, [buffer, pane.id]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (focused) {
       terminal.current?.focus();
     } else {

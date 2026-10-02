@@ -32,8 +32,8 @@ export function UIDemo() {
 
   return (
     <ThemeProvider theme={defaultTheme}>
-      <FocusManager />
-      <Stack maxWidth={200} paddingX={6} paddingY={1}>
+      <FocusManager focusScopeId="ui-demo" />
+      <Stack id="ui-demo" focusable maxWidth={200} paddingX={6} paddingY={1}>
         <Text fg="primary">BUTTONS</Text>
         <HStack>
           <Button variant="primary">Primary</Button>

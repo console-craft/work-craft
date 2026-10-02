@@ -7,11 +7,14 @@ import {
 } from "@opentui/core";
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 
+import { useControlHints } from "@/ui/control-hints";
 import { symbols } from "@/ui/icons/symbols";
 import { HStack, type HStackProps } from "@/ui/primitives/hstack";
 import { Text, type TextProps } from "@/ui/primitives/text";
 import type { ThemeColor } from "@/ui/theme";
 import { assignRef } from "@/ui/utils";
+
+const toggleAction = { name: "space", hint: { keys: "Space", label: "Toggle" } };
 
 export interface SwitchProps extends Omit<HStackProps, "children" | "focusable"> {
   checked?: boolean;
@@ -52,6 +55,7 @@ export function Switch({
   ...props
 }: SwitchProps) {
   const switchRef = useRef<BoxRenderable | null>(null);
+  useControlHints(switchRef, !disabled && onCheckedChange ? [toggleAction.hint] : []);
   const mousePressedRef = useRef(false);
   const [isFocused, setIsFocused] = useState(false);
 
@@ -129,7 +133,7 @@ export function Switch({
       disabled ||
       event.repeated ||
       !onCheckedChange ||
-      event.name !== "space"
+      event.name !== toggleAction.name
     ) {
       return;
     }

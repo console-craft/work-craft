@@ -1,7 +1,8 @@
-import type { TextareaRenderable } from "@opentui/core";
+import { defaultTextareaKeyBindings, type TextareaRenderable } from "@opentui/core";
 import type { TextareaProps as OpenTUITextareaProps } from "@opentui/react";
 import { useCallback, useLayoutEffect, useRef } from "react";
 
+import { nativeActionHints, useControlHints } from "@/ui/control-hints";
 import { resolveColor, type ThemeColor } from "@/ui/theme";
 import { useTheme } from "@/ui/theme-provider";
 import { assignRef, setDisabled } from "@/ui/utils";
@@ -49,10 +50,24 @@ export function Textarea({
   tabIndicatorColor = "mutedForeground",
 
   keyBindings = [],
+  keyAliasMap,
+  onSubmit,
   ...props
 }: TextareaProps) {
   const theme = useTheme();
   const textareaRef = useRef<TextareaRenderable | null>(null);
+  const effectiveBindings = [...defaultKeyBindings, ...keyBindings];
+  useControlHints(
+    textareaRef,
+    !disabled && onSubmit
+      ? nativeActionHints(
+          [...defaultTextareaKeyBindings, ...effectiveBindings],
+          "submit",
+          "Submit",
+          keyAliasMap,
+        )
+      : [],
+  );
 
   const setTextareaRef = useCallback(
     (node: TextareaRenderable | null) => {
@@ -77,6 +92,8 @@ export function Textarea({
   return (
     <textarea
       {...props}
+      onSubmit={onSubmit}
+      keyAliasMap={keyAliasMap}
       ref={setTextareaRef}
       focused={disabled ? false : focused}
       backgroundColor={resolveColor(theme, disabled ? "secondary" : backgroundColor)}
@@ -88,7 +105,7 @@ export function Textarea({
       selectionBg={resolveColor(theme, selectionBg)}
       selectionFg={resolveColor(theme, selectionFg)}
       tabIndicatorColor={resolveColor(theme, disabled ? "mutedForeground" : tabIndicatorColor)}
-      keyBindings={[...defaultKeyBindings, ...keyBindings]}
+      keyBindings={effectiveBindings}
     />
   );
 }

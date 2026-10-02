@@ -103,6 +103,9 @@ function executionInput(
     dispatch(action) {
       actions.push(action);
     },
+    setFocus(target) {
+      actions.push({ type: "focus.set", focus: target });
+    },
     setSessionCursorId() {},
     run,
     async reload() {},
@@ -252,13 +255,92 @@ test("splitting focuses the new pane returned by the server", async () => {
       },
     });
 
-  await executeCommand(executionInput("pane.splitHorizontal", fixture, actions, run));
+  const focusRequests: {
+    target: ExecuteCommandInput["focus"];
+    pending: { epoch: string; revision: number } | undefined;
+  }[] = [];
+  await executeCommand(
+    executionInput("pane.splitHorizontal", fixture, actions, run, {
+      setFocus(target, pending) {
+        focusRequests.push({ target, pending });
+      },
+    }),
+  );
 
   expect(sent).toEqual([{ type: "pane.split", paneId: "pane-1", direction: "horizontal" }]);
-  expect(actions).toContainEqual({
-    type: "focus.set",
-    focus: { region: "workbench", paneId: "pane-2" },
+  expect(focusRequests).toEqual([
+    {
+      target: { region: "workbench", paneId: "pane-2" },
+      pending: { epoch: "epoch-a", revision: 5 },
+    },
+  ]);
+});
+
+test("spatial movement synchronously requests the next native target", async () => {
+  const fixture = activeItemFixture();
+  const actions: ShellAction[] = [];
+  const focusRequests: ExecuteCommandInput["focus"][] = [];
+  await executeCommand(
+    executionInput("focus.right", fixture, actions, async () => undefined, {
+      focus: { region: "navigator" },
+      focusNodes: [
+        { target: { region: "navigator" }, rect: { x: 0, y: 0, width: 20, height: 20 } },
+        {
+          target: { region: "workbench", paneId: "pane-1" },
+          rect: { x: 20, y: 0, width: 40, height: 20 },
+        },
+      ],
+      setFocus(target) {
+        focusRequests.push(target);
+      },
+    }),
+  );
+  expect(focusRequests).toEqual([{ region: "workbench", paneId: "pane-1" }]);
+  expect(actions).toEqual([]);
+});
+
+test("item creation availability uses the supplied native focus instead of stale state focus", () => {
+  const fixture = activeItemFixture();
+  fixture.state = {
+    ...fixture.state,
+    activeNavigatorKey: "project:project-1",
+    navigatorCursorKey: "project:project-1",
+  };
+  fixture.model = deriveShellModel({
+    snapshot: fixture.snapshot,
+    state: fixture.state,
+    sessionCursorId: null,
   });
+  expect(
+    availableCommands({ ...fixture, focus: { region: "navigator" }, focusedPaneId: null }).has(
+      "item.create",
+    ),
+  ).toBe(true);
+});
+
+test("item submission uses the captured native launch context when semantic focus was stale", async () => {
+  const fixture = activeItemFixture();
+  fixture.state = {
+    ...fixture.state,
+    activeNavigatorKey: "project:project-1",
+    navigatorCursorKey: "project:project-1",
+    dialog: { kind: "create", createKind: "item", returnFocus: { region: "navigator" } },
+  };
+  const sent: Command[] = [];
+  await submitCreate({
+    ...fixture,
+    value: "Native context item",
+    getSubmittingDialog: () => null,
+    setSubmittingDialog() {},
+    dispatch() {},
+    run: async (command) => {
+      sent.push(command);
+      return { id: "item-2" };
+    },
+  });
+  expect(sent).toEqual([
+    { type: "item.create", projectId: "project-1", kind: "generic", title: "Native context item" },
+  ]);
 });
 
 test("a late split response cannot focus a pane after changing surfaces", async () => {
@@ -318,7 +400,7 @@ test("opening a collapsed project terminal expands and activates its item", asyn
   const sent: Command[] = [];
   const run: ExecuteCommandInput["run"] = async (command) => {
     sent.push(command);
-    return { id: "surface-1", itemId: "item-1" };
+    return { id: "surface-1", itemId: "item-1", revision: 1 };
   };
 
   await executeCommand(

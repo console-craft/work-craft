@@ -223,6 +223,7 @@ export function NumberInput({
       onInput={handleInput}
       onChange={handleChange}
       onSubmit={handleSubmit}
+      submitLabel={onSubmit ? "Submit" : "Commit"}
       onKeyDown={handleKeyDown}
     />
   );

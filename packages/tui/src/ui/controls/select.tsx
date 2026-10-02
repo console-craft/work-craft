@@ -7,11 +7,21 @@ import {
 import type { SelectProps as OpenTUISelectProps } from "@opentui/react";
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 
+import { nativeActionHints, useControlHints } from "@/ui/control-hints";
 import { resolveColor, type ThemeColor } from "@/ui/theme";
 import { useTheme } from "@/ui/theme-provider";
 import { assignRef, setDisabled } from "@/ui/utils";
 
 const defaultKeyBindings: SelectKeyBinding[] = [
+  // Native defaults are internal; keep their merge order for alias collisions.
+  { name: "up", action: "move-up" },
+  { name: "k", action: "move-up" },
+  { name: "down", action: "move-down" },
+  { name: "j", action: "move-down" },
+  { name: "up", shift: true, action: "move-up-fast" },
+  { name: "down", shift: true, action: "move-down-fast" },
+  { name: "return", action: "select-current" },
+  { name: "linefeed", action: "select-current" },
   { name: "l", action: "move-down" },
   { name: "h", action: "move-up" },
   { name: "n", ctrl: true, action: "move-down" },
@@ -60,12 +70,29 @@ export function Select({
   focusedSelectedDescriptionColor = "primaryForeground",
 
   keyBindings = [],
+  keyAliasMap,
+  options = [],
+  onSelect,
   onKeyDown,
 
   ...props
 }: SelectProps) {
   const theme = useTheme();
   const selectRef = useRef<SelectRenderable | null>(null);
+  const effectiveBindings = [...defaultKeyBindings, ...keyBindings];
+  useControlHints(
+    selectRef,
+    !disabled && options.length > 0 && onSelect
+      ? nativeActionHints(
+          effectiveBindings,
+          "select-current",
+          "Select",
+          keyAliasMap,
+          (binding) =>
+            binding.name.toLowerCase() === "g" && !binding.ctrl && !binding.meta && !binding.super,
+        )
+      : [],
+  );
   const [isFocused, setIsFocused] = useState(false);
 
   const setSelectRef = useCallback(
@@ -150,6 +177,9 @@ export function Select({
   return (
     <select
       {...props}
+      options={options}
+      onSelect={onSelect}
+      keyAliasMap={keyAliasMap}
       ref={setSelectRef}
       focused={disabled ? false : focused}
       backgroundColor={resolveColor(theme, disabled ? "muted" : backgroundColor)}
@@ -160,7 +190,7 @@ export function Select({
       selectedTextColor={resolveColor(theme, currentSelectedTextColor)}
       descriptionColor={resolveColor(theme, disabled ? "mutedForeground" : descriptionColor)}
       selectedDescriptionColor={resolveColor(theme, currentSelectedDescriptionColor)}
-      keyBindings={[...defaultKeyBindings, ...keyBindings]}
+      keyBindings={effectiveBindings}
       onKeyDown={handleKeyDown}
     />
   );

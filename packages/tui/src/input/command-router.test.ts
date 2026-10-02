@@ -32,10 +32,6 @@ const allCommands = new Set<CommandId>([
   "pane.splitHorizontal",
   "pane.splitVertical",
   "pane.restart",
-  "cursor.previous",
-  "cursor.next",
-  "cursor.left",
-  "cursor.right",
   "cursor.activate",
   "context.create",
   "project.openTerminal",
@@ -53,6 +49,42 @@ const terminalContext: CommandContext = {
 function route(key: KeyLike, context: CommandContext = terminalContext): CommandId | undefined {
   return routeKey(initialRouterState, key, context, 0).command;
 }
+
+test("common movement hints are hidden while application actions remain visible", () => {
+  const keys = commandHints(initialRouterState, terminalContext).map((hint) => hint.keys);
+  for (const key of ["Ctrl+h", "Ctrl+j", "Ctrl+k", "Ctrl+l"]) {
+    expect(keys).not.toContain(key);
+  }
+  expect(keys).toContain("Hyper+r");
+  expect(keys).toContain("Hyper+q");
+  expect(keys).toContain("Hyper+j");
+  const modal = { ...terminalContext, dialog: "sessions" as const };
+  const modalKeys = commandHints(initialRouterState, modal).map((hint) => hint.keys);
+  expect(modalKeys).toContain("Hyper+r");
+  expect(modalKeys).toContain("Hyper+q");
+  expect(modalKeys).toContain("n");
+  expect(modalKeys).not.toContain("Hyper+j");
+  expect(modalKeys).not.toContain("Tab");
+  const navigator = { ...terminalContext, focus: { region: "navigator" as const } };
+  expect(commandHints(initialRouterState, navigator).map(({ keys }) => keys)).not.toContain(
+    "Ctrl+Left",
+  );
+  expect(commandHints(initialRouterState, navigator).map(({ keys }) => keys)).not.toContain(
+    "Ctrl+Right",
+  );
+});
+
+test("modal hints retain only available reconnect/quit and eligible dialog actions", () => {
+  const context = { ...terminalContext, dialog: "create" as const };
+  expect(commandHints(initialRouterState, context)).toEqual([
+    { keys: "Hyper+r", label: "Reconnect" },
+    { keys: "Hyper+q", label: "Quit" },
+    { keys: "Escape", label: "Cancel" },
+  ]);
+  expect(
+    commandHints(initialRouterState, { ...context, availableCommands: new Set(["client.quit"]) }),
+  ).toEqual([{ keys: "Hyper+q", label: "Quit" }]);
+});
 
 test("native and physical Hyper forms are recognized", () => {
   expect(isHyperKey({ name: "h", hyper: true })).toBe(true);
@@ -171,38 +203,67 @@ test("Escape cancels leader mode but otherwise passes through", () => {
   expect(routeKey(cancelled.state, { name: "escape" }, terminalContext, 300).handled).toBe(false);
 });
 
-test("focused regions use the common local navigation grammar", () => {
+test("composite browsing and activation stay local while contextual commands route", () => {
   const context = (region: CommandContext["focus"]["region"]): CommandContext => ({
     ...terminalContext,
     focus: region === "workbench" ? { region, paneId: "pane-1" } : { region },
   });
 
-  expect(route({ name: "h" }, context("workspace"))).toBe("cursor.left");
-  expect(route({ name: "right" }, context("workspace"))).toBe("cursor.right");
   expect(route({ name: "n" }, context("workspace"))).toBe("context.create");
-  expect(route({ name: "j" }, context("category"))).toBe("cursor.next");
-  expect(route({ name: "up" }, context("category"))).toBe("cursor.previous");
-  expect(route({ name: "down" }, context("navigator"))).toBe("cursor.next");
-  expect(route({ name: "k" }, context("navigator"))).toBe("cursor.previous");
-  expect(route({ name: "h" }, context("navigator"))).toBe("cursor.left");
-  expect(route({ name: "l" }, context("navigator"))).toBe("cursor.right");
   expect(route({ name: "o" }, context("navigator"))).toBe("project.openTerminal");
   expect(route({ name: "left", ctrl: true }, context("navigator"))).toBe("navigator.shrink");
   expect(route({ name: "right", ctrl: true }, context("navigator"))).toBe("navigator.grow");
-  expect(route({ name: "left" }, context("tabs"))).toBe("cursor.left");
-  expect(route({ name: "l" }, context("tabs"))).toBe("cursor.right");
-
   for (const region of ["workspace", "category", "navigator", "tabs"] as const) {
-    expect(route({ name: "return" }, context(region))).toBe("cursor.activate");
+    for (const name of [
+      "h",
+      "j",
+      "k",
+      "l",
+      "left",
+      "right",
+      "up",
+      "down",
+      "return",
+      "enter",
+      "linefeed",
+    ]) {
+      expect(routeKey(initialRouterState, { name }, context(region), 0).handled).toBe(false);
+    }
+    expect(
+      commandHints(initialRouterState, context(region)).map(({ label }) => label),
+    ).not.toContain("Activate");
   }
   expect(route({ name: "n" }, context("navigator"))).toBe("context.create");
 });
 
+test("modal policy allows reconnect/quit and native input, not background commands", () => {
+  for (const dialog of ["sessions", "create"] as const) {
+    const context = { ...terminalContext, dialog };
+    for (const name of ["h", "j", "k", "l", "[", "]", "n", "s"]) {
+      const result = routeKey(initialRouterState, { name, hyper: true }, context, 0);
+      expect(result.handled).toBe(true);
+      expect(result.command).toBeUndefined();
+    }
+    expect(route({ name: "r", hyper: true }, context)).toBe("client.reload");
+    expect(route({ name: "q", hyper: true }, context)).toBe("client.quit");
+    for (const name of ["j", "k", "up", "down", "return"]) {
+      expect(routeKey(initialRouterState, { name }, context, 0).handled).toBe(false);
+    }
+    for (const name of ["h", "j", "k", "l", "space"]) {
+      expect(routeKey(initialRouterState, { name, ctrl: true }, context, 0).handled).toBe(false);
+    }
+    const pending = { ...initialRouterState, leaderStartedAt: 1 };
+    expect(
+      routeKey(pending, { name: "space", ctrl: true }, context, 2).state.leaderStartedAt,
+    ).toBeNull();
+  }
+});
+
 test("session dialog traps keys and has its own scoped commands", () => {
   const dialogContext: CommandContext = { ...terminalContext, dialog: "sessions" };
-  expect(route({ name: "j" }, dialogContext)).toBe("cursor.next");
-  expect(route({ name: "up" }, dialogContext)).toBe("cursor.previous");
-  expect(route({ name: "return" }, dialogContext)).toBe("cursor.activate");
+  expect(route({ name: "j" }, dialogContext)).toBeUndefined();
+  expect(route({ name: "up" }, dialogContext)).toBeUndefined();
+  expect(route({ name: "return" }, dialogContext)).toBeUndefined();
   expect(route({ name: "n" }, dialogContext)).toBe("context.create");
   expect(route({ name: "escape" }, dialogContext)).toBe("dialog.cancel");
   expect(route({ name: "q", hyper: true }, dialogContext)).toBe("client.quit");
@@ -226,7 +287,7 @@ test("unavailable edge commands do not wrap or appear in hints", () => {
   expect(route({ name: "h", hyper: true }, context)).toBeUndefined();
   expect(route({ name: "l", hyper: true }, context)).toBe("category.next");
   expect(commandHints(initialRouterState, context).map(({ label }) => label)).not.toContain(
-    "Previous category",
+    "Prev category",
   );
 });
 
