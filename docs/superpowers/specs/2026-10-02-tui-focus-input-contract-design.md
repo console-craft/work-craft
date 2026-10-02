@@ -60,6 +60,28 @@ Local interaction must never operate on an unfocused sibling. An unhandled key
 on a button does not become a list-navigation command because both controls
 belong to the same dialog.
 
+### Keyboard Drill-Down Versus Preview
+
+Local keyboard activation expresses intent to enter the destination:
+
+- Category `Enter` focuses its visible navigator, even when the category is
+  empty. Hidden navigators remain hidden and focus stays in the category rail.
+- Item `Enter` and project `o` focus a pane of the opened item's active tab.
+  Restore the remembered pane when it belongs to that tab; otherwise use the
+  first pane. Project `Enter` stays in the navigator.
+- Workspace and tab activation retain their source-region focus.
+
+Mouse activation previews in its source region. Hyper navigation changes active
+selection while preserving focus. Neither requests the keyboard drill-down.
+
+An asynchronous open moves focus only after command success and a rendered
+snapshot reaches the response revision in the same epoch. Until then, the
+navigator remains focused. Failures, empty tabs, and undersized workbenches do not
+enter a pane. Further keyboard input, native focus movement (even leave-and-return
+without a React commit), further navigator browsing or activation, opening a
+dialog, or changing the epoch or active item cancels the handoff. A cancelled
+handoff is not revived by a later snapshot.
+
 ## Ownership
 
 ### Application Policy
@@ -247,6 +269,10 @@ workbench input target. Valid modal/control focus must not be displaced by share
 selection updates. Invalid local targets receive a local presentation fallback,
 not a client-originated repair of daemon-owned selection.
 
+Keyboard drill-down is intent from the initiating client, not a side effect of
+shared selection. Stage 2 must preserve its local handoff while ensuring another
+client's navigation command cannot independently trigger it here.
+
 ## Verification
 
 Use focused behavioral checks at the ownership boundaries:
@@ -270,6 +296,10 @@ Use focused behavioral checks at the ownership boundaries:
    global/leader, and contextual-action hints remain eligible and concise.
 7. Existing navigator, workspace, category, and tab browsing/activation preserve
    their semantics as their local handlers move to composite region owners.
+8. Category `Enter` enters only a visible navigator. Item `Enter` and project `o`
+   enter a valid pane after success regardless of response/snapshot ordering;
+   failure or cancellation preserves local focus. Mouse and Hyper activation
+   preview without entering the destination.
 
 Use representative native and composite controls instead of exhaustive
 per-control suites or broad visual snapshots. Real PTY acceptance proves terminal

@@ -1,4 +1,4 @@
-import type { EmbeddedTerminalRenderable } from "@opentui/core";
+import { CliRenderEvents, type EmbeddedTerminalRenderable, type Renderable } from "@opentui/core";
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react";
 import type { CategoryKind } from "@work-craft/server/client";
 import { type ReactNode, useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
@@ -39,6 +39,14 @@ import { Workbench } from "@/workbench/workbench.tsx";
 
 export type WorkCraftShellProps = { workCraft: WorkCraftState };
 
+type PendingItemFocus = {
+  itemId: string;
+  epoch: string;
+  revision: number;
+  origin: Renderable;
+  version: number;
+};
+
 export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
   const renderer = useRenderer();
   const nativeFocus = useNativeFocus();
@@ -56,6 +64,19 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
   }, [state.expandedProjectIds]);
   const [routerState, setRouterState] = useState(initialRouterState);
   const [sessionCursorId, setSessionCursorId] = useState<string | null>(null);
+  const [pendingItemFocus, setPendingItemFocus] = useState<PendingItemFocus | null>(null);
+  const itemFocusVersion = useRef(0);
+  useLayoutEffect(() => {
+    // Even buffered leave-and-return movement permanently cancels an activation handoff.
+    const cancelItemFocus = () => {
+      itemFocusVersion.current += 1;
+    };
+    renderer.on(CliRenderEvents.FOCUSED_RENDERABLE, cancelItemFocus);
+    return () => {
+      cancelItemFocus();
+      renderer.off(CliRenderEvents.FOCUSED_RENDERABLE, cancelItemFocus);
+    };
+  }, [renderer]);
   const terminalRefs = useRef(new Map<string, EmbeddedTerminalRenderable>());
   const completionContextRef = useRef<CompletionContext>({
     key: "",
@@ -207,6 +228,10 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     region,
     expected = completionContextRef.current,
   ) => {
+    if (command.type === "surface.ensure" && expected.key === undefined) {
+      // Activation owns this navigation change before React commits its reducer action.
+      completionContextRef.current = expected;
+    }
     return runDurableCommand({
       command,
       region,
@@ -239,7 +264,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
   function execute(
     command: CommandId,
     overrides: Partial<
-      Pick<ExecuteCommandInput, "model" | "state" | "focus" | "focusedPaneId">
+      Pick<ExecuteCommandInput, "model" | "state" | "focus" | "focusedPaneId" | "onItemOpened">
     > = {},
   ): Promise<void> {
     return executeCommand({
@@ -254,6 +279,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
       dispatch,
       setFocus,
       setSessionCursorId,
+      onItemOpened: command === "project.openTerminal" ? focusOnItemOpen() : undefined,
       run: runCommand,
       reload: workCraft.reload,
       quit: () => renderer.destroy(),
@@ -261,7 +287,62 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     });
   }
 
+  function focusOnItemOpen(): ExecuteCommandInput["onItemOpened"] {
+    const origin = renderer.currentFocusedRenderable;
+    const epoch = snapshot?.epoch;
+    const version = ++itemFocusVersion.current;
+    setPendingItemFocus(null);
+    return (itemId, revision) => {
+      if (
+        origin !== null &&
+        epoch !== undefined &&
+        !renderer.isDestroyed &&
+        itemFocusVersion.current === version &&
+        renderer.currentFocusedRenderable === origin
+      ) {
+        setPendingItemFocus({ itemId, epoch, revision, origin, version });
+      }
+    };
+  }
+
+  useLayoutEffect(() => {
+    if (pendingItemFocus === null) {
+      return;
+    }
+    if (
+      snapshot?.epoch !== pendingItemFocus.epoch ||
+      state.dialog !== null ||
+      itemFocusVersion.current !== pendingItemFocus.version ||
+      renderer.currentFocusedRenderable !== pendingItemFocus.origin ||
+      state.activeNavigatorKey !== `item:${pendingItemFocus.itemId}`
+    ) {
+      setPendingItemFocus(null);
+      return;
+    }
+    if (snapshot.revision < pendingItemFocus.revision) {
+      return;
+    }
+    const paneId = currentPaneIds.includes(state.lastWorkbenchPaneId ?? "")
+      ? state.lastWorkbenchPaneId
+      : currentPaneIds[0];
+    if (paneId && !undersized) {
+      setFocus({ region: "workbench", paneId });
+    }
+    setPendingItemFocus(null);
+  }, [
+    pendingItemFocus,
+    snapshot,
+    state.activeNavigatorKey,
+    dialogKey,
+    nativeFocus,
+    currentPaneIds,
+    undersized,
+  ]);
+
   useKeyboard((key) => {
+    // Further input supersedes a deferred handoff; local activation can start a new one.
+    itemFocusVersion.current += 1;
+    setPendingItemFocus(null);
     const keyFocus = focusTargetFor(renderer.currentFocusedRenderable) ?? focus;
     if (keyFocus.region === "workbench") {
       lastWorkbenchPaneIdRef.current = keyFocus.paneId;
@@ -401,10 +482,10 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     categories: renderedCategories,
     cursor: state.categoryCursor,
     focused: state.dialog === null && focus.region === "category",
-    onActivate: (category: CategoryKind) => {
-      setFocus({ region: "category" });
+    onActivate: (category: CategoryKind, source: "keyboard" | "mouse") => {
       dispatch({ type: "category.activate", category });
       reconcile();
+      setFocus({ region: source === "keyboard" && navigatorVisible ? "navigator" : "category" });
     },
     onFocus: (category: CategoryKind) => {
       setFocus({ region: "category" });
@@ -419,6 +500,8 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
         entries,
         expandedProjectIds: state.expandedProjectIds,
         onExpand: (projectId: string, expanded: boolean) => {
+          itemFocusVersion.current += 1;
+          setPendingItemFocus(null);
           if (expandedProjectIdsRef.current.has(projectId) !== expanded) {
             const next = new Set(expandedProjectIdsRef.current);
             if (expanded) {
@@ -437,8 +520,10 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
         mode: navigatorMode === "hidden" ? "compact" : navigatorMode,
         title: activeCategoryTitle,
         width: navigatorWidth,
-        onActivate: (key: string) => {
+        onActivate: (key: string, source: "keyboard" | "mouse") => {
           setFocus({ region: "navigator" });
+          itemFocusVersion.current += 1;
+          setPendingItemFocus(null);
           void execute("cursor.activate", {
             model: {
               ...model,
@@ -446,9 +531,12 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
             },
             focus: { region: "navigator" },
             focusedPaneId: null,
+            onItemOpened: source === "keyboard" ? focusOnItemOpen() : undefined,
           });
         },
         onFocus: (key: string) => {
+          itemFocusVersion.current += 1;
+          setPendingItemFocus(null);
           setFocus({ region: "navigator" });
           dispatch({ type: "navigator.cursor", key });
         },

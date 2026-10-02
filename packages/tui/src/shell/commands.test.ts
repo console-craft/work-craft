@@ -413,7 +413,11 @@ test("opening a collapsed project terminal expands and activates its item", asyn
   expect(sent).toEqual([{ type: "surface.ensureHere", projectId: "project-1" }]);
   expect(actions).toEqual([
     { type: "project.toggle", projectId: "project-1" },
-    { type: "navigator.activate", key: "item:item-1" },
+    {
+      type: "navigator.activate",
+      key: "item:item-1",
+      pending: { epoch: fixture.snapshot.epoch, revision: 1 },
+    },
   ]);
 });
 

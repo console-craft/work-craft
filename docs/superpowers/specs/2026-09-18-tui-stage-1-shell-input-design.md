@@ -137,8 +137,29 @@ Shell navigation regions use a common interaction grammar:
 - moving a cursor does not activate a target or change the workbench;
 - cycling stops at list edges and never wraps.
 
-A mouse click focuses and activates its target. The equivalent keyboard path is
-cursor movement followed by `Enter`; no action is mouse-only.
+A mouse click focuses and activates its target while retaining focus in the
+source region for previewing. Cursor movement followed by `Enter` activates the
+same target and may enter its destination as specified below; no action is
+mouse-only.
+
+### Local Activation Focus Handoffs
+
+- `Enter` in the category rail activates the category and focuses the visible
+  navigator, including an empty navigator where project creation is available.
+  It does not reveal a user-hidden or size-hidden navigator.
+- `Enter` on a project activates that project and stays in the navigator.
+- `Enter` on an item opens its surface and enters the active tab's remembered
+  valid pane, or its first pane if no remembered pane belongs to that tab.
+- `o` on a project opens its terminal item and uses the same pane handoff.
+- Workspace and tab activation retain their existing source-region focus.
+
+Item and project-terminal handoffs wait for a successful command and a rendered
+snapshot at or beyond its response revision. Empty or undersized workbenches
+leave focus in the navigator. Failures leave focus with the originating control.
+Further keyboard input, focus movement, navigator mouse browsing or activation,
+dialogs, and an epoch or active-item change cancel a pending handoff; returning
+to the source does not
+revive it. No snapshot update independently requests this keyboard drill-down.
 
 Global Hyper navigation is intentionally different: it activates immediately,
 aligns the relevant local cursor, preserves the currently focused region, and
@@ -279,22 +300,22 @@ unavailable when neither context identifies a project.
 
 ### Stage 1 Contextual Commands
 
-| Focus            | Binding           | Action                                          |
-| ---------------- | ----------------- | ----------------------------------------------- |
-| Session switcher | `n`               | Create session                                  |
-| Workspace strip  | `h/l`, Left/Right | Move cursor without wrapping                    |
-| Workspace strip  | `Enter`           | Activate cursor workspace                       |
-| Workspace strip  | `n`               | Create workspace in the active session          |
-| Category rail    | `j/k`, Up/Down    | Move cursor without wrapping                    |
-| Category rail    | `Enter`           | Activate cursor category                        |
-| Navigator        | `j/k`, Up/Down    | Move through visible project/item nodes         |
-| Navigator        | `h/l`, Left/Right | Collapse/expand the cursor project              |
-| Navigator        | `Enter`           | Activate cursor project or item                 |
-| Navigator        | `n`               | Create project in the current category          |
-| Navigator        | `o` on project    | Create/reuse and open its project terminal item |
-| Navigator        | `Ctrl+Left/Right` | Resize expanded width by one column             |
-| Tab strip        | `h/l`, Left/Right | Move cursor without wrapping                    |
-| Tab strip        | `Enter`           | Activate cursor tab                             |
+| Focus            | Binding           | Action                                            |
+| ---------------- | ----------------- | ------------------------------------------------- |
+| Session switcher | `n`               | Create session                                    |
+| Workspace strip  | `h/l`, Left/Right | Move cursor without wrapping                      |
+| Workspace strip  | `Enter`           | Activate cursor workspace                         |
+| Workspace strip  | `n`               | Create workspace in the active session            |
+| Category rail    | `j/k`, Up/Down    | Move cursor without wrapping                      |
+| Category rail    | `Enter`           | Activate category and enter its visible navigator |
+| Navigator        | `j/k`, Up/Down    | Move through visible project/item nodes           |
+| Navigator        | `h/l`, Left/Right | Collapse/expand the cursor project                |
+| Navigator        | `Enter`           | Activate project, or open item and enter its pane |
+| Navigator        | `n`               | Create project in the current category            |
+| Navigator        | `o` on project    | Open its terminal item and enter its pane         |
+| Navigator        | `Ctrl+Left/Right` | Resize expanded width by one column               |
+| Tab strip        | `h/l`, Left/Right | Move cursor without wrapping                      |
+| Tab strip        | `Enter`           | Activate cursor tab                               |
 
 `o` remains distinct from `Enter`: `o` on a project invokes the existing
 `surface.ensureHere` behavior, while `Enter` on an item opens that item's own
@@ -503,6 +524,8 @@ Stage 1 adds focused behavioral coverage rather than broad visual snapshots.
 - spatial focus across shell regions and recursive pane layouts;
 - edge stopping and last-focused-child restoration;
 - browse-versus-activate behavior;
+- keyboard activation handoffs, mouse/Hyper preview, and cancellation across
+  delayed responses and snapshots;
 - expanded, compact, hidden, and manually restored navigator states;
 - one-cell navigator resizing and ellipsis;
 - stable compact initial/dot projection;

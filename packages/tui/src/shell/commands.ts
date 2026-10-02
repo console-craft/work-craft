@@ -83,6 +83,8 @@ export type ExecuteCommandInput = {
   dispatch(action: ShellAction): void;
   setFocus(target: FocusTarget, pending?: NonNullable<ShellState["pendingWorkbenchFocus"]>): void;
   setSessionCursorId(id: string | null): void;
+  /** Local activation may enter the opened item after its response revision is rendered. */
+  onItemOpened?(itemId: string, revision: number): void;
   run(
     command: Command,
     region: ShellRegion,
@@ -259,6 +261,7 @@ export async function executeCommand({
   dispatch,
   setFocus,
   setSessionCursorId,
+  onItemOpened,
   run,
   reload,
   quit,
@@ -268,16 +271,22 @@ export async function executeCommand({
       dispatch({ type: "snapshot.reconcile", snapshot });
     }
   };
-  const activateNavigator = (entry: ShellModel["entries"][number] | undefined) => {
+  const activateNavigator = async (
+    entry: ShellModel["entries"][number] | undefined,
+    onOpened?: ExecuteCommandInput["onItemOpened"],
+  ) => {
     if (entry === undefined) {
       return;
     }
     dispatch({ type: "navigator.activate", key: entry.key });
     if (entry.kind === "item") {
-      void run(durableCommands.openItem(entry.id), "navigator", {
+      const result = await run(durableCommands.openItem(entry.id), "navigator", {
         navigationKey: navigationContextKey(snapshot, state, entry.key),
         dialog: state.dialog,
       });
+      if (result !== undefined) {
+        onOpened?.(entry.id, result.revision);
+      }
     }
   };
   const openCreate = (createKind: CreateKind) => {
@@ -286,7 +295,7 @@ export async function executeCommand({
       dialog: { kind: "create", createKind, returnFocus: focus },
     });
   };
-  const activateCursor = () => {
+  const activateCursor = async () => {
     if (focus.region === "workspace" && state.workspaceCursorId !== null) {
       dispatch({ type: "workspace.activate", id: state.workspaceCursorId });
       reconcile();
@@ -294,7 +303,7 @@ export async function executeCommand({
       dispatch({ type: "category.activate", category: state.categoryCursor });
       reconcile();
     } else if (focus.region === "navigator") {
-      activateNavigator(model.entries[model.navigatorCursorIndex]);
+      await activateNavigator(model.entries[model.navigatorCursorIndex], onItemOpened);
     } else if (focus.region === "tabs") {
       const tab = model.tabs[model.tabCursorIndex];
       if (model.surface !== undefined && tab !== undefined) {
@@ -333,7 +342,7 @@ export async function executeCommand({
     }
     case "navigator.previous":
     case "navigator.next":
-      activateNavigator(
+      await activateNavigator(
         adjacent(
           model.entries,
           model.navigatorActiveIndex,
@@ -399,7 +408,7 @@ export async function executeCommand({
       }
       return;
     case "cursor.activate":
-      activateCursor();
+      await activateCursor();
       return;
     case "context.create":
       openCreate(
@@ -415,11 +424,22 @@ export async function executeCommand({
       if (entry?.kind === "project") {
         const result = await run(durableCommands.openProject(entry.id), "navigator");
         const itemId = result?.itemId ?? result?.id;
-        if (itemId !== undefined) {
+        if (result !== undefined && itemId !== undefined) {
           if (!state.expandedProjectIds.has(entry.id)) {
             dispatch({ type: "project.toggle", projectId: entry.id });
           }
-          dispatch({ type: "navigator.activate", key: `item:${itemId}` });
+          dispatch({
+            type: "navigator.activate",
+            key: `item:${itemId}`,
+            pending:
+              snapshot === null
+                ? undefined
+                : {
+                    epoch: snapshot.epoch,
+                    revision: result.revision,
+                  },
+          });
+          onItemOpened?.(itemId, result.revision);
         }
       }
       return;

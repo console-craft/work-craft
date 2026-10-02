@@ -27,7 +27,7 @@ export type NavigatorProps = {
   expandedProjectIds: ReadonlySet<string>;
   onExpand(projectId: string, expanded: boolean): void;
   onFocus(key: string): void;
-  onActivate(key: string): void;
+  onActivate(key: string, source: "keyboard" | "mouse"): void;
 };
 
 function projectInitials(label: string): string {
@@ -126,7 +126,7 @@ export function Navigator({
       event.stopPropagation();
       const entry = entries[index];
       if (entry !== undefined) {
-        onActivate(entry.key);
+        onActivate(entry.key, "keyboard");
       }
     }
   }
@@ -176,7 +176,7 @@ export function Navigator({
                 onMouseDown={() => {
                   cursorRef.current = entry.key;
                   onFocus(entry.key);
-                  onActivate(entry.key);
+                  onActivate(entry.key, "mouse");
                 }}
               >
                 {`${cursor ? ">" : active ? "*" : " "} ${label}`}

@@ -187,3 +187,45 @@ test("pending split focus survives earlier revisions but expires on catch-up, re
   expect(cancelled.pendingWorkbenchFocus).toBeNull();
   expect(reconcileShellState(cancelled, completed).focus).toEqual({ region: "tabs" });
 });
+
+test("a newly opened item survives lagging snapshots without overriding subsequent navigation", () => {
+  const snapshot = snapshotFixture({ revision: 2, items: [] });
+  const requested = reduceShellState(
+    {
+      ...createInitialShellState(),
+      activeSessionId: "session-work",
+      activeWorkspaceId: "workspace-shared",
+      activeCategory: "implementation",
+      expandedProjectIds: new Set(["project-1"]),
+    },
+    {
+      type: "navigator.activate",
+      key: "item:new-item",
+      pending: { epoch: snapshot.epoch, revision: 3 },
+    },
+  );
+  const earlier = reconcileShellState(requested, snapshot);
+  expect(earlier.activeNavigatorKey).toBe("item:new-item");
+  const ready = {
+    ...snapshot,
+    revision: 3,
+    items: [{ ...snapshotFixture().items[0]!, id: "new-item" }],
+  };
+  expect(reconcileShellState(earlier, ready).activeNavigatorKey).toBe("item:new-item");
+  expect(reconcileShellState(earlier, ready).pendingNavigatorActivation).toBeNull();
+  expect(reconcileShellState(earlier, { ...snapshot, revision: 3 }).activeNavigatorKey).toBe(
+    "project:project-1",
+  );
+  expect(reconcileShellState(earlier, { ...snapshot, epoch: "restart" }).activeNavigatorKey).toBe(
+    "project:project-1",
+  );
+  const changed = reduceShellState(earlier, {
+    type: "navigator.activate",
+    key: "project:project-1",
+  });
+  expect(reconcileShellState(changed, ready).activeNavigatorKey).toBe("project:project-1");
+  expect(
+    reduceShellState(earlier, { type: "category.activate", category: "inbox" })
+      .pendingNavigatorActivation,
+  ).toBeNull();
+});

@@ -401,7 +401,7 @@ test("raw stage 1 key sequences drive the shell", async () => {
     tui.terminal.write(input.encode(kitty.hyper(108)));
     await waitFor(() => tui.output().includes("Implementation"), "the project category");
 
-    tui.terminal.write(Uint8Array.of(12));
+    tui.terminal.write(input.encode("\r"));
     await Bun.sleep(50);
     tui.terminal.write(input.encode("l"));
     await waitFor(() => tui.output().includes("Input Item"), "the expanded project");
@@ -410,6 +410,13 @@ test("raw stage 1 key sequences drive the shell", async () => {
     expect(tui.output()).not.toContain("Second");
     tui.terminal.write(input.encode("\r"));
     await waitFor(() => tui.output().includes("Second"), "item activation");
+    await Bun.sleep(50);
+    tui.terminal.write(input.encode("printf 'ENTER-%s\\n' \"$((3*7))\"\r"));
+    await waitForSnapshot(
+      client,
+      (snapshot) => terminalText(snapshot, secondTab.result.paneId!).includes("ENTER-21"),
+      "item Enter handing input directly to its active pane",
+    );
 
     tui.terminal.write(input.encode(kitty.hyper(93)));
     await Bun.sleep(100);
@@ -432,7 +439,7 @@ test("raw stage 1 key sequences drive the shell", async () => {
         ?.activeTabId,
     ).toBe(firstTabId);
 
-    tui.terminal.write(Uint8Array.of(12));
+    tui.terminal.write(Uint8Array.of(10));
     await Bun.sleep(50);
     tui.terminal.write(input.encode("printf 'WC-%s\\n' \"$((6*7))\"\r"));
     await waitForSnapshot(

@@ -27,7 +27,7 @@ export type CategoryRailProps = {
   active: CategoryKind;
   cursor: CategoryKind;
   focused: boolean;
-  onActivate(kind: CategoryKind): void;
+  onActivate(kind: CategoryKind, source: "keyboard" | "mouse"): void;
   onFocus(kind: CategoryKind): void;
 };
 
@@ -77,7 +77,7 @@ export function CategoryRail({
       event.preventDefault();
       event.stopPropagation();
       if (categories.some(({ kind }) => kind === cursorRef.current)) {
-        onActivate(cursorRef.current);
+        onActivate(cursorRef.current, "keyboard");
       }
     }
   }
@@ -106,7 +106,7 @@ export function CategoryRail({
             onMouseDown={() => {
               cursorRef.current = category.kind;
               onFocus(category.kind);
-              onActivate(category.kind);
+              onActivate(category.kind, "mouse");
             }}
           >
             <Text fg={color} width={2}>
