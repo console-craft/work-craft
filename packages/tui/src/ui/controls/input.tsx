@@ -1,7 +1,8 @@
-import type { InputRenderable } from "@opentui/core";
+import { defaultTextareaKeyBindings, type InputRenderable } from "@opentui/core";
 import type { InputProps as OpenTUIInputProps } from "@opentui/react";
 import { useCallback, useLayoutEffect, useRef } from "react";
 
+import { nativeActionHints, useControlHints } from "@/ui/control-hints";
 import { resolveColor, type ThemeColor } from "@/ui/theme";
 import { useTheme } from "@/ui/theme-provider";
 import { assignRef, setDisabled } from "@/ui/utils";
@@ -24,12 +25,20 @@ type InputEventProps = {
   onSubmit?: (value: string) => void;
 };
 
+// The inherited Textarea setter replaces Input's constructor-only defaults.
+const submitBindings = [
+  { name: "return", action: "submit" },
+  { name: "kpenter", action: "submit" },
+  { name: "linefeed", action: "submit" },
+] satisfies NonNullable<OpenTUIInputProps["keyBindings"]>;
+
 export interface InputProps
   extends
     Omit<OpenTUIInputProps, keyof ThemedColorProps | keyof InputEventProps>,
     ThemedColorProps,
     InputEventProps {
   disabled?: boolean;
+  submitLabel?: string;
 }
 
 export function Input({
@@ -37,6 +46,9 @@ export function Input({
   disabled = false,
   focused,
   onSubmit,
+  submitLabel = "Submit",
+  keyBindings = [],
+  keyAliasMap,
 
   backgroundColor = "muted",
   textColor = "foreground",
@@ -53,6 +65,18 @@ export function Input({
 }: InputProps) {
   const theme = useTheme();
   const inputRef = useRef<InputRenderable | null>(null);
+  const effectiveBindings = [...submitBindings, ...keyBindings];
+  useControlHints(
+    inputRef,
+    !disabled && onSubmit
+      ? nativeActionHints(
+          [...defaultTextareaKeyBindings, ...effectiveBindings],
+          "submit",
+          submitLabel,
+          keyAliasMap,
+        )
+      : [],
+  );
 
   const setInputRef = useCallback(
     (node: InputRenderable | null) => {
@@ -85,6 +109,8 @@ export function Input({
   return (
     <input
       {...props}
+      keyBindings={effectiveBindings}
+      keyAliasMap={keyAliasMap}
       // OpenTUI React emits a string, but its types also inherit the native SubmitEvent callback.
       onSubmit={onSubmit as OpenTUIInputProps["onSubmit"]}
       ref={setInputRef}

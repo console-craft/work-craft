@@ -21,10 +21,6 @@ export type CommandId =
   | "pane.splitHorizontal"
   | "pane.splitVertical"
   | "pane.restart"
-  | "cursor.previous"
-  | "cursor.next"
-  | "cursor.left"
-  | "cursor.right"
   | "cursor.activate"
   | "context.create"
   | "project.openTerminal"
@@ -86,25 +82,35 @@ type Route = {
 type CommandDefinition = CommandHint & {
   id: CommandId;
   durable?: true;
+  showInHints?: boolean;
   routes: readonly Route[];
 };
 
 const COMMANDS: readonly CommandDefinition[] = [
   {
     id: "focus.left",
+    showInHints: false,
     keys: "Ctrl+h",
     label: "Focus left",
     routes: [{ kind: "ctrl", names: ["h"] }],
   },
   {
     id: "focus.down",
+    showInHints: false,
     keys: "Ctrl+j",
     label: "Focus down",
     routes: [{ kind: "ctrl", names: ["j"] }],
   },
-  { id: "focus.up", keys: "Ctrl+k", label: "Focus up", routes: [{ kind: "ctrl", names: ["k"] }] },
+  {
+    id: "focus.up",
+    showInHints: false,
+    keys: "Ctrl+k",
+    label: "Focus up",
+    routes: [{ kind: "ctrl", names: ["k"] }],
+  },
   {
     id: "focus.right",
+    showInHints: false,
     keys: "Ctrl+l",
     label: "Focus right",
     routes: [{ kind: "ctrl", names: ["l"] }],
@@ -112,7 +118,7 @@ const COMMANDS: readonly CommandDefinition[] = [
   {
     id: "category.previous",
     keys: "Hyper+h",
-    label: "Previous category",
+    label: "Prev category",
     routes: [{ kind: "hyper", names: ["h"] }],
   },
   {
@@ -124,7 +130,7 @@ const COMMANDS: readonly CommandDefinition[] = [
   {
     id: "navigator.previous",
     keys: "Hyper+k",
-    label: "Previous item",
+    label: "Prev item",
     durable: true,
     routes: [{ kind: "hyper", names: ["k"] }],
   },
@@ -144,7 +150,7 @@ const COMMANDS: readonly CommandDefinition[] = [
   {
     id: "tab.previous",
     keys: "Hyper+[",
-    label: "Previous tab",
+    label: "Prev tab",
     durable: true,
     routes: [{ kind: "hyper", names: ["["] }],
   },
@@ -209,49 +215,6 @@ const COMMANDS: readonly CommandDefinition[] = [
     routes: [{ kind: "leader", names: ["r"] }],
   },
   {
-    id: "cursor.previous",
-    keys: "k/Up",
-    label: "Previous",
-    routes: [
-      { kind: "plain", names: ["k", "up"], scopes: ["category", "navigator"] },
-      { kind: "plain", names: ["k", "up"], dialogs: ["sessions"] },
-    ],
-  },
-  {
-    id: "cursor.next",
-    keys: "j/Down",
-    label: "Next",
-    routes: [
-      { kind: "plain", names: ["j", "down"], scopes: ["category", "navigator"] },
-      { kind: "plain", names: ["j", "down"], dialogs: ["sessions"] },
-    ],
-  },
-  {
-    id: "cursor.left",
-    keys: "h/Left",
-    label: "Previous/Collapse",
-    routes: [{ kind: "plain", names: ["h", "left"], scopes: ["workspace", "navigator", "tabs"] }],
-  },
-  {
-    id: "cursor.right",
-    keys: "l/Right",
-    label: "Next/Expand",
-    routes: [{ kind: "plain", names: ["l", "right"], scopes: ["workspace", "navigator", "tabs"] }],
-  },
-  {
-    id: "cursor.activate",
-    keys: "Enter",
-    label: "Activate",
-    routes: [
-      {
-        kind: "plain",
-        names: ["return", "enter"],
-        scopes: ["workspace", "category", "navigator", "tabs"],
-      },
-      { kind: "plain", names: ["return", "enter"], dialogs: ["sessions"] },
-    ],
-  },
-  {
     id: "context.create",
     keys: "n",
     label: "Create",
@@ -269,12 +232,14 @@ const COMMANDS: readonly CommandDefinition[] = [
   },
   {
     id: "navigator.shrink",
+    showInHints: false,
     keys: "Ctrl+Left",
     label: "Shrink navigator",
     routes: [{ kind: "ctrl", names: ["left"], scopes: ["navigator"] }],
   },
   {
     id: "navigator.grow",
+    showInHints: false,
     keys: "Ctrl+Right",
     label: "Grow navigator",
     routes: [{ kind: "ctrl", names: ["right"], scopes: ["navigator"] }],
@@ -327,6 +292,10 @@ function routeMatches(route: Route, key: KeyLike, context: CommandContext): bool
 
 function available(definition: CommandDefinition, context: CommandContext): boolean {
   return context.availableCommands.has(definition.id) && (!definition.durable || context.connected);
+}
+
+function allowedUnderModal(id: CommandId): boolean {
+  return id === "client.reload" || id === "client.quit";
 }
 
 function result(state: RouterState, handled: boolean, command?: CommandId): RouteResult {
@@ -401,14 +370,18 @@ export function routeKey(
   const state = clearExpiredMessage(currentState, now);
 
   if (context.dialog !== undefined) {
+    const dialogState = { ...state, leaderStartedAt: null };
     const dialogMatch = dialogCommandFor(key, context);
     if (dialogMatch !== undefined) {
-      return result(state, true, dialogMatch.allowed ? dialogMatch.definition.id : undefined);
+      return result(dialogState, true, dialogMatch.allowed ? dialogMatch.definition.id : undefined);
     }
     const globalMatch = commandFor("hyper", key, context);
-    return globalMatch === undefined
-      ? result(state, false)
-      : result(state, true, globalMatch.allowed ? globalMatch.definition.id : undefined);
+    if (globalMatch !== undefined) {
+      const id = globalMatch.definition.id;
+      const modalAllowed = allowedUnderModal(id);
+      return result(dialogState, true, modalAllowed && globalMatch.allowed ? id : undefined);
+    }
+    return result(dialogState, false);
   }
 
   if (state.leaderStartedAt !== null) {
@@ -463,12 +436,19 @@ export function commandHints(state: RouterState, context: CommandContext): reado
   const routeKind = state.leaderStartedAt === null ? undefined : "leader";
   const seen = new Set<CommandId>();
   return COMMANDS.flatMap<CommandHint>((definition) => {
-    if (seen.has(definition.id) || !available(definition, context)) {
+    if (
+      definition.showInHints === false ||
+      seen.has(definition.id) ||
+      !available(definition, context)
+    ) {
       return [];
     }
     const visible = definition.routes.some((route) => {
       if (context.dialog !== undefined) {
-        return route.dialogs?.includes(context.dialog) === true;
+        return (
+          route.dialogs?.includes(context.dialog) === true ||
+          (route.kind === "hyper" && allowedUnderModal(definition.id))
+        );
       }
       if (routeKind !== undefined) {
         return route.kind === routeKind;

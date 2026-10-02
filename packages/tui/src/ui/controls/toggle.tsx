@@ -16,6 +16,7 @@ import {
   useState,
 } from "react";
 
+import { useControlHints } from "@/ui/control-hints";
 import { Box, type BoxProps } from "@/ui/primitives/box";
 import { HStack, type HStackProps } from "@/ui/primitives/hstack";
 import { Text, type TextProps } from "@/ui/primitives/text";
@@ -34,11 +35,17 @@ type ToggleGroupContextValue = {
 
   isPressed: (value: string) => boolean;
   register: (item: ToggleRegistration) => () => void;
+  refreshItems: () => void;
   focusValue: (value: string) => void;
   toggleValue: (value: string) => void;
 };
 
 const ToggleGroupContext = createContext<ToggleGroupContextValue | null>(null);
+
+const toggleAction = {
+  names: ["space", "return", "linefeed"],
+  hint: { keys: "Enter/Space", label: "Toggle" },
+};
 
 interface BaseToggleGroupProps extends Omit<
   BoxProps,
@@ -78,6 +85,7 @@ export function ToggleGroup(props: ToggleGroupProps) {
 
   const groupRef = useRef<BoxRenderable | null>(null);
   const itemsRef = useRef<ToggleRegistration[]>([]);
+  const [, setItemsRevision] = useState(0);
 
   const pressedValuesRef = useRef<Set<string>>(new Set());
 
@@ -91,17 +99,38 @@ export function ToggleGroup(props: ToggleGroupProps) {
 
   const getEnabledItems = useCallback(() => itemsRef.current.filter((item) => !item.disabled), []);
 
-  const register = useCallback((item: ToggleRegistration) => {
-    itemsRef.current.push(item);
+  useControlHints(
+    groupRef,
+    !disabled &&
+      props.onValueChange &&
+      activeValue &&
+      getEnabledItems().some((item) => item.value === activeValue)
+      ? [toggleAction.hint]
+      : [],
+  );
 
-    return () => {
-      const index = itemsRef.current.indexOf(item);
-
-      if (index !== -1) {
-        itemsRef.current.splice(index, 1);
-      }
-    };
+  const refreshItems = useCallback(() => {
+    if (groupRef.current && !groupRef.current.isDestroyed) {
+      setItemsRevision((revision) => revision + 1);
+    }
   }, []);
+
+  const register = useCallback(
+    (item: ToggleRegistration) => {
+      itemsRef.current.push(item);
+      refreshItems();
+
+      return () => {
+        const index = itemsRef.current.indexOf(item);
+
+        if (index !== -1) {
+          itemsRef.current.splice(index, 1);
+          refreshItems();
+        }
+      };
+    },
+    [refreshItems],
+  );
 
   const isPressed = useCallback((value: string) => pressedValuesRef.current.has(value), []);
 
@@ -110,8 +139,9 @@ export function ToggleGroup(props: ToggleGroupProps) {
 
     if (!item) return;
 
-    setActiveValue(value);
+    // Native focus initializes the candidate before the clicked value takes precedence.
     groupRef.current?.focus();
+    setActiveValue(value);
   }, []);
 
   function toggleValue(value: string) {
@@ -157,6 +187,11 @@ export function ToggleGroup(props: ToggleGroupProps) {
 
       node.on(RenderableEvents.FOCUSED, handleFocus);
       node.on(RenderableEvents.BLURRED, handleBlur);
+
+      // The focused prop is applied before this ref subscribes to native events.
+      if (node.focused) {
+        handleFocus();
+      }
 
       return () => {
         node.off(RenderableEvents.FOCUSED, handleFocus);
@@ -230,8 +265,7 @@ export function ToggleGroup(props: ToggleGroupProps) {
       return;
     }
 
-    const activate =
-      !event.repeated && noModifiers && ["space", "return", "linefeed"].includes(event.name);
+    const activate = !event.repeated && noModifiers && toggleAction.names.includes(event.name);
 
     if (activate && activeValue) {
       event.preventDefault();
@@ -248,6 +282,7 @@ export function ToggleGroup(props: ToggleGroupProps) {
 
       isPressed,
       register,
+      refreshItems,
       focusValue,
       toggleValue,
     }),
@@ -258,6 +293,7 @@ export function ToggleGroup(props: ToggleGroupProps) {
       props.onValueChange,
       isPressed,
       register,
+      refreshItems,
       focusValue,
       toggleValue,
     ],
@@ -321,6 +357,10 @@ export function Toggle({
   const isGrouped = group !== null;
 
   const isDisabled = disabled || Boolean(group?.disabled);
+  useControlHints(
+    toggleRef,
+    !isGrouped && !isDisabled && onPressedChange ? [toggleAction.hint] : [],
+  );
 
   const isPressed = group ? group.isPressed(value!) : pressed;
 
@@ -334,6 +374,9 @@ export function Toggle({
   registrationRef.current.value = value ?? "";
   registrationRef.current.disabled = isDisabled;
 
+  useLayoutEffect(() => group?.register(registrationRef.current), [group?.register]);
+  useLayoutEffect(() => group?.refreshItems(), [group?.refreshItems, value, isDisabled]);
+
   const setToggleRef = useCallback(
     (node: BoxRenderable | null) => {
       toggleRef.current = node;
@@ -341,12 +384,8 @@ export function Toggle({
 
       if (!node) return;
 
-      if (group) {
-        const unregister = group.register(registrationRef.current);
-
+      if (isGrouped) {
         return () => {
-          unregister();
-
           if (toggleRef.current === node) {
             toggleRef.current = null;
           }
@@ -374,7 +413,7 @@ export function Toggle({
         assignRef(ref, null);
       };
     },
-    [ref, group],
+    [ref, isGrouped],
   );
 
   useLayoutEffect(() => {
@@ -427,7 +466,7 @@ export function Toggle({
 
     const noModifiers = !event.ctrl && !event.meta && !event.super && !event.shift;
 
-    if (noModifiers && ["space", "return", "linefeed"].includes(event.name)) {
+    if (noModifiers && toggleAction.names.includes(event.name)) {
       event.preventDefault();
       toggle();
     }

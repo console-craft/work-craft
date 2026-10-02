@@ -14,6 +14,10 @@ provides contextual hints, and establishes the provisional cross-stage keymap.
 
 This design is a focused companion to
 [`2026-09-18-tui-overhaul-design.md`](./2026-09-18-tui-overhaul-design.md).
+The
+[`focus and input contract addendum`](./2026-10-02-tui-focus-input-contract-design.md)
+refines control ownership, modal focus lifecycle, routing eligibility, and hint
+visibility before Stage 2. Its rules govern those refinements.
 The overhaul's approved sketches remain directional references:
 
 - [Implementation category](../../sketches/sketch-implementation-category.png)
@@ -133,8 +137,29 @@ Shell navigation regions use a common interaction grammar:
 - moving a cursor does not activate a target or change the workbench;
 - cycling stops at list edges and never wraps.
 
-A mouse click focuses and activates its target. The equivalent keyboard path is
-cursor movement followed by `Enter`; no action is mouse-only.
+A mouse click focuses and activates its target while retaining focus in the
+source region for previewing. Cursor movement followed by `Enter` activates the
+same target and may enter its destination as specified below; no action is
+mouse-only.
+
+### Local Activation Focus Handoffs
+
+- `Enter` in the category rail activates the category and focuses the visible
+  navigator, including an empty navigator where project creation is available.
+  It does not reveal a user-hidden or size-hidden navigator.
+- `Enter` on a project activates that project and stays in the navigator.
+- `Enter` on an item opens its surface and enters the active tab's remembered
+  valid pane, or its first pane if no remembered pane belongs to that tab.
+- `o` on a project opens its terminal item and uses the same pane handoff.
+- Workspace and tab activation retain their existing source-region focus.
+
+Item and project-terminal handoffs wait for a successful command and a rendered
+snapshot at or beyond its response revision. Empty or undersized workbenches
+leave focus in the navigator. Failures leave focus with the originating control.
+Further keyboard input, focus movement, navigator mouse browsing or activation,
+dialogs, and an epoch or active-item change cancel a pending handoff; returning
+to the source does not
+revive it. No snapshot update independently requests this keyboard drill-down.
 
 Global Hyper navigation is intentionally different: it activates immediately,
 aligns the relevant local cursor, preserves the currently focused region, and
@@ -148,34 +173,43 @@ the navigator does not steal focus.
 
 ## Root Command Router
 
-One root command table defines each command's:
+One root application-command table defines each application command's:
 
 - stable ID;
 - key sequence;
 - valid focus scope;
 - status-bar label;
+- hint visibility;
 - availability predicate;
 - semantic callback.
 
-The table drives both execution and contextual hints so displayed bindings
-cannot drift from behavior. Components expose semantic callbacks and local
-cursor operations; they do not install competing global keyboard handlers.
+The table drives application-command execution and contextual action hints.
+Focused controls and composite shell regions own local navigation, editing, and
+activation through native handlers and semantic callbacks. Their hint definitions
+remain beside their behavior; the shell composes hints using actual native focus.
+Components do not install competing global keyboard handlers.
 
 This is a fixed application command table, not a public keybinding system,
 event bus, or plugin API.
 
 ### Routing Priority
 
-Key handling follows this order:
+With a dialog active, modal eligibility is applied first: only reconnect/quit,
+explicit dialog shortcuts, Tab traversal, and focused-control input are allowed.
+Background keyboard and mouse actions are blocked. Ctrl+h/j/k/l remains local
+control input rather than spatial shell movement, and shell leader mode cannot
+start inside a dialog.
 
-1. A focused dialog handles its scoped commands.
-2. Active leader input resolves or cancels the current sequence.
-3. Registered Hyper and other global chords run when available.
-4. Spatial `Ctrl+h/j/k/l` changes focus.
-5. The focused shell region handles local navigation.
-6. Unhandled terminal input passes to the embedded terminal unchanged.
+Without a dialog, key handling follows this order:
 
-Handlers stop propagation only when they recognize and consume a command.
+1. Active leader input resolves or cancels the current sequence.
+2. Registered Hyper and other global chords run when available.
+3. Spatial `Ctrl+h/j/k/l` changes focus.
+4. The focused control or composite shell region handles local interaction.
+5. Unhandled terminal input passes to the embedded terminal unchanged.
+
+Handlers stop propagation only when they recognize and consume a command or
+active-scope input policy such as Tab traversal.
 
 `Ctrl+C` is no longer a renderer-level exit shortcut and reaches a focused
 terminal. `Escape` also reaches a focused terminal unless it is cancelling
@@ -190,6 +224,9 @@ remains active until:
 - `Escape` cancels it;
 - an invalid sequence is consumed and reported;
 - a qualifying double-prefix passes through to a terminal.
+
+Entering or replacing a dialog also clears the pending sequence; it does not
+resume after the dialog closes.
 
 An invalid sequence enters `ERROR` mode and reports the invalid key for one
 second before returning to the status mode derived from focus and navigator
@@ -263,22 +300,22 @@ unavailable when neither context identifies a project.
 
 ### Stage 1 Contextual Commands
 
-| Focus            | Binding           | Action                                          |
-| ---------------- | ----------------- | ----------------------------------------------- |
-| Session switcher | `n`               | Create session                                  |
-| Workspace strip  | `h/l`, Left/Right | Move cursor without wrapping                    |
-| Workspace strip  | `Enter`           | Activate cursor workspace                       |
-| Workspace strip  | `n`               | Create workspace in the active session          |
-| Category rail    | `j/k`, Up/Down    | Move cursor without wrapping                    |
-| Category rail    | `Enter`           | Activate cursor category                        |
-| Navigator        | `j/k`, Up/Down    | Move through visible project/item nodes         |
-| Navigator        | `h/l`, Left/Right | Collapse/expand the cursor project              |
-| Navigator        | `Enter`           | Activate cursor project or item                 |
-| Navigator        | `n`               | Create project in the current category          |
-| Navigator        | `o` on project    | Create/reuse and open its project terminal item |
-| Navigator        | `Ctrl+Left/Right` | Resize expanded width by one column             |
-| Tab strip        | `h/l`, Left/Right | Move cursor without wrapping                    |
-| Tab strip        | `Enter`           | Activate cursor tab                             |
+| Focus            | Binding           | Action                                            |
+| ---------------- | ----------------- | ------------------------------------------------- |
+| Session switcher | `n`               | Create session                                    |
+| Workspace strip  | `h/l`, Left/Right | Move cursor without wrapping                      |
+| Workspace strip  | `Enter`           | Activate cursor workspace                         |
+| Workspace strip  | `n`               | Create workspace in the active session            |
+| Category rail    | `j/k`, Up/Down    | Move cursor without wrapping                      |
+| Category rail    | `Enter`           | Activate category and enter its visible navigator |
+| Navigator        | `j/k`, Up/Down    | Move through visible project/item nodes           |
+| Navigator        | `h/l`, Left/Right | Collapse/expand the cursor project                |
+| Navigator        | `Enter`           | Activate project, or open item and enter its pane |
+| Navigator        | `n`               | Create project in the current category            |
+| Navigator        | `o` on project    | Open its terminal item and enter its pane         |
+| Navigator        | `Ctrl+Left/Right` | Resize expanded width by one column               |
+| Tab strip        | `h/l`, Left/Right | Move cursor without wrapping                      |
+| Tab strip        | `Enter`           | Activate cursor tab                               |
 
 `o` remains distinct from `Enter`: `o` on a project invokes the existing
 `surface.ensureHere` behavior, while `Enter` on an item opens that item's own
@@ -298,7 +335,8 @@ surface.
 | `leader+d`             | Archive active item or focused project | Category/item lifecycle design |
 
 Unassigned familiar keys such as `Ctrl+n`, `Ctrl+p`, `/`, and contextual
-brackets remain free until a concrete behavior needs them.
+brackets remain free of application-global bindings. A focused control may use
+them for its own concrete behavior, such as Ctrl+n/Ctrl+p list navigation.
 
 ## Terminal-App Cooperation
 
@@ -307,8 +345,8 @@ adapter:
 
 - unintegrated terminal panes give `Ctrl+h/j/k/l` to Work Craft;
 - the double prefix passes one literal leader to the child;
-- a future integrated app may own spatial chords and invoke the same semantic
-  `focus(direction)` command only at an application edge;
+- a future integrated app must own internal spatial movement and invoke the
+  same semantic `focus(direction)` command only at an application edge;
 - app-originated focus must enter the normal command path rather than mutate
   React focus directly.
 
@@ -409,7 +447,8 @@ mode content.
 
 Stage 1 defines four modes:
 
-- **`HINTS`:** commands relevant to the focused region.
+- **`HINTS`:** eligible actions relevant to the actual focused control or region,
+  active scope, and application context.
 - **`LEADER`:** valid continuations for the current leader prefix.
 - **`INFO`:** the full cursor project/item label while the compact navigator is
   focused.
@@ -423,13 +462,23 @@ The mode representation is deliberately easy to extend when a concrete new
 feedback state appears, but Stage 1 does not add empty placeholder modes.
 Connection information does not appear in the status bar.
 
+Common movement/traversal keys are omitted from HINTS: Ctrl+h/j/k/l, local
+h/j/k/l and arrows, Ctrl+n/Ctrl+p, Tab/Shift+Tab, and local endpoint, paging, and
+scrolling bindings. Acceptance such as Enter/Space, dismissal such as Escape,
+application-global chords, leader actions, and contextual actions such as n/o may
+be displayed when eligible. Application-global navigation chords remain
+discoverable. Hint omission does not disable a binding.
+
 ## Dialogs And Empty States
 
 Session selection and creation forms are focused dialogs over the mounted
 shell. A dialog:
 
-- traps focus;
-- provides contextual status-bar hints;
+- traps keyboard and mouse focus within its eligible controls;
+- uses Tab/Shift+Tab traversal, not spatial Ctrl+h/j/k/l movement;
+- provides concise action hints for the actual focused control;
+- blocks background actions except Hyper+r reconnect and Hyper+q quit;
+- clears pending shell leader state on entry or replacement;
 - closes with `Escape` when cancellation is valid;
 - restores the previously focused region when it closes.
 
@@ -475,6 +524,8 @@ Stage 1 adds focused behavioral coverage rather than broad visual snapshots.
 - spatial focus across shell regions and recursive pane layouts;
 - edge stopping and last-focused-child restoration;
 - browse-versus-activate behavior;
+- keyboard activation handoffs, mouse/Hyper preview, and cancellation across
+  delayed responses and snapshots;
 - expanded, compact, hidden, and manually restored navigator states;
 - one-cell navigator resizing and ellipsis;
 - stable compact initial/dot projection;

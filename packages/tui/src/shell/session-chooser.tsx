@@ -54,13 +54,12 @@ export function SessionChooser({
       </Box>
       <Divider />
       <Box paddingLeft={1} paddingRight={1} flexGrow={1} minHeight={0}>
-        {ordered.length === 0 ? (
-          <Text>No sessions. Press n to create one.</Text>
-        ) : (
-          <Stack height="95%">
+        <Stack height="95%">
+          {ordered.length === 0 ? (
+            <Text>No sessions. Press n to create one.</Text>
+          ) : (
             <Select
               id="session:list"
-              focused
               flexGrow={1}
               minHeight={0}
               showDescription={false}
@@ -84,18 +83,18 @@ export function SessionChooser({
               }}
               onMouseDown={handleMouseDown}
             />
-            <Button
-              id="session:create"
-              variant="primary"
-              alignSelf="flex-start"
-              paddingX={1}
-              flexShrink={0}
-              onPress={onCreate}
-            >
-              New session
-            </Button>
-          </Stack>
-        )}
+          )}
+          <Button
+            id="session:create"
+            variant="primary"
+            alignSelf="flex-start"
+            paddingX={1}
+            flexShrink={0}
+            onPress={onCreate}
+          >
+            New session
+          </Button>
+        </Stack>
       </Box>
     </Box>
   );

@@ -51,6 +51,9 @@ export type CompletionContext = {
   dialog: DialogState;
 };
 
+/** Retains the response revision so split focus can wait for a lagging snapshot. */
+export type DurableCommandResult = CommandResponse["result"] & Pick<CommandResponse, "revision">;
+
 export type CommandAvailabilityInput = {
   model: ShellModel;
   state: ShellState;
@@ -78,12 +81,15 @@ export type ExecuteCommandInput = {
   focusNodes: readonly FocusNode[];
   terminalWidth: number;
   dispatch(action: ShellAction): void;
+  setFocus(target: FocusTarget, pending?: NonNullable<ShellState["pendingWorkbenchFocus"]>): void;
   setSessionCursorId(id: string | null): void;
+  /** Local activation may enter the opened item after its response revision is rendered. */
+  onItemOpened?(itemId: string, revision: number): void;
   run(
     command: Command,
     region: ShellRegion,
     expected?: CompletionContext,
-  ): Promise<CommandResponse["result"] | undefined>;
+  ): Promise<DurableCommandResult | undefined>;
   reload(): Promise<void>;
   quit(): void;
 };
@@ -153,20 +159,11 @@ export function availableCommands({
       commands.add("pane.restart");
     }
   }
-  if (snapshot !== null && projectIdForShellContext(state, snapshot) !== undefined) {
+  if (snapshot !== null && projectIdForShellContext({ ...state, focus }, snapshot) !== undefined) {
     commands.add("item.create");
   }
 
   if (state.dialog?.kind === "sessions") {
-    if (model.sessionCursorIndex > 0) {
-      commands.add("cursor.previous");
-    }
-    if (model.sessionCursorIndex >= 0 && model.sessionCursorIndex < model.sessions.length - 1) {
-      commands.add("cursor.next");
-    }
-    if (model.sessionCursor !== null) {
-      commands.add("cursor.activate");
-    }
     commands.add("context.create");
     if (state.activeSessionId !== null) {
       commands.add("dialog.cancel");
@@ -174,44 +171,13 @@ export function availableCommands({
   } else if (state.dialog?.kind === "create") {
     commands.add("dialog.cancel");
   } else if (focus.region === "workspace") {
-    if (model.workspaceCursorIndex > 0) {
-      commands.add("cursor.left");
-    }
-    if (
-      model.workspaceCursorIndex >= 0 &&
-      model.workspaceCursorIndex < model.workspaces.length - 1
-    ) {
-      commands.add("cursor.right");
-    }
-    if (state.workspaceCursorId !== null) {
-      commands.add("cursor.activate");
-    }
     if (state.activeSessionId !== null) {
       commands.add("context.create");
     }
   } else if (focus.region === "session") {
     commands.add("context.create");
-  } else if (focus.region === "category") {
-    if (model.categoryCursorIndex > 0) {
-      commands.add("cursor.previous");
-    }
-    if (model.categoryCursorIndex >= 0 && model.categoryCursorIndex < model.categories.length - 1) {
-      commands.add("cursor.next");
-    }
-    commands.add("cursor.activate");
   } else if (focus.region === "navigator") {
-    if (model.navigatorCursorIndex > 0) {
-      commands.add("cursor.previous");
-    }
-    if (model.navigatorCursorIndex >= 0 && model.navigatorCursorIndex < model.entries.length - 1) {
-      commands.add("cursor.next");
-    }
-    if (state.navigatorCursorKey !== null) {
-      commands.add("cursor.activate");
-    }
     if (model.entries[model.navigatorCursorIndex]?.kind === "project") {
-      commands.add("cursor.left");
-      commands.add("cursor.right");
       commands.add("project.openTerminal");
     }
     if (state.activeWorkspaceId !== null) {
@@ -219,16 +185,6 @@ export function availableCommands({
     }
     commands.add("navigator.shrink");
     commands.add("navigator.grow");
-  } else if (focus.region === "tabs") {
-    if (model.tabCursorIndex > 0) {
-      commands.add("cursor.left");
-    }
-    if (model.tabCursorIndex >= 0 && model.tabCursorIndex < model.tabs.length - 1) {
-      commands.add("cursor.right");
-    }
-    if (state.tabCursorId !== null) {
-      commands.add("cursor.activate");
-    }
   }
 
   return commands;
@@ -241,7 +197,7 @@ export async function runDurableCommand({
   current,
   send,
   dispatch,
-}: RunDurableCommandInput): Promise<CommandResponse["result"] | undefined> {
+}: RunDurableCommandInput): Promise<DurableCommandResult | undefined> {
   const contextIsCurrent = () => {
     const latest = current();
     return (
@@ -257,7 +213,7 @@ export async function runDurableCommand({
       return undefined;
     }
     dispatch({ type: "error.set", region, error: null });
-    return response.result;
+    return { ...response.result, revision: response.revision };
   } catch (cause) {
     if (!contextIsCurrent()) {
       return undefined;
@@ -303,7 +259,9 @@ export async function executeCommand({
   focusNodes,
   terminalWidth,
   dispatch,
+  setFocus,
   setSessionCursorId,
+  onItemOpened,
   run,
   reload,
   quit,
@@ -313,16 +271,22 @@ export async function executeCommand({
       dispatch({ type: "snapshot.reconcile", snapshot });
     }
   };
-  const activateNavigator = (entry: ShellModel["entries"][number] | undefined) => {
+  const activateNavigator = async (
+    entry: ShellModel["entries"][number] | undefined,
+    onOpened?: ExecuteCommandInput["onItemOpened"],
+  ) => {
     if (entry === undefined) {
       return;
     }
     dispatch({ type: "navigator.activate", key: entry.key });
     if (entry.kind === "item") {
-      void run(durableCommands.openItem(entry.id), "navigator", {
+      const result = await run(durableCommands.openItem(entry.id), "navigator", {
         navigationKey: navigationContextKey(snapshot, state, entry.key),
         dialog: state.dialog,
       });
+      if (result !== undefined) {
+        onOpened?.(entry.id, result.revision);
+      }
     }
   };
   const openCreate = (createKind: CreateKind) => {
@@ -331,60 +295,15 @@ export async function executeCommand({
       dialog: { kind: "create", createKind, returnFocus: focus },
     });
   };
-  const moveCursor = (offset: -1 | 1) => {
-    if (state.dialog?.kind === "sessions") {
-      setSessionCursorId(
-        adjacent(model.sessions, model.sessionCursorIndex, offset)?.id ?? model.sessionCursor,
-      );
-    } else if (focus.region === "category") {
-      const category = adjacent(model.categories, model.categoryCursorIndex, offset);
-      if (category !== undefined) {
-        dispatch({ type: "category.cursor", category: category.kind });
-      }
-    } else if (focus.region === "navigator") {
-      const entry = adjacent(model.entries, model.navigatorCursorIndex, offset);
-      if (entry !== undefined) {
-        dispatch({ type: "navigator.cursor", key: entry.key });
-      }
-    }
-  };
-  const moveHorizontalCursor = (offset: -1 | 1) => {
-    if (focus.region === "workspace") {
-      const workspace = adjacent(model.workspaces, model.workspaceCursorIndex, offset);
-      if (workspace !== undefined) {
-        dispatch({ type: "workspace.cursor", id: workspace.id });
-      }
-    } else if (focus.region === "tabs") {
-      const tab = adjacent(model.tabs, model.tabCursorIndex, offset);
-      if (tab !== undefined) {
-        dispatch({ type: "tab.cursor", id: tab.id });
-      }
-    } else if (focus.region === "navigator") {
-      const entry = model.entries[model.navigatorCursorIndex];
-      if (
-        entry?.kind === "project" &&
-        ((offset < 0 && state.expandedProjectIds.has(entry.id)) ||
-          (offset > 0 && !state.expandedProjectIds.has(entry.id)))
-      ) {
-        dispatch({ type: "project.toggle", projectId: entry.id });
-        reconcile();
-      }
-    }
-  };
-  const activateCursor = () => {
-    if (state.dialog?.kind === "sessions") {
-      if (model.sessionCursor !== null) {
-        dispatch({ type: "session.activate", id: model.sessionCursor });
-        reconcile();
-      }
-    } else if (focus.region === "workspace" && state.workspaceCursorId !== null) {
+  const activateCursor = async () => {
+    if (focus.region === "workspace" && state.workspaceCursorId !== null) {
       dispatch({ type: "workspace.activate", id: state.workspaceCursorId });
       reconcile();
     } else if (focus.region === "category") {
       dispatch({ type: "category.activate", category: state.categoryCursor });
       reconcile();
     } else if (focus.region === "navigator") {
-      activateNavigator(model.entries[model.navigatorCursorIndex]);
+      await activateNavigator(model.entries[model.navigatorCursorIndex], onItemOpened);
     } else if (focus.region === "tabs") {
       const tab = model.tabs[model.tabCursorIndex];
       if (model.surface !== undefined && tab !== undefined) {
@@ -403,7 +322,7 @@ export async function executeCommand({
       model.paneIds.includes(state.lastWorkbenchPaneId)
         ? { region: "workbench" as const, paneId: state.lastWorkbenchPaneId }
         : next;
-    dispatch({ type: "focus.set", focus: restored });
+    setFocus(restored);
     return;
   }
 
@@ -423,7 +342,7 @@ export async function executeCommand({
     }
     case "navigator.previous":
     case "navigator.next":
-      activateNavigator(
+      await activateNavigator(
         adjacent(
           model.entries,
           model.navigatorActiveIndex,
@@ -471,10 +390,15 @@ export async function executeCommand({
           "workbench",
         );
         if (result?.paneId !== undefined) {
-          dispatch({
-            type: "focus.set",
-            focus: { region: "workbench", paneId: result.paneId },
-          });
+          setFocus(
+            { region: "workbench", paneId: result.paneId },
+            snapshot === null
+              ? undefined
+              : {
+                  epoch: snapshot.epoch,
+                  revision: result.revision,
+                },
+          );
         }
       }
       return;
@@ -483,20 +407,8 @@ export async function executeCommand({
         await run(durableCommands.restartPane(focusedPaneId), "workbench");
       }
       return;
-    case "cursor.previous":
-      moveCursor(-1);
-      return;
-    case "cursor.next":
-      moveCursor(1);
-      return;
-    case "cursor.left":
-      moveHorizontalCursor(-1);
-      return;
-    case "cursor.right":
-      moveHorizontalCursor(1);
-      return;
     case "cursor.activate":
-      activateCursor();
+      await activateCursor();
       return;
     case "context.create":
       openCreate(
@@ -512,11 +424,22 @@ export async function executeCommand({
       if (entry?.kind === "project") {
         const result = await run(durableCommands.openProject(entry.id), "navigator");
         const itemId = result?.itemId ?? result?.id;
-        if (itemId !== undefined) {
+        if (result !== undefined && itemId !== undefined) {
           if (!state.expandedProjectIds.has(entry.id)) {
             dispatch({ type: "project.toggle", projectId: entry.id });
           }
-          dispatch({ type: "navigator.activate", key: `item:${itemId}` });
+          dispatch({
+            type: "navigator.activate",
+            key: `item:${itemId}`,
+            pending:
+              snapshot === null
+                ? undefined
+                : {
+                    epoch: snapshot.epoch,
+                    revision: result.revision,
+                  },
+          });
+          onItemOpened?.(itemId, result.revision);
         }
       }
       return;
@@ -562,7 +485,7 @@ export async function submitCreate({
   } else if (createKind === "project" && state.activeWorkspaceId !== null) {
     command = durableCommands.createProject(state.activeWorkspaceId, state.activeCategory, value);
   } else {
-    projectId = projectIdForShellContext(state, snapshot);
+    projectId = projectIdForShellContext({ ...state, focus: returnFocus }, snapshot);
     if (projectId !== undefined) {
       command = durableCommands.createItem(projectId, value);
     }

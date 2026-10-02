@@ -16,6 +16,7 @@ import {
   useState,
 } from "react";
 
+import { useControlHints } from "@/ui/control-hints";
 import { symbols } from "@/ui/icons/symbols";
 import { Box, type BoxProps } from "@/ui/primitives/box";
 import { HStack, type HStackProps } from "@/ui/primitives/hstack";
@@ -35,11 +36,14 @@ type RadioGroupContextValue = {
   activeValue?: string;
 
   register: (item: RadioRegistration) => () => void;
+  refreshItems: () => void;
   focusValue: (value: string) => void;
   selectValue: (value: string) => void;
 };
 
 const RadioGroupContext = createContext<RadioGroupContextValue | null>(null);
+
+const selectAction = { name: "space", hint: { keys: "Space", label: "Select" } };
 
 function useRadioGroup() {
   const context = useContext(RadioGroupContext);
@@ -77,6 +81,7 @@ export function RadioGroup({
 }: RadioGroupProps) {
   const groupRef = useRef<BoxRenderable | null>(null);
   const itemsRef = useRef<RadioRegistration[]>([]);
+  const [, setItemsRevision] = useState(0);
 
   const valueRef = useRef(value);
   const disabledRef = useRef(disabled);
@@ -93,17 +98,38 @@ export function RadioGroup({
     return itemsRef.current.filter((item) => !item.disabled && item.node);
   }
 
-  const register = useCallback((item: RadioRegistration) => {
-    itemsRef.current.push(item);
+  useControlHints(
+    groupRef,
+    !disabled &&
+      onValueChange &&
+      activeValue &&
+      getEnabledItems().some((item) => item.value === activeValue)
+      ? [selectAction.hint]
+      : [],
+  );
 
-    return () => {
-      const index = itemsRef.current.indexOf(item);
-
-      if (index !== -1) {
-        itemsRef.current.splice(index, 1);
-      }
-    };
+  const refreshItems = useCallback(() => {
+    if (groupRef.current && !groupRef.current.isDestroyed) {
+      setItemsRevision((revision) => revision + 1);
+    }
   }, []);
+
+  const register = useCallback(
+    (item: RadioRegistration) => {
+      itemsRef.current.push(item);
+      refreshItems();
+
+      return () => {
+        const index = itemsRef.current.indexOf(item);
+
+        if (index !== -1) {
+          itemsRef.current.splice(index, 1);
+          refreshItems();
+        }
+      };
+    },
+    [refreshItems],
+  );
 
   const focusValue = useCallback((nextValue: string) => {
     if (disabledRef.current) return;
@@ -114,8 +140,9 @@ export function RadioGroup({
 
     if (!item) return;
 
-    setActiveValue(nextValue);
+    // Native focus initializes the candidate before the clicked value takes precedence.
     groupRef.current?.focus();
+    setActiveValue(nextValue);
   }, []);
 
   const selectValue = useCallback((nextValue: string) => {
@@ -149,6 +176,11 @@ export function RadioGroup({
 
       node.on(RenderableEvents.FOCUSED, handleFocus);
       node.on(RenderableEvents.BLURRED, handleBlur);
+
+      // The focused prop is applied before this ref subscribes to native events.
+      if (node.focused) {
+        handleFocus();
+      }
 
       return () => {
         node.off(RenderableEvents.FOCUSED, handleFocus);
@@ -224,7 +256,7 @@ export function RadioGroup({
       return;
     }
 
-    if (event.name === "space" && !event.repeated && activeValue) {
+    if (event.name === selectAction.name && !event.repeated && activeValue) {
       event.preventDefault();
       selectValue(activeValue);
     }
@@ -237,10 +269,11 @@ export function RadioGroup({
       focused: isFocused,
       activeValue,
       register,
+      refreshItems,
       focusValue,
       selectValue,
     }),
-    [value, disabled, isFocused, activeValue, register, focusValue, selectValue],
+    [value, disabled, isFocused, activeValue, register, refreshItems, focusValue, selectValue],
   );
 
   return (
@@ -296,6 +329,10 @@ export function Radio({
   registrationRef.current.value = value;
   registrationRef.current.disabled = isDisabled;
 
+  // Candidate changes can commit without rerendering the owning group.
+  useLayoutEffect(() => group.register(registrationRef.current), [group.register]);
+  useLayoutEffect(group.refreshItems, [group.refreshItems, value, isDisabled]);
+
   const setRadioRef = useCallback(
     (node: BoxRenderable | null) => {
       registrationRef.current.node = node;
@@ -303,11 +340,7 @@ export function Radio({
 
       if (!node) return;
 
-      const unregister = group.register(registrationRef.current);
-
       return () => {
-        unregister();
-
         if (registrationRef.current.node === node) {
           registrationRef.current.node = null;
         }
@@ -315,7 +348,7 @@ export function Radio({
         assignRef(ref, null);
       };
     },
-    [ref, group.register],
+    [ref],
   );
 
   const indicator = isSelected ? symbols.circleDot : symbols.circle;

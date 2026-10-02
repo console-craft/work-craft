@@ -1,4 +1,4 @@
-import { BoxRenderable, type EmbeddedTerminalRenderable, SelectRenderable } from "@opentui/core";
+import { CliRenderEvents, type EmbeddedTerminalRenderable, type Renderable } from "@opentui/core";
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react";
 import type { CategoryKind } from "@work-craft/server/client";
 import { type ReactNode, useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
@@ -12,6 +12,7 @@ import {
   type KeyLike,
   routeKey,
 } from "@/input/command-router.ts";
+import { focusKey, type FocusTarget } from "@/input/focus.ts";
 import { CategoryRail } from "@/navigation/category-rail.tsx";
 import { Navigator } from "@/navigation/navigator.tsx";
 import {
@@ -24,22 +25,58 @@ import {
   submitCreate,
 } from "@/shell/commands.ts";
 import { DialogOverlay } from "@/shell/dialog-overlay.tsx";
+import { focusShellTarget, focusTargetFor } from "@/shell/focus.ts";
 import { Header } from "@/shell/header.tsx";
 import { calculateShellLayout } from "@/shell/layout.ts";
 import { deriveShellModel, resolveShellFocus } from "@/shell/model.ts";
 import { createInitialShellState, type DialogState, reduceShellState } from "@/shell/state.ts";
 import { StatusBar, type StatusBarProps, statusModeFor } from "@/shell/status-bar.tsx";
+import { useFocusedControlHints } from "@/ui/control-hints";
+import { useFocusScope, useNativeFocus } from "@/ui/focus-manager.tsx";
+import { isEligibleFocusTarget } from "@/ui/focus-utils";
 import { Box } from "@/ui/primitives/box.tsx";
 import { Workbench } from "@/workbench/workbench.tsx";
 
 export type WorkCraftShellProps = { workCraft: WorkCraftState };
 
+type PendingItemFocus = {
+  itemId: string;
+  epoch: string;
+  revision: number;
+  origin: Renderable;
+  version: number;
+};
+
 export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
   const renderer = useRenderer();
+  const nativeFocus = useNativeFocus();
+  const controlHints = useFocusedControlHints();
   const dimensions = useTerminalDimensions();
   const [state, dispatch] = useReducer(reduceShellState, undefined, createInitialShellState);
+  // Pane memory must advance before a buffered key leaves and re-enters the workbench.
+  const lastWorkbenchPaneIdRef = useRef(state.lastWorkbenchPaneId);
+  useLayoutEffect(() => {
+    lastWorkbenchPaneIdRef.current = state.lastWorkbenchPaneId;
+  }, [state.lastWorkbenchPaneId]);
+  const expandedProjectIdsRef = useRef(state.expandedProjectIds);
+  useLayoutEffect(() => {
+    expandedProjectIdsRef.current = state.expandedProjectIds;
+  }, [state.expandedProjectIds]);
   const [routerState, setRouterState] = useState(initialRouterState);
   const [sessionCursorId, setSessionCursorId] = useState<string | null>(null);
+  const [pendingItemFocus, setPendingItemFocus] = useState<PendingItemFocus | null>(null);
+  const itemFocusVersion = useRef(0);
+  useLayoutEffect(() => {
+    // Even buffered leave-and-return movement permanently cancels an activation handoff.
+    const cancelItemFocus = () => {
+      itemFocusVersion.current += 1;
+    };
+    renderer.on(CliRenderEvents.FOCUSED_RENDERABLE, cancelItemFocus);
+    return () => {
+      cancelItemFocus();
+      renderer.off(CliRenderEvents.FOCUSED_RENDERABLE, cancelItemFocus);
+    };
+  }, [renderer]);
   const terminalRefs = useRef(new Map<string, EmbeddedTerminalRenderable>());
   const completionContextRef = useRef<CompletionContext>({
     key: "",
@@ -85,6 +122,32 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     tabs,
     workspaces,
   } = model;
+  const dialogKey =
+    state.dialog === null
+      ? null
+      : state.dialog.kind === "sessions"
+        ? "sessions"
+        : `create:${state.dialog.createKind}`;
+  const scope = useFocusScope(
+    dialogKey === null
+      ? null
+      : {
+          scopeId: "dialog-overlay",
+          scopeKey: dialogKey,
+          initialFocusId:
+            state.dialog?.kind === "sessions"
+              ? sessions.length === 0
+                ? "session:create"
+                : "session:list"
+              : "create:name",
+        },
+  );
+  useLayoutEffect(() => {
+    setRouterState((current) =>
+      current.leaderStartedAt === null ? current : { ...current, leaderStartedAt: null },
+    );
+  }, [dialogKey]);
+
   const paneLayout = activeTab?.layout ?? null;
   const shellLayout = calculateShellLayout({
     terminalWidth: dimensions.width,
@@ -115,12 +178,37 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     }
   }, [navigatorVisible, state.focus.region]);
 
-  const { focus, focusedPaneId } = resolveShellFocus({
+  const { focus: resolvedFocus, focusedPaneId } = resolveShellFocus({
     focus: state.focus,
     lastWorkbenchPaneId: state.lastWorkbenchPaneId,
     paneIds: currentPaneIds,
     undersized,
   });
+  const nativeTarget = focusTargetFor(nativeFocus);
+  const focus = state.dialog === null ? (nativeTarget ?? resolvedFocus) : resolvedFocus;
+  const resolvedFocusKey = focusKey(resolvedFocus);
+
+  useLayoutEffect(() => {
+    if (dialogKey === null) {
+      focusShellTarget(renderer, resolvedFocus);
+    }
+  }, [renderer, resolvedFocusKey, dialogKey]);
+
+  useLayoutEffect(() => {
+    // Projection must retain both resize restoration and a split awaiting its snapshot.
+    const transientWorkbenchProjection =
+      state.focus.region === "workbench" &&
+      (undersized || state.pendingWorkbenchFocus !== null) &&
+      nativeTarget?.region === "tabs";
+    if (
+      state.dialog === null &&
+      nativeTarget !== null &&
+      nativeFocus === renderer.currentFocusedRenderable &&
+      !transientWorkbenchProjection
+    ) {
+      dispatch({ type: "focus.set", focus: nativeTarget });
+    }
+  }, [nativeFocus, dialogKey, undersized, state.focus, state.pendingWorkbenchFocus]);
   const completionContext = completionContextFor(model, state.dialog);
 
   useLayoutEffect(() => {
@@ -140,6 +228,10 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     region,
     expected = completionContextRef.current,
   ) => {
+    if (command.type === "surface.ensure" && expected.key === undefined) {
+      // Activation owns this navigation change before React commits its reducer action.
+      completionContextRef.current = expected;
+    }
     return runDurableCommand({
       command,
       region,
@@ -156,10 +248,23 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     }
   }
 
+  function setFocus(
+    target: FocusTarget,
+    pendingWorkbenchFocus?: NonNullable<typeof state.pendingWorkbenchFocus>,
+  ): void {
+    if (target.region === "workbench") {
+      lastWorkbenchPaneIdRef.current = target.paneId;
+    }
+    if (state.dialog === null) {
+      focusShellTarget(renderer, target);
+    }
+    dispatch({ type: "focus.set", focus: target, pendingWorkbenchFocus });
+  }
+
   function execute(
     command: CommandId,
     overrides: Partial<
-      Pick<ExecuteCommandInput, "model" | "state" | "focus" | "focusedPaneId">
+      Pick<ExecuteCommandInput, "model" | "state" | "focus" | "focusedPaneId" | "onItemOpened">
     > = {},
   ): Promise<void> {
     return executeCommand({
@@ -172,7 +277,9 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
       focusNodes,
       terminalWidth: dimensions.width,
       dispatch,
+      setFocus,
       setSessionCursorId,
+      onItemOpened: command === "project.openTerminal" ? focusOnItemOpen() : undefined,
       run: runCommand,
       reload: workCraft.reload,
       quit: () => renderer.destroy(),
@@ -180,7 +287,98 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     });
   }
 
+  function focusOnItemOpen(): ExecuteCommandInput["onItemOpened"] {
+    const origin = renderer.currentFocusedRenderable;
+    const epoch = snapshot?.epoch;
+    const version = ++itemFocusVersion.current;
+    setPendingItemFocus(null);
+    return (itemId, revision) => {
+      if (
+        origin !== null &&
+        epoch !== undefined &&
+        !renderer.isDestroyed &&
+        itemFocusVersion.current === version &&
+        renderer.currentFocusedRenderable === origin
+      ) {
+        setPendingItemFocus({ itemId, epoch, revision, origin, version });
+      }
+    };
+  }
+
+  useLayoutEffect(() => {
+    if (pendingItemFocus === null) {
+      return;
+    }
+    if (
+      snapshot?.epoch !== pendingItemFocus.epoch ||
+      state.dialog !== null ||
+      itemFocusVersion.current !== pendingItemFocus.version ||
+      renderer.currentFocusedRenderable !== pendingItemFocus.origin ||
+      state.activeNavigatorKey !== `item:${pendingItemFocus.itemId}`
+    ) {
+      setPendingItemFocus(null);
+      return;
+    }
+    if (snapshot.revision < pendingItemFocus.revision) {
+      return;
+    }
+    const paneId = currentPaneIds.includes(state.lastWorkbenchPaneId ?? "")
+      ? state.lastWorkbenchPaneId
+      : currentPaneIds[0];
+    if (paneId && !undersized) {
+      setFocus({ region: "workbench", paneId });
+    }
+    setPendingItemFocus(null);
+  }, [
+    pendingItemFocus,
+    snapshot,
+    state.activeNavigatorKey,
+    dialogKey,
+    nativeFocus,
+    currentPaneIds,
+    undersized,
+  ]);
+
   useKeyboard((key) => {
+    // Further input supersedes a deferred handoff; local activation can start a new one.
+    itemFocusVersion.current += 1;
+    setPendingItemFocus(null);
+    const keyFocus = focusTargetFor(renderer.currentFocusedRenderable) ?? focus;
+    if (keyFocus.region === "workbench") {
+      lastWorkbenchPaneIdRef.current = keyFocus.paneId;
+    }
+    const keyPaneId = keyFocus.region === "workbench" ? keyFocus.paneId : focusedPaneId;
+    const keyState = {
+      ...state,
+      focus: keyFocus,
+      lastWorkbenchPaneId: lastWorkbenchPaneIdRef.current,
+    };
+    const keyContext: CommandContext = {
+      ...commandContext,
+      focus: keyFocus,
+      availableCommands: availableCommands({
+        model,
+        state: keyState,
+        snapshot,
+        focus: keyFocus,
+        focusedPaneId: keyPaneId,
+      }),
+    };
+    const modalEndpoint = dialogKey === null ? null : scope.repair();
+    if (
+      dialogKey !== null &&
+      key.name === "tab" &&
+      !key.ctrl &&
+      !key.meta &&
+      !key.option &&
+      !key.super &&
+      !key.hyper
+    ) {
+      key.preventDefault();
+      key.stopPropagation();
+      scope.move(key.shift ? -1 : 1);
+      return;
+    }
     const keyLike: KeyLike = {
       name: key.name,
       raw: key.raw,
@@ -191,47 +389,20 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
       super: key.super,
       hyper: key.hyper,
     };
-    const sessionListFocused =
-      state.dialog?.kind === "sessions" &&
-      renderer.currentFocusedRenderable instanceof SelectRenderable;
-    // Native navigation applies bounds synchronously; a buffered key can arrive
-    // before React commits its cursor, so don't gate it on stale shell indices.
-    const keyContext = sessionListFocused
-      ? {
-          ...commandContext,
-          availableCommands: new Set<CommandId>([
-            ...structuralCommands,
-            "cursor.previous",
-            "cursor.next",
-            "cursor.activate",
-          ]),
-        }
-      : commandContext;
     const routed = routeKey(routerState, keyLike, keyContext, Date.now());
     setRouterState(routed.state);
-    // Global listeners run before renderable handlers; the focused list owns
-    // browsing and activation, while n, Escape, and Hyper commands stay here.
-    if (
-      sessionListFocused &&
-      (routed.command === "cursor.previous" ||
-        routed.command === "cursor.next" ||
-        routed.command === "cursor.activate")
-    ) {
+    // During modal replacement, unhandled input must not reach a retained terminal.
+    if (!routed.handled && (dialogKey === null || modalEndpoint !== null)) {
       return;
     }
-    if (
-      routed.command === "cursor.activate" &&
-      renderer.currentFocusedRenderable instanceof BoxRenderable
-    ) {
-      return;
-    }
-    if (!routed.handled) return;
     key.preventDefault();
     key.stopPropagation();
     if (routed.passthroughLeader) {
-      if (focus.region === "workbench") terminalRefs.current.get(focus.paneId)?.handleKeyPress(key);
+      if (keyFocus.region === "workbench") {
+        terminalRefs.current.get(keyFocus.paneId)?.handleKeyPress(key);
+      }
     } else if (routed.command !== undefined) {
-      void execute(routed.command);
+      void execute(routed.command, { state: keyState, focus: keyFocus, focusedPaneId: keyPaneId });
     }
   });
 
@@ -255,9 +426,24 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
       ? "ERROR"
       : statusModeFor(
           routerState.leaderStartedAt !== null,
-          navigatorMode === "compact" && focus.region === "navigator",
+          state.dialog === null && navigatorMode === "compact" && focus.region === "navigator",
         );
-  const hints = commandHints(routerState, commandContext);
+  const modalRoot =
+    state.dialog === null ? null : renderer.root.findDescendantById("dialog-overlay");
+  const currentTarget = renderer.currentFocusedRenderable;
+  const eligibleControlHints =
+    mode === "HINTS" &&
+    (state.dialog === null ||
+      (modalRoot && currentTarget && isEligibleFocusTarget(currentTarget, modalRoot)))
+      ? controlHints
+      : [];
+  const hints = [
+    ...new Map(
+      [...commandHints(routerState, commandContext), ...eligibleControlHints].map(
+        (hint) => [`${hint.keys}\u0000${hint.label}`, hint] as const,
+      ),
+    ).values(),
+  ];
   const statusProps: StatusBarProps =
     mode === "INFO"
       ? { mode: "INFO", text: routerState.invalidMessage ?? cursorEntry?.label ?? "" }
@@ -265,41 +451,44 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
   const workspaceProps = {
     activeId: state.activeWorkspaceId,
     cursorId: state.workspaceCursorId,
-    focused: focus.region === "workspace",
+    focused: state.dialog === null && focus.region === "workspace",
     hasNext: viewport.hasNext,
     hasPrevious: viewport.hasPrevious,
     visibleIds: viewport.ids,
     width: workspaceWidth,
     workspaces,
     onActivate: (id: string) => {
-      dispatch({ type: "focus.set", focus: { region: "workspace" } });
+      setFocus({ region: "workspace" });
       dispatch({ type: "workspace.activate", id });
       reconcile();
     },
     onFocus: (id: string) => {
-      dispatch({ type: "focus.set", focus: { region: "workspace" } });
+      setFocus({ region: "workspace" });
       dispatch({ type: "workspace.cursor", id });
     },
   };
   const sessionProps = {
-    focused: focus.region === "session",
+    focused: state.dialog === null && focus.region === "session",
     name: activeSession?.name ?? null,
     status: workCraft.status,
     width: sessionWidth,
-    onOpen: () => void execute("session.open"),
+    onOpen: () =>
+      void execute("session.open", {
+        focus: focusTargetFor(renderer.currentFocusedRenderable) ?? focus,
+      }),
   };
   const categoryProps = {
     active: state.activeCategory,
     categories: renderedCategories,
     cursor: state.categoryCursor,
-    focused: focus.region === "category",
-    onActivate: (category: CategoryKind) => {
-      dispatch({ type: "focus.set", focus: { region: "category" } });
+    focused: state.dialog === null && focus.region === "category",
+    onActivate: (category: CategoryKind, source: "keyboard" | "mouse") => {
       dispatch({ type: "category.activate", category });
       reconcile();
+      setFocus({ region: source === "keyboard" && navigatorVisible ? "navigator" : "category" });
     },
     onFocus: (category: CategoryKind) => {
-      dispatch({ type: "focus.set", focus: { region: "category" } });
+      setFocus({ region: "category" });
       dispatch({ type: "category.cursor", category });
     },
   };
@@ -309,14 +498,32 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
         activeKey: state.activeNavigatorKey,
         cursorKey: state.navigatorCursorKey,
         entries,
+        expandedProjectIds: state.expandedProjectIds,
+        onExpand: (projectId: string, expanded: boolean) => {
+          itemFocusVersion.current += 1;
+          setPendingItemFocus(null);
+          if (expandedProjectIdsRef.current.has(projectId) !== expanded) {
+            const next = new Set(expandedProjectIdsRef.current);
+            if (expanded) {
+              next.add(projectId);
+            } else {
+              next.delete(projectId);
+            }
+            expandedProjectIdsRef.current = next;
+            dispatch({ type: "project.toggle", projectId });
+            reconcile();
+          }
+        },
         error: state.errors.navigator ?? null,
-        focused: focus.region === "navigator",
+        focused: state.dialog === null && focus.region === "navigator",
         height: workbenchHeight,
         mode: navigatorMode === "hidden" ? "compact" : navigatorMode,
         title: activeCategoryTitle,
         width: navigatorWidth,
-        onActivate: (key: string) => {
-          dispatch({ type: "focus.set", focus: { region: "navigator" } });
+        onActivate: (key: string, source: "keyboard" | "mouse") => {
+          setFocus({ region: "navigator" });
+          itemFocusVersion.current += 1;
+          setPendingItemFocus(null);
           void execute("cursor.activate", {
             model: {
               ...model,
@@ -324,10 +531,13 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
             },
             focus: { region: "navigator" },
             focusedPaneId: null,
+            onItemOpened: source === "keyboard" ? focusOnItemOpen() : undefined,
           });
         },
         onFocus: (key: string) => {
-          dispatch({ type: "focus.set", focus: { region: "navigator" } });
+          itemFocusVersion.current += 1;
+          setPendingItemFocus(null);
+          setFocus({ region: "navigator" });
           dispatch({ type: "navigator.cursor", key });
         },
       };
@@ -340,13 +550,13 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     tabCursorId: state.tabCursorId,
     tabError: state.errors.tabs ?? null,
     tabs,
-    tabsFocused: focus.region === "tabs",
+    tabsFocused: state.dialog === null && focus.region === "tabs",
     terminals: workCraft.terminals,
     undersized,
     workbenchError: state.errors.workbench ?? null,
     workbenchFocused: state.dialog === null && focus.region === "workbench",
     onActivateTab: (id: string) => {
-      dispatch({ type: "focus.set", focus: { region: "tabs" } });
+      setFocus({ region: "tabs" });
       dispatch({ type: "tab.cursor", id });
       void execute("cursor.activate", {
         model: { ...model, tabCursorIndex: tabs.findIndex((tab) => tab.id === id) },
@@ -354,11 +564,10 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
       });
     },
     onFocusTab: (id: string) => {
-      dispatch({ type: "focus.set", focus: { region: "tabs" } });
+      setFocus({ region: "tabs" });
       dispatch({ type: "tab.cursor", id });
     },
-    onFocusPane: (paneId: string) =>
-      dispatch({ type: "focus.set", focus: { region: "workbench", paneId } }),
+    onFocusPane: (paneId: string) => setFocus({ region: "workbench", paneId }),
     onTerminalReady: (paneId: string, terminal: EmbeddedTerminalRenderable | null) => {
       if (terminal === null) {
         terminalRefs.current.delete(paneId);

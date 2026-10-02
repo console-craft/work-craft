@@ -183,6 +183,33 @@ export const icons = {
   agent: "\u{F06A9}",             // 󰚩   nf-md-robot
   mcp: "\u{EB2D}",                //    nf-cod-plug
 
+  // Keyboard & keys
+  keyboard: "\u{F030C}",          // 󰌌   nf-md-keyboard
+  command: "\u{F0633}",           // 󰘳   nf-md-apple_keyboard_command
+  control: "\u{F0634}",           // 󰘴   nf-md-apple_keyboard_control
+  option: "\u{F0635}",            // 󰘵   nf-md-apple_keyboard_option
+  shift: "\u{F0636}",             // 󰘶   nf-md-apple_keyboard_shift
+  caps: "\u{F0632}",              // 󰘲   nf-md-apple_keyboard_caps
+  capsLock: "\u{F0A9B}",          // 󰪛   nf-md-caps_lock
+  escape: "\u{F12B7}",            // 󱊷   nf-md-keyboard_esc
+  return: "\u{F0311}",            // 󰌑   nf-md-keyboard_return
+  backspace: "\u{F030D}",         // 󰌍   nf-md-keyboard_backspace
+  space: "\u{F1050}",             // 󱁐   nf-md-keyboard_space
+  tab: "\u{F0312}",               // 󰌒   nf-md-keyboard_tab
+  tabReverse: "\u{F0325}",        // 󰌥   nf-md-keyboard_tab_reverse
+  f1: "\u{F12AB}",                // 󱊫   nf-md-keyboard_f1
+  f2: "\u{F12AC}",                // 󱊬   nf-md-keyboard_f2
+  f3: "\u{F12AD}",                // 󱊭   nf-md-keyboard_f3
+  f4: "\u{F12AE}",                // 󱊮   nf-md-keyboard_f4
+  f5: "\u{F12AF}",                // 󱊯   nf-md-keyboard_f5
+  f6: "\u{F12B0}",                // 󱊰   nf-md-keyboard_f6
+  f7: "\u{F12B1}",                // 󱊱   nf-md-keyboard_f7
+  f8: "\u{F12B2}",                // 󱊲   nf-md-keyboard_f8
+  f9: "\u{F12B3}",                // 󱊳   nf-md-keyboard_f9
+  f10: "\u{F12B4}",               // 󱊴   nf-md-keyboard_f10
+  f11: "\u{F12B5}",               // 󱊵   nf-md-keyboard_f11
+  f12: "\u{F12B6}",               // 󱊶   nf-md-keyboard_f12
+
   // Security & identity
   account: "\u{EB99}",            //    nf-cod-account
   person: "\u{EA67}",             //    nf-cod-person

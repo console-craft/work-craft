@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 
 import { BoxRenderable, TextRenderable } from "@opentui/core";
 import { testRender as renderWithoutTheme } from "@opentui/react/test-utils";
-import { act, type ReactNode } from "react";
+import { act, type ReactNode, useState } from "react";
 
 import { CategoryRail } from "@/navigation/category-rail.tsx";
 import type { NavigatorEntry } from "@/navigation/model.ts";
@@ -33,6 +33,78 @@ const entries: NavigatorEntry[] = [
     depth: 1,
   },
 ];
+
+test("standalone category browsing is buffered, nonactivating, and does not wrap", async () => {
+  const calls: string[] = [];
+  const setup = await testRender(
+    <CategoryRail
+      categories={snapshotFixture().categories.slice(0, 2)}
+      active="inbox"
+      cursor="inbox"
+      focused
+      onFocus={(kind) => calls.push(`focus:${kind}`)}
+      onActivate={(kind) => calls.push(`activate:${kind}`)}
+    />,
+    { width: 5, height: 6 },
+  );
+  try {
+    await setup.flush();
+    await act(async () => setup.mockInput.pressKeys(["j", "\r", "j"]));
+    expect(calls).toEqual(["focus:today", "activate:today"]);
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
+test("navigator click leaves the composite focused and buffered browsing uses the clicked cursor", async () => {
+  const calls: string[] = [];
+  function Fixture(): ReactNode {
+    const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set(["project-1"]));
+    return (
+      <Navigator
+        title="Implementation"
+        entries={entries}
+        mode="expanded"
+        width={24}
+        height={10}
+        focused={false}
+        cursorKey="item:item-1"
+        activeKey={null}
+        error={null}
+        expandedProjectIds={expanded}
+        onExpand={(id, value) => {
+          calls.push(`expand:${id}:${value}`);
+          setExpanded(value ? new Set([id]) : new Set());
+        }}
+        onFocus={(key) => calls.push(`focus:${key}`)}
+        onActivate={(key) => calls.push(`activate:${key}`)}
+      />
+    );
+  }
+  const setup = await testRender(<Fixture />, { width: 30, height: 10 });
+  try {
+    await setup.flush();
+    const row = setup.renderer.root.findDescendantById("navigator-row:project:project-1")!;
+    await act(async () => {
+      await setup.mockMouse.click(row.screenX + 2, row.screenY);
+      await setup.mockInput.pressKeys(["h", "h", "l", "h", "j", "\r", "j"]);
+    });
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:navigator");
+    expect(calls).toEqual([
+      "focus:project:project-1",
+      "activate:project:project-1",
+      "expand:project-1:false",
+      "expand:project-1:true",
+      "expand:project-1:false",
+      "focus:item:item-1",
+      "activate:item:item-1",
+    ]);
+    await act(async () => setup.mockInput.pressKeys(["k", "l"]));
+    expect(calls.slice(-2)).toEqual(["focus:project:project-1", "expand:project-1:true"]);
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
 
 test("category icons keep the fixed-width rail and row mouse activation", async () => {
   const calls: string[] = [];
@@ -72,6 +144,8 @@ test("navigator renders one stable projection in expanded and compact modes", as
       activeKey="project:project-1"
       cursorKey="item:item-1"
       entries={entries}
+      expandedProjectIds={new Set(["project-1"])}
+      onExpand={() => {}}
       error={null}
       focused
       height={10}
@@ -94,6 +168,8 @@ test("navigator renders one stable projection in expanded and compact modes", as
       activeKey="project:project-1"
       cursorKey="item:item-1"
       entries={entries}
+      expandedProjectIds={new Set(["project-1"])}
+      onExpand={() => {}}
       error={null}
       focused
       height={10}
@@ -119,6 +195,8 @@ test("navigator renders Unicode initials and truncates ANSI labels by visible wi
       activeKey={null}
       cursorKey={null}
       entries={[{ ...entries[0], label: "🧠 Craft" }]}
+      expandedProjectIds={new Set()}
+      onExpand={() => {}}
       error={null}
       focused={false}
       height={5}
@@ -139,6 +217,8 @@ test("navigator renders Unicode initials and truncates ANSI labels by visible wi
       activeKey={null}
       cursorKey={null}
       entries={[{ ...entries[0], label: "\x1b[31mNavigator\x1b[0m" }]}
+      expandedProjectIds={new Set()}
+      onExpand={() => {}}
       error={null}
       focused={false}
       height={5}
@@ -169,6 +249,8 @@ test("navigator border uses the active theme", async () => {
         activeKey={null}
         cursorKey={null}
         entries={[]}
+        expandedProjectIds={new Set()}
+        onExpand={() => {}}
         error={null}
         focused={false}
         height={3}

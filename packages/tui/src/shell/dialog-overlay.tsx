@@ -1,10 +1,11 @@
-import { type MouseEvent, parseColor, RGBA } from "@opentui/core";
+import { isRenderable, type MouseEvent, parseColor, RGBA } from "@opentui/core";
 import type { Snapshot } from "@work-craft/server/client";
 import type { ReactNode } from "react";
 
 import { CreatePrompt } from "@/shell/create-prompt.tsx";
 import { SessionChooser } from "@/shell/session-chooser.tsx";
 import type { DialogState } from "@/shell/state.ts";
+import { isEligibleFocusTarget } from "@/ui/focus-utils";
 import { Box } from "@/ui/primitives/box.tsx";
 import { Center } from "@/ui/primitives/center.tsx";
 import { useTheme } from "@/ui/theme-provider.tsx";
@@ -45,6 +46,7 @@ export function DialogOverlay({
   return (
     <Center
       id="dialog-overlay"
+      focusable
       position="absolute"
       left={0}
       top={0}
@@ -53,8 +55,16 @@ export function DialogOverlay({
       zIndex={1}
       bg={overlayColor}
       onMouseDown={(event: MouseEvent) => {
-        event.preventDefault();
         event.stopPropagation();
+        const root = event.currentTarget;
+        let target = event.target;
+        // Native autofocus runs after bubbling and uses the first focusable ancestor.
+        while (target && !target.focusable && isRenderable(target.parent)) {
+          target = target.parent;
+        }
+        if (!root || !target || target === root || !isEligibleFocusTarget(target, root)) {
+          event.preventDefault();
+        }
       }}
     >
       <Box id="dialog" flexDirection="row" width="60%" height="60%" bg="background">

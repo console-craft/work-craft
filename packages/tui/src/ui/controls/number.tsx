@@ -57,7 +57,7 @@ export function NumberInput({
 
   const inputRef = useRef<InputRenderable | null>(null);
 
-  const initialDraft = formatValue(value, step);
+  const initialDraft = formatValue(value);
 
   const [draft, setDraft] = useState(initialDraft);
   const draftRef = useRef(initialDraft);
@@ -111,30 +111,17 @@ export function NumberInput({
 
     const committed = clampValue(parsed);
 
-    updateDraft(formatValue(committed, step));
+    updateDraft(formatValue(committed));
     emitValueChange(committed);
 
     return committed;
   }
 
-  function getDecimalPlaces(value: number) {
-    const text = value.toString();
-
-    if (text.includes("e-")) {
-      return Number(text.split("e-")[1]);
-    }
-
-    return text.includes(".") ? text.split(".")[1].length : 0;
-  }
-
-  function formatValue(value: number | undefined, step: number) {
-    if (value === undefined) {
-      return "";
-    }
-
-    const decimalPlaces = getDecimalPlaces(step);
-
-    return decimalPlaces > 0 ? value.toFixed(decimalPlaces) : String(value);
+  function formatValue(value: number | undefined): string {
+    // Scientific notation is not part of the decimal editing grammar.
+    return value === undefined
+      ? ""
+      : value.toLocaleString("en-US", { useGrouping: false, maximumSignificantDigits: 21 });
   }
 
   function handleInput(rawValue: string) {
@@ -159,7 +146,7 @@ export function NumberInput({
 
     const next = clampValue(addStep(current, step, direction));
 
-    updateDraft(formatValue(next, step));
+    updateDraft(formatValue(next));
     emitValueChange(next);
   }
 
@@ -211,7 +198,7 @@ export function NumberInput({
       return;
     }
 
-    updateDraft(formatValue(value, step));
+    updateDraft(formatValue(value));
   }, [value]);
 
   return (
@@ -223,6 +210,7 @@ export function NumberInput({
       onInput={handleInput}
       onChange={handleChange}
       onSubmit={handleSubmit}
+      submitLabel={onSubmit ? "Submit" : "Commit"}
       onKeyDown={handleKeyDown}
     />
   );

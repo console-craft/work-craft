@@ -31,7 +31,14 @@ export function CreatePrompt({ error, kind, value, onChange, onSubmit }: CreateP
       <Divider />
       <Box paddingLeft={1} paddingRight={1}>
         <Input
-          focused
+          id="create:name"
+          // The inherited native setter drops Input's constructor-only submit bindings.
+          keyBindings={[
+            { name: "return", action: "submit" },
+            { name: "kpenter", action: "submit" },
+            { name: "linefeed", action: "submit" },
+            { name: "h", ctrl: true, action: "backspace" },
+          ]}
           placeholder={`${kind} name`}
           value={value}
           onInput={onChange}

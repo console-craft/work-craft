@@ -1,10 +1,16 @@
-import type { ScrollBoxRenderable } from "@opentui/core";
-import { type ReactNode, useEffect, useRef } from "react";
+import type { BoxRenderable, KeyEvent, ScrollBoxRenderable } from "@opentui/core";
+import { type ReactNode, useEffect, useLayoutEffect, useRef } from "react";
 
 import type { NavigatorEntry } from "@/navigation/model.ts";
+import { useControlHints } from "@/ui/control-hints";
 import { Box } from "@/ui/primitives/box.tsx";
 import { Text } from "@/ui/primitives/text.tsx";
 import { useTheme } from "@/ui/theme-provider.tsx";
+
+const activate = {
+  names: ["return", "enter", "linefeed"],
+  hint: { keys: "Enter", label: "Activate" },
+};
 
 export type NavigatorMode = "expanded" | "compact";
 
@@ -18,8 +24,10 @@ export type NavigatorProps = {
   cursorKey: string | null;
   activeKey: string | null;
   error: string | null;
+  expandedProjectIds: ReadonlySet<string>;
+  onExpand(projectId: string, expanded: boolean): void;
   onFocus(key: string): void;
-  onActivate(key: string): void;
+  onActivate(key: string, source: "keyboard" | "mouse"): void;
 };
 
 function projectInitials(label: string): string {
@@ -48,6 +56,7 @@ export function Navigator({
   activeKey,
   cursorKey,
   entries,
+  expandedProjectIds,
   error,
   focused,
   height,
@@ -56,9 +65,71 @@ export function Navigator({
   width,
   onActivate,
   onFocus,
+  onExpand,
 }: NavigatorProps): ReactNode {
   const theme = useTheme();
+  const regionRef = useRef<BoxRenderable | null>(null);
+  useControlHints(regionRef, entries.some(({ key }) => key === cursorKey) ? [activate.hint] : []);
   const scrollbox = useRef<ScrollBoxRenderable>(null);
+  const cursorRef = useRef(cursorKey);
+  useLayoutEffect(() => {
+    cursorRef.current = cursorKey;
+  }, [cursorKey]);
+  const expandedProjectIdsRef = useRef(expandedProjectIds);
+  useLayoutEffect(() => {
+    expandedProjectIdsRef.current = expandedProjectIds;
+  }, [expandedProjectIds]);
+
+  function handleKeyDown(event: KeyEvent): void {
+    if (
+      event.defaultPrevented ||
+      event.ctrl ||
+      event.meta ||
+      event.option ||
+      event.super ||
+      event.hyper ||
+      event.shift
+    ) {
+      return;
+    }
+    const index = entries.findIndex(({ key }) => key === cursorRef.current);
+    const offset = ["j", "down"].includes(event.name)
+      ? 1
+      : ["k", "up"].includes(event.name)
+        ? -1
+        : 0;
+    if (offset !== 0) {
+      event.preventDefault();
+      event.stopPropagation();
+      const next = index < 0 ? undefined : entries[index + offset];
+      if (next !== undefined) {
+        cursorRef.current = next.key;
+        onFocus(next.key);
+      }
+    } else if (["h", "left", "l", "right"].includes(event.name)) {
+      event.preventDefault();
+      event.stopPropagation();
+      const entry = entries[index];
+      const expanded = ["l", "right"].includes(event.name);
+      if (entry?.kind === "project" && expandedProjectIdsRef.current.has(entry.id) !== expanded) {
+        const next = new Set(expandedProjectIdsRef.current);
+        if (expanded) {
+          next.add(entry.id);
+        } else {
+          next.delete(entry.id);
+        }
+        expandedProjectIdsRef.current = next;
+        onExpand(entry.id, expanded);
+      }
+    } else if (activate.names.includes(event.name)) {
+      event.preventDefault();
+      event.stopPropagation();
+      const entry = entries[index];
+      if (entry !== undefined) {
+        onActivate(entry.key, "keyboard");
+      }
+    }
+  }
 
   useEffect(() => {
     if (cursorKey !== null) {
@@ -72,12 +143,16 @@ export function Navigator({
       <Box
         border
         id="region:navigator"
+        ref={regionRef}
+        focusable
+        focused={focused}
+        onKeyDown={handleKeyDown}
         flexGrow={1}
         minHeight={0}
         width={width}
         borderStyle="single"
       >
-        <scrollbox ref={scrollbox} scrollY scrollX={false} flexGrow={1}>
+        <scrollbox ref={scrollbox} focusable={false} scrollY scrollX={false} flexGrow={1}>
           {entries.map((entry) => {
             const cursor = focused && entry.key === cursorKey;
             const active = entry.key === activeKey;
@@ -99,8 +174,9 @@ export function Navigator({
                       : theme.colors.mutedForeground
                 }
                 onMouseDown={() => {
+                  cursorRef.current = entry.key;
                   onFocus(entry.key);
-                  onActivate(entry.key);
+                  onActivate(entry.key, "mouse");
                 }}
               >
                 {`${cursor ? ">" : active ? "*" : " "} ${label}`}
