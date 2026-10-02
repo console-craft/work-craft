@@ -515,15 +515,25 @@ test("raw stage 1 key sequences drive the shell", async () => {
 
     tui.terminal.write(Uint8Array.of(8));
     await Bun.sleep(50);
+    const daemonPid = (await client.health()).pid;
     const reloadOutputLength = tui.output().length;
-    tui.terminal.write(input.encode(kitty.hyper(114)));
+    // Hold reload pending so connecting cannot disappear between render frames.
+    process.kill(daemonPid, "SIGSTOP");
+    try {
+      tui.terminal.write(input.encode(kitty.hyper(114)));
+      await waitFor(
+        () => tui.output().slice(reloadOutputLength).includes(CONNECTING_COLOR),
+        "reload to start connecting",
+        () => `\n${tui.output().slice(reloadOutputLength)}`,
+      );
+    } finally {
+      process.kill(daemonPid, "SIGCONT");
+    }
+    const reconnectOutputLength = tui.output().length;
     await waitFor(
-      () => {
-        const update = tui.output().slice(reloadOutputLength);
-        return update.includes(CONNECTING_COLOR) && update.includes(CONNECTED_COLOR);
-      },
+      () => tui.output().slice(reconnectOutputLength).includes(CONNECTED_COLOR),
       "reload to reconnect",
-      () => `\n${tui.output().slice(reloadOutputLength)}`,
+      () => `\n${tui.output().slice(reconnectOutputLength)}`,
     );
     tui.terminal.write(Uint8Array.of(12));
     await Bun.sleep(50);
