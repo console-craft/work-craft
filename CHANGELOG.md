@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/console-craft/work-craft/compare/v0.7.0...v0.8.0) (2026-10-05)
+
+
+### Features
+
+* **tui:** expand component library and refine interactions ([#26](https://github.com/console-craft/work-craft/issues/26)) ([1fe584f](https://github.com/console-craft/work-craft/commit/1fe584fc6952ab5efe827bd7a2bf9d391eef88f6))
+
 ## [0.7.0](https://github.com/console-craft/work-craft/compare/v0.6.0...v0.7.0) (2026-10-02)
 
 
