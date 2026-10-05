@@ -12,10 +12,10 @@ It refines that design's focus, routing, dialogs, and hint behavior. The existin
 spatial geometry, responsive layout, daemon protocol, persistence, terminal
 identity, replay, and reconnect boundaries remain in place.
 
-The implementation covers current shell regions, dialogs, controls, and the UI
-demo. Neovim cooperation is a required behavioral contract; its plugin and
-transport implementation receive a separate design. Shared navigation remains
-Stage 2 work.
+The implementation covers current shell regions, dialogs, controls, and the
+standalone controls and component demos. Neovim cooperation is a required
+behavioral contract; its plugin and transport implementation receive a separate
+design. Shared navigation remains Stage 2 work.
 
 ## Decision
 
@@ -92,7 +92,7 @@ with native focus, the active dialog, command execution, and rendering.
 
 The application has one global keyboard-policy listener. App no longer mounts
 an independent Tab listener alongside the shell router. The existing traversal
-helpers remain reusable by the application and the standalone UI demo; the demo
+helpers remain reusable by the application and standalone demos; each demo
 has its own root input policy.
 
 The shell retains semantic region context and last-focused-child information.
@@ -122,6 +122,29 @@ importing shell or application command types. Application-specific labels,
 callbacks, and scope policy remain in callers. Existing key meanings are
 preserved; this work does not introduce a configurable keybinding system.
 
+### Component-Library Follow-Up
+
+Reusable Accordion, Collapsible, and Tabs components keep their state and
+interaction local. Hidden content stays mounted, while focus traversal skips
+hidden descendants. Tabs use one list focus endpoint: browsing immediately
+switches the displayed panel, and Enter/Space separately enters its first
+eligible control or the focusable panel itself. This reusable Tabs behavior is
+distinct from the workbench tab strip and does not introduce shared tab selection.
+
+Text-only labels, including interpolated strings and numbers, stay inside a
+Text node; composed renderables retain their explicit colors. Uncontrolled
+Accordion and Collapsible transitions use the latest local state during buffered
+native input, while controlled values remain parent-owned and wait for updated
+props. Header clicks tolerate crossing child hit targets but require release
+inside the same header.
+
+ScrollArea's opt-in keyboard fallback runs after native control dispatch and
+only for the focused descendant's nearest scrolling ancestor. Input, Select,
+and Textarea wrappers report native key consumption so editing and local
+navigation win over page scrolling. Wheel events stop at the receiving
+ScrollArea, including at its boundaries. Automatic scrollbar styling follows
+keyboard and pointer eligibility independently; explicit color overrides win.
+
 ## Scopes And Lifecycle
 
 A focus scope is a renderable boundary and eligibility policy, not an independent
@@ -149,6 +172,11 @@ focused, focus the designated initial control or the first eligible target.
 If a removed target has no surviving successor in the prior traversal order,
 use the designated initial control or the first currently eligible target before
 falling back to the boundary.
+
+Standalone demo pages may explicitly opt into `allowRootFocus` so background
+clicks can keep page scrolling focused while controls remain Tab targets. This
+is not the default dialog policy and does not add the page boundary to normal
+control traversal.
 
 New session remains visible and keyboard-accessible when the session list is
 empty. Focus initialization runs on scope entry/replacement, not on every render
@@ -303,8 +331,10 @@ Use focused behavioral checks at the ownership boundaries:
 
 Use representative native and composite controls instead of exhaustive
 per-control suites or broad visual snapshots. Real PTY acceptance proves terminal
-input passthrough. The future Neovim implementation must additionally verify the
-cross-application example above in the real editor.
+input passthrough. Raw shell input checks wait for rendered terminal cursor/focus
+readiness after activation and restoration instead of fixed sleeps; a delayed
+daemon response exercises the pre-handoff window. The future Neovim implementation
+must additionally verify the cross-application example above in the real editor.
 
 Run focused checks during implementation and a fresh bun run check before
 completion, including lint, formatting, type checking, tests, build, and smoke

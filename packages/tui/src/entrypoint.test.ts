@@ -93,10 +93,30 @@ function startTui(home: string): {
   return { child, output: () => output, terminal };
 }
 
+function waitForTerminalInput(
+  tui: ReturnType<typeof startTui>,
+  message: string,
+  outputLength = 0,
+): Promise<void> {
+  return waitFor(
+    () => {
+      const output = tui.output().slice(outputLength);
+      // In this shell flow, only a focused embedded terminal displays the hardware cursor.
+      return (
+        tui.child.exitCode === null &&
+        output.lastIndexOf("\x1b[?25h") > output.lastIndexOf("\x1b[?25l")
+      );
+    },
+    message,
+    () => `\n${tui.output()}`,
+  );
+}
+
 async function waitForSnapshot(
   client: WorkCraftClient,
   predicate: (snapshot: Snapshot) => boolean,
   message: string,
+  details: (snapshot: Snapshot) => string = () => "",
 ): Promise<Snapshot> {
   const deadline = Date.now() + 3_000;
   let snapshot = await client.snapshot();
@@ -105,7 +125,7 @@ async function waitForSnapshot(
     snapshot = await client.snapshot();
   }
   if (!predicate(snapshot)) {
-    throw new Error(`Timed out waiting for ${message}`);
+    throw new Error(`Timed out waiting for ${message}${details(snapshot)}`);
   }
   return snapshot;
 }
@@ -408,15 +428,27 @@ test("raw stage 1 key sequences drive the shell", async () => {
     tui.terminal.write(input.encode("j"));
     await Bun.sleep(50);
     expect(tui.output()).not.toContain("Second");
-    tui.terminal.write(input.encode("\r"));
-    await waitFor(() => tui.output().includes("Second"), "item activation");
-    await Bun.sleep(50);
-    tui.terminal.write(input.encode("printf 'ENTER-%s\\n' \"$((3*7))\"\r"));
-    await waitForSnapshot(
-      client,
-      (snapshot) => terminalText(snapshot, secondTab.result.paneId!).includes("ENTER-21"),
-      "item Enter handing input directly to its active pane",
-    );
+    const activationDaemonPid = (await client.health()).pid;
+    const activationOutputLength = tui.output().length;
+    let resumeActivation: ReturnType<typeof setTimeout> | undefined;
+    // The view can render before the command response allows the input handoff.
+    process.kill(activationDaemonPid, "SIGSTOP");
+    try {
+      tui.terminal.write(input.encode("\r"));
+      await waitFor(() => tui.output().includes("Second"), "item activation");
+      expect(tui.output().slice(activationOutputLength)).not.toContain("\x1b[?25h");
+      resumeActivation = setTimeout(() => process.kill(activationDaemonPid, "SIGCONT"), 150);
+      await waitForTerminalInput(tui, "item Enter to focus terminal input", activationOutputLength);
+      tui.terminal.write(input.encode("printf 'ENTER-%s\\n' \"$((3*7))\"\r"));
+      await waitForSnapshot(
+        client,
+        (snapshot) => terminalText(snapshot, secondTab.result.paneId!).includes("ENTER-21"),
+        "item Enter handing input directly to its active pane",
+      );
+    } finally {
+      clearTimeout(resumeActivation);
+      process.kill(activationDaemonPid, "SIGCONT");
+    }
 
     tui.terminal.write(input.encode(kitty.hyper(93)));
     await Bun.sleep(100);
@@ -440,7 +472,7 @@ test("raw stage 1 key sequences drive the shell", async () => {
     ).toBe(firstTabId);
 
     tui.terminal.write(Uint8Array.of(10));
-    await Bun.sleep(50);
+    await waitForTerminalInput(tui, "spatial movement to focus terminal input");
     tui.terminal.write(input.encode("printf 'WC-%s\\n' \"$((6*7))\"\r"));
     await waitForSnapshot(
       client,
@@ -536,7 +568,7 @@ test("raw stage 1 key sequences drive the shell", async () => {
       () => `\n${tui.output().slice(reconnectOutputLength)}`,
     );
     tui.terminal.write(Uint8Array.of(12));
-    await Bun.sleep(50);
+    await waitForTerminalInput(tui, "terminal input focus after reload");
     tui.terminal.write(input.encode("printf 'REL-%s\\n' \"$((5*5))\"\r"));
     const reloadedSnapshot = await waitForSnapshot(
       client,
@@ -567,8 +599,14 @@ test("raw stage 1 key sequences drive the shell", async () => {
       const update = tui.output().slice(chooserOutputLength);
       return update.includes("Sessions") && tui.output().includes("HINTS");
     }, "the session chooser");
+    const cancellationOutputLength = tui.output().length;
     tui.terminal.write(input.encode("\x1b"));
-    await Bun.sleep(50);
+    await waitForTerminalInput(
+      tui,
+      "terminal input focus after chooser cancellation",
+      cancellationOutputLength,
+    );
+    expect(tui.output().slice(cancellationOutputLength)).toContain("\x1b[?25h");
 
     tui.terminal.write(input.encode("_wc_missing_command_\r"));
     await Bun.sleep(100);
@@ -577,12 +615,23 @@ test("raw stage 1 key sequences drive the shell", async () => {
       client,
       (snapshot) => terminalText(snapshot, focusedPaneId).includes("ERR-81"),
       "shell recovery after command error",
+      (snapshot) =>
+        `\nTUI: ${tui.output().slice(-8_000)}\nPane: ${terminalText(snapshot, focusedPaneId)}`,
     );
 
-    tui.terminal.write(input.encode("sleep 10\r"));
-    await Bun.sleep(100);
+    const interruptCommand = String.raw`sh -c 'trap "printf \"%s-%s\\n\" WC INTERRUPTED; exit 0" INT; printf "%s-%s\n" WC INTERRUPT-READY; while :; do sleep 1; done'`;
+    tui.terminal.write(input.encode(`${interruptCommand}\r`));
+    await waitForSnapshot(
+      client,
+      (snapshot) => terminalText(snapshot, focusedPaneId).includes("WC-INTERRUPT-READY"),
+      "the interruptible child to install its signal handler",
+    );
     tui.terminal.write(Uint8Array.of(3));
-    await Bun.sleep(50);
+    await waitForSnapshot(
+      client,
+      (snapshot) => terminalText(snapshot, focusedPaneId).includes("WC-INTERRUPTED"),
+      "Ctrl-C reaching the interruptible child",
+    );
     tui.terminal.write(input.encode("printf 'INT-%s\\n' \"$((7*7))\"\r"));
     await waitForSnapshot(
       client,

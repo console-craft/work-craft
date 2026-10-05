@@ -76,6 +76,9 @@ export const symbols = {
   checkHeavy: "✔",
   cross: "×",
   crossHeavy: "✖",
+  crossBig: "❌",
+  info: "i",
+  exclamation: "⚠",
 
   // Box drawing
   topLeft: "┌",

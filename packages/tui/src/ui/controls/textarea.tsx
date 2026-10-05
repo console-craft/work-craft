@@ -1,11 +1,11 @@
-import { defaultTextareaKeyBindings, type TextareaRenderable } from "@opentui/core";
+import { defaultTextareaKeyBindings, type KeyEvent, type TextareaRenderable } from "@opentui/core";
 import type { TextareaProps as OpenTUITextareaProps } from "@opentui/react";
 import { useCallback, useLayoutEffect, useRef } from "react";
 
 import { nativeActionHints, useControlHints } from "@/ui/control-hints";
 import { resolveColor, type ThemeColor } from "@/ui/theme";
 import { useTheme } from "@/ui/theme-provider";
-import { assignRef, setDisabled } from "@/ui/utils";
+import { assignRef, consumeNativeKey, setDisabled } from "@/ui/utils";
 
 type ThemedColorProps = {
   backgroundColor?: ThemeColor;
@@ -52,6 +52,7 @@ export function Textarea({
   keyBindings = [],
   keyAliasMap,
   onSubmit,
+  onKeyDown,
   ...props
 }: TextareaProps) {
   const theme = useTheme();
@@ -89,10 +90,18 @@ export function Textarea({
     setDisabled(textareaRef.current, disabled);
   }, [disabled]);
 
+  function handleKeyDown(event: KeyEvent) {
+    onKeyDown?.(event);
+    if (!disabled) {
+      consumeNativeKey(textareaRef.current, event);
+    }
+  }
+
   return (
     <textarea
       {...props}
       onSubmit={onSubmit}
+      onKeyDown={handleKeyDown}
       keyAliasMap={keyAliasMap}
       ref={setTextareaRef}
       focused={disabled ? false : focused}

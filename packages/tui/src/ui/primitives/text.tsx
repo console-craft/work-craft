@@ -3,6 +3,9 @@ import type { TextProps as OpenTUITextProps } from "@opentui/react";
 
 import { resolveColor, type Theme, type ThemeColor } from "@/ui/theme";
 import { useTheme } from "@/ui/theme-provider";
+import { textTransform } from "@/ui/utils";
+
+export type TextTransform = "none" | "uppercase" | "lowercase" | "capitalize";
 
 export type TextVariant =
   | "default"
@@ -25,6 +28,7 @@ type ThemedColorProps = {
 export interface TextProps
   extends Omit<OpenTUITextProps, keyof ThemedColorProps>, ThemedColorProps {
   variant?: TextVariant;
+  transform?: TextTransform;
 }
 
 function getVariantProps(theme: Theme, variant: TextVariant): Pick<TextProps, "fg" | "attributes"> {
@@ -35,6 +39,10 @@ function getVariantProps(theme: Theme, variant: TextVariant): Pick<TextProps, "f
       };
 
     case "heading":
+      return {
+        fg: theme.colors.primary,
+        attributes: TextAttributes.BOLD,
+      };
     case "label":
       return {
         fg: theme.colors.foreground,
@@ -61,6 +69,7 @@ function getVariantProps(theme: Theme, variant: TextVariant): Pick<TextProps, "f
 export function Text({
   children,
   variant = "default",
+  transform = "none",
   fg,
   bg,
   selectionBg,
@@ -72,6 +81,9 @@ export function Text({
   const theme = useTheme();
   const variantProps = getVariantProps(theme, variant);
 
+  const transformedChildren =
+    typeof children === "string" ? textTransform(children, transform) : children;
+
   return (
     <text
       {...props}
@@ -82,7 +94,7 @@ export function Text({
       tabIndicatorColor={resolveColor(theme, tabIndicatorColor)}
       attributes={attributes ?? variantProps.attributes}
     >
-      {children}
+      {transformedChildren}
     </text>
   );
 }

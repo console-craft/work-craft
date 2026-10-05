@@ -274,6 +274,31 @@ below. The companion design must be approved before that stage receives an
 implementation plan. These designs are written just in time rather than in
 advance, so they can use lessons from the preceding runnable stage.
 
+### Current Progress
+
+Stage 1's persistent shell and input foundation is implemented, including the
+subsequent [focus and input contract refinements](./2026-10-02-tui-focus-input-contract-design.md).
+Stage 2, Shared Session Navigation, is next and still requires its companion
+design before implementation.
+
+The `ui-components` branch delivers component-library groundwork between those
+stages:
+
+- Themed Card, Badge, Alert, Spinner, Progress, Collapsible, Accordion, and Tabs
+  components, plus Container and ScrollArea primitives.
+- Refinements to existing controls and primitives: composite button content,
+  text transforms and heading colors, explicit native key consumption, and
+  opt-in page-background focus.
+- Keyboard-first compound interactions, tab-content focus activation, nested
+  wheel isolation, and activity-aware scrollbar colors.
+- Standalone controls and component demos with theme/width cycling and focused
+  behavioral coverage for layout, input, focus, scrolling, and lifecycle.
+
+This is supporting TUI work, not a new architectural stage or an implementation
+of shared navigation. Durable state and runtime ownership remain unchanged.
+The remaining reusable components will be added on a separate future branch;
+the current component inventory does not imply a complete UI library.
+
 ### Stage 1: Persistent Shell And Input Foundation
 
 Introduce the workspace bar, invariant category rail, responsive project/item

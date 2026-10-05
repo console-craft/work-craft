@@ -152,3 +152,28 @@ test("repair detaches an invalid scoped listener when the boundary cannot receiv
     renderer.destroy();
   }
 });
+
+test("page scopes can opt into deliberate root focus without adding a Tab stop", async () => {
+  const { renderer } = await createTestRenderer({ width: 40, height: 10 });
+  const root = new BoxRenderable(renderer, { id: "page", focusable: true });
+  const first = new BoxRenderable(renderer, { id: "first", focusable: true });
+  const last = new BoxRenderable(renderer, { id: "last", focusable: true });
+  renderer.root.add(root);
+  root.add(first);
+  root.add(last);
+  const strict = createFocusScope(renderer, root);
+  const page = createFocusScope(renderer, root, undefined, true);
+  try {
+    root.focus();
+    expect(strict.repair()).toBe(first);
+    root.focus();
+    expect(page.repair()?.id).toBe(root.id);
+    expect(page.move(1)).toBe(first);
+    expect(page.move(1)).toBe(last);
+    expect(page.move(1)).toBe(first);
+    root.focus();
+    expect(page.move(-1)).toBe(last);
+  } finally {
+    renderer.destroy();
+  }
+});
