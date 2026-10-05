@@ -97,7 +97,8 @@ function useAccordionItem() {
 interface AccordionRootProps extends StackProps {
   canChange: boolean;
   openValues: Set<string>;
-  setItemOpen: (value: string, open: boolean) => void;
+  /** Omit open to toggle against the latest local value. */
+  setItemOpen: (value: string, open?: boolean) => void;
 }
 
 function AccordionRoot({
@@ -196,9 +197,9 @@ function AccordionRoot({
 
   const toggle = useCallback(
     (value: string) => {
-      setItemOpen(value, !openValues.has(value));
+      setItemOpen(value);
     },
-    [openValues, setItemOpen],
+    [setItemOpen],
   );
 
   const context = useMemo<AccordionContextValue>(
@@ -245,12 +246,17 @@ function AccordionSingleRoot(props: AccordionSingleProps) {
   const [internalValue, setInternalValue] = useState<string | undefined>(defaultValue);
 
   const currentValue = controlled ? value : internalValue;
+  // Native input can deliver several transitions before React commits.
+  const currentValueRef = useRef(currentValue);
+  currentValueRef.current = currentValue;
 
   const setItemOpen = useCallback(
-    (itemValue: string, open: boolean) => {
+    (itemValue: string, open?: boolean) => {
+      const currentValue = currentValueRef.current;
+      const nextOpen = open ?? currentValue !== itemValue;
       let nextValue = currentValue;
 
-      if (open) {
+      if (nextOpen) {
         nextValue = itemValue;
       } else if (currentValue === itemValue) {
         nextValue = undefined;
@@ -261,12 +267,13 @@ function AccordionSingleRoot(props: AccordionSingleProps) {
       }
 
       if (!controlled) {
+        currentValueRef.current = nextValue;
         setInternalValue(nextValue);
       }
 
       onValueChange?.(nextValue);
     },
-    [controlled, currentValue, onValueChange],
+    [controlled, onValueChange],
   );
 
   const openValues = useMemo(
@@ -292,26 +299,32 @@ function AccordionMultipleRoot(props: AccordionMultipleProps) {
   const [internalValue, setInternalValue] = useState<string[]>(defaultValue);
 
   const currentValue = controlled ? (value ?? []) : internalValue;
+  // Native input can deliver several transitions before React commits.
+  const currentValueRef = useRef(currentValue);
+  currentValueRef.current = currentValue;
 
   const setItemOpen = useCallback(
-    (itemValue: string, open: boolean) => {
+    (itemValue: string, open?: boolean) => {
+      const currentValue = currentValueRef.current;
       const currentlyOpen = currentValue.includes(itemValue);
+      const nextOpen = open ?? !currentlyOpen;
 
-      if (currentlyOpen === open) {
+      if (currentlyOpen === nextOpen) {
         return;
       }
 
-      const nextValue = open
+      const nextValue = nextOpen
         ? [...currentValue, itemValue]
         : currentValue.filter((value) => value !== itemValue);
 
       if (!controlled) {
+        currentValueRef.current = nextValue;
         setInternalValue(nextValue);
       }
 
       onValueChange?.(nextValue);
     },
-    [controlled, currentValue, onValueChange],
+    [controlled, onValueChange],
   );
 
   const openValues = useMemo(() => new Set(currentValue), [currentValue]);

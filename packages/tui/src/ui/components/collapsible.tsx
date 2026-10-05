@@ -47,25 +47,29 @@ export function Collapsible({
 
   const open = controlledOpen ?? uncontrolledOpen;
   const canChange = controlledOpen === undefined || onOpenChange !== undefined;
+  // Native input can deliver several transitions before React commits.
+  const openRef = useRef(open);
+  openRef.current = open;
 
   const setOpen = useCallback(
     (nextOpen: boolean) => {
-      if (nextOpen === open) {
+      if (nextOpen === openRef.current) {
         return;
       }
 
       if (controlledOpen === undefined) {
+        openRef.current = nextOpen;
         setUncontrolledOpen(nextOpen);
       }
 
       onOpenChange?.(nextOpen);
     },
-    [controlledOpen, onOpenChange, open],
+    [controlledOpen, onOpenChange],
   );
 
   const toggle = useCallback(() => {
-    setOpen(!open);
-  }, [open, setOpen]);
+    setOpen(!openRef.current);
+  }, [setOpen]);
 
   const context = useMemo(
     () => ({
@@ -85,6 +89,15 @@ export function Collapsible({
 }
 
 export interface CollapsibleTriggerProps extends Omit<HStackProps, "focusable"> {}
+
+function isWithinHeader(header: BoxRenderable, event: MouseEvent): boolean {
+  return (
+    event.x >= header.screenX &&
+    event.x < header.screenX + header.width &&
+    event.y >= header.screenY &&
+    event.y < header.screenY + header.height
+  );
+}
 
 export function CollapsibleTrigger({
   children,
@@ -172,6 +185,7 @@ export function CollapsibleTrigger({
   }
 
   function handleMouseDown(this: BoxRenderable, event: MouseEvent) {
+    mousePressedRef.current = false;
     onMouseDown?.call(this, event);
 
     if (
@@ -195,6 +209,7 @@ export function CollapsibleTrigger({
       event.propagationStopped ||
       !canChange ||
       !wasPressed ||
+      !isWithinHeader(this, event) ||
       event.button !== MouseButton.LEFT
     ) {
       return;
@@ -203,7 +218,10 @@ export function CollapsibleTrigger({
   }
 
   function handleMouseOut(this: BoxRenderable, event: MouseEvent) {
-    mousePressedRef.current = false;
+    // Native mouse-out also fires when crossing the header's child hit targets.
+    if (!isWithinHeader(this, event)) {
+      mousePressedRef.current = false;
+    }
     onMouseOut?.call(this, event);
   }
 

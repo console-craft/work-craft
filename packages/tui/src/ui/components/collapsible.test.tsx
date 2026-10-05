@@ -138,6 +138,54 @@ test("collapsible mouse activation waits for release and preserves callback rece
     await act(async () => setup.mockMouse.moveTo(x, y + 3));
     await act(async () => setup.mockMouse.release(x, y + 3));
     expect(changes).toEqual([true]);
+
+    const label = trigger.getChildren()[1]!;
+    const paddingX = trigger.screenX + trigger.width - 2;
+    await act(async () => setup.mockMouse.moveTo(paddingX, y));
+    await act(async () => setup.mockMouse.pressDown(paddingX, y));
+    await act(async () => setup.mockMouse.moveTo(label.screenX, y));
+    await act(async () => setup.mockMouse.release(label.screenX, y));
+    await act(async () => setup.flush());
+    expect(changes).toEqual([true, false]);
+
+    // Captured text selection can bubble a release outside the header.
+    await act(async () => setup.mockMouse.moveTo(paddingX, y));
+    await act(async () => setup.mockMouse.pressDown(paddingX, y));
+    await act(async () => setup.mockMouse.moveTo(label.screenX, y));
+    await act(async () => setup.mockMouse.moveTo(paddingX, y + 3));
+    await act(async () => setup.mockMouse.release(paddingX, y + 3));
+    await act(async () => setup.flush());
+    expect(changes).toEqual([true, false]);
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
+test("collapsible applies buffered expansion and toggles to the latest local state", async () => {
+  const changes: boolean[] = [];
+  const setup = await testRender(
+    <ThemeProvider theme={defaultTheme}>
+      <Collapsible onOpenChange={(open) => changes.push(open)}>
+        <CollapsibleTrigger focused>Settings</CollapsibleTrigger>
+        <CollapsibleContent id="content">
+          <Text>Details</Text>
+        </CollapsibleContent>
+      </Collapsible>
+    </ThemeProvider>,
+    { width: 30, height: 6 },
+  );
+  try {
+    await act(async () => setup.flush());
+    const content = setup.renderer.root.findDescendantById("content")!;
+    act(() => setup.renderer.stdin.emit("data", Buffer.from("llhh")));
+    await act(async () => setup.flush());
+    expect(content.visible).toBe(false);
+    expect(changes).toEqual([true, false]);
+
+    act(() => setup.renderer.stdin.emit("data", Buffer.from("\r\r")));
+    await act(async () => setup.flush());
+    expect(content.visible).toBe(false);
+    expect(changes).toEqual([true, false, true, false]);
   } finally {
     act(() => setup.renderer.destroy());
   }

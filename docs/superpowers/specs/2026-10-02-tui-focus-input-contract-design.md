@@ -131,6 +131,13 @@ switches the displayed panel, and Enter/Space separately enters its first
 eligible control or the focusable panel itself. This reusable Tabs behavior is
 distinct from the workbench tab strip and does not introduce shared tab selection.
 
+Text-only labels, including interpolated strings and numbers, stay inside a
+Text node; composed renderables retain their explicit colors. Uncontrolled
+Accordion and Collapsible transitions use the latest local state during buffered
+native input, while controlled values remain parent-owned and wait for updated
+props. Header clicks tolerate crossing child hit targets but require release
+inside the same header.
+
 ScrollArea's opt-in keyboard fallback runs after native control dispatch and
 only for the focused descendant's nearest scrolling ancestor. Input, Select,
 and Textarea wrappers report native key consumption so editing and local

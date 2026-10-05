@@ -280,6 +280,49 @@ test("controlled accordion preserves empty ownership, child state, and read-only
   }
 });
 
+for (const multiple of [false, true]) {
+  test(`${multiple ? "multiple" : "single"} accordion applies buffered requests to the latest local state`, async () => {
+    const changes: (string | string[] | undefined)[] = [];
+    const items = (
+      <>
+        <Item value="a" triggerProps={{ focused: true }} />
+        <Item value="b" />
+      </>
+    );
+    const setup = await testRender(
+      <ThemeProvider theme={defaultTheme}>
+        {multiple ? (
+          <Accordion multiple onValueChange={(value) => changes.push(value)}>
+            {items}
+          </Accordion>
+        ) : (
+          <Accordion onValueChange={(value) => changes.push(value)}>{items}</Accordion>
+        )}
+      </ThemeProvider>,
+      { width: 30, height: 12 },
+    );
+    try {
+      await act(async () => setup.flush());
+      act(() => setup.renderer.stdin.emit("data", Buffer.from("\rj\r")));
+      await act(async () => setup.flush());
+      expect(setup.renderer.root.findDescendantById("content:a")!.visible).toBe(multiple);
+      expect(setup.renderer.root.findDescendantById("content:b")!.visible).toBe(true);
+      expect(changes).toEqual(multiple ? [["a"], ["a", "b"]] : ["a", "b"]);
+
+      act(() => setup.renderer.stdin.emit("data", Buffer.from("hllhh\r\r")));
+      await act(async () => setup.flush());
+      expect(setup.renderer.root.findDescendantById("content:b")!.visible).toBe(false);
+      expect(changes.slice(2)).toEqual(
+        multiple
+          ? [["a"], ["a", "b"], ["a"], ["a", "b"], ["a"]]
+          : [undefined, "b", undefined, "b", undefined],
+      );
+    } finally {
+      act(() => setup.renderer.destroy());
+    }
+  });
+}
+
 test("accordion ignores repeated toggles but accepts linefeed and repeated navigation", async () => {
   const changes: (string | undefined)[] = [];
   const setup = await testRender(

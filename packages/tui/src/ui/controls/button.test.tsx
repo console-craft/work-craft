@@ -75,7 +75,7 @@ test("plain button labels retain their state-dependent colors and render zero", 
       <ThemeProvider theme={defaultTheme}>
         <Stack>
           <Button id="plain" disabled={disabled}>
-            Save
+            Save {3}
           </Button>
           <Button>{0}</Button>
         </Stack>
@@ -85,9 +85,9 @@ test("plain button labels retain their state-dependent colors and render zero", 
   const setup = await testRender(<Fixture />, { width: 20, height: 5 });
   try {
     await act(async () => setup.flush());
+    expect(setup.captureCharFrame()).toContain("Save 3");
     const button = setup.renderer.root.findDescendantById("plain")!;
     const label = button.getChildren()[0] as TextRenderable;
-    expect(setup.captureCharFrame()).toContain("Save");
     expect(setup.captureCharFrame()).toContain("0");
     expect(label.fg.toInts()).toEqual(parseColor(defaultTheme.colors.primaryForeground).toInts());
 

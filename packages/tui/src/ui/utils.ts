@@ -1,5 +1,5 @@
 import type { KeyEvent, Renderable } from "@opentui/core";
-import type { ReactNode, Ref } from "react";
+import { Children, type ReactNode, type Ref } from "react";
 
 // Focus
 
@@ -55,6 +55,8 @@ export function textTransform(text: string, transformation: TextTransform) {
   }
 }
 
-export function isTextContent(node: ReactNode) {
-  return typeof node === "string" || typeof node === "number";
+export function isTextContent(node: ReactNode): boolean {
+  return Children.toArray(node).every(
+    (child) => typeof child === "string" || typeof child === "number",
+  );
 }
