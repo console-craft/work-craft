@@ -1,11 +1,11 @@
-import { defaultTextareaKeyBindings, type InputRenderable } from "@opentui/core";
+import { defaultTextareaKeyBindings, type InputRenderable, type KeyEvent } from "@opentui/core";
 import type { InputProps as OpenTUIInputProps } from "@opentui/react";
 import { useCallback, useLayoutEffect, useRef } from "react";
 
 import { nativeActionHints, useControlHints } from "@/ui/control-hints";
 import { resolveColor, type ThemeColor } from "@/ui/theme";
 import { useTheme } from "@/ui/theme-provider";
-import { assignRef, setDisabled } from "@/ui/utils";
+import { assignRef, consumeNativeKey, setDisabled } from "@/ui/utils";
 
 type ThemedColorProps = {
   backgroundColor?: ThemeColor;
@@ -46,6 +46,7 @@ export function Input({
   disabled = false,
   focused,
   onSubmit,
+  onKeyDown,
   submitLabel = "Submit",
   keyBindings = [],
   keyAliasMap,
@@ -106,6 +107,13 @@ export function Input({
 
   const currentCursorColor = disabled ? "mutedForeground" : cursorColor;
 
+  function handleKeyDown(event: KeyEvent) {
+    onKeyDown?.(event);
+    if (!disabled) {
+      consumeNativeKey(inputRef.current, event);
+    }
+  }
+
   return (
     <input
       {...props}
@@ -113,6 +121,7 @@ export function Input({
       keyAliasMap={keyAliasMap}
       // OpenTUI React emits a string, but its types also inherit the native SubmitEvent callback.
       onSubmit={onSubmit as OpenTUIInputProps["onSubmit"]}
+      onKeyDown={handleKeyDown}
       ref={setInputRef}
       focused={disabled ? false : focused}
       backgroundColor={resolveColor(theme, currentBackgroundColor)}

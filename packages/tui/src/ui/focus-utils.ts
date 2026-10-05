@@ -116,6 +116,7 @@ export function createFocusScope(
   renderer: CliRenderer,
   root: Renderable,
   initialFocusId?: string,
+  allowRootFocus = false,
 ): FocusScopeController {
   let previousTargets: Renderable[] = [];
   let lastChild: Renderable | null = null;
@@ -135,6 +136,9 @@ export function createFocusScope(
       return null;
     }
     const targets = getFocusableRenderables(root);
+    if (allowRootFocus && current === root && isEligibleFocusTarget(root, root)) {
+      return record(targets, root);
+    }
     if (current !== null && targets.includes(current)) {
       return record(targets, current);
     }

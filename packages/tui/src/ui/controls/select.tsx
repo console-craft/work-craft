@@ -10,7 +10,7 @@ import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { nativeActionHints, useControlHints } from "@/ui/control-hints";
 import { resolveColor, type ThemeColor } from "@/ui/theme";
 import { useTheme } from "@/ui/theme-provider";
-import { assignRef, setDisabled } from "@/ui/utils";
+import { assignRef, consumeNativeKey, setDisabled } from "@/ui/utils";
 
 const defaultKeyBindings: SelectKeyBinding[] = [
   // Native defaults are internal; keep their merge order for alias collisions.
@@ -157,21 +157,15 @@ export function Select({
 
     const isG = event.name.toLowerCase() === "g";
 
-    if (!isG || event.ctrl || event.meta || event.super) {
-      return;
-    }
-
     const select = selectRef.current;
 
-    if (!select || select.options.length === 0) {
+    if (isG && !event.ctrl && !event.meta && !event.super && select && select.options.length > 0) {
+      event.preventDefault();
+      const isLast = event.shift || event.name === "G";
+      select.setSelectedIndex(isLast ? select.options.length - 1 : 0);
       return;
     }
-
-    event.preventDefault();
-
-    const isLast = event.shift || event.name === "G";
-
-    select.setSelectedIndex(isLast ? select.options.length - 1 : 0);
+    consumeNativeKey(select, event);
   }
 
   return (

@@ -49,6 +49,31 @@ bun run cli -- daemon stop
 bun run cli -- daemon destroy --force
 ```
 
+### TUI Component Demos
+
+Run the standalone controls or composite-component demo from source:
+
+```sh
+CONTROLS_DEMO=true bun run tui
+COMPONENTS_DEMO=true bun run tui
+```
+
+Use the same environment variable with `bun run dev` for watch mode. Both demos
+support `Ctrl+t` to cycle themes, `Ctrl+r` to cycle content widths, `Tab`/`Shift+Tab`
+to traverse controls, and `Ctrl+c` to exit. Click the page background to focus
+page scrolling; focused controls retain their own editing and navigation keys.
+Nested ScrollAreas keep wheel scrolling local and highlight the eligible
+keyboard and pointer scrolling targets independently.
+
+The composite demo covers Card, Badge, Alert, Spinner, Progress, Collapsible,
+Accordion, and Tabs, including tabs with scrollable content inside a card.
+Additional components are deferred to a future branch. This library groundwork
+sits between the completed Stage 1 shell/input foundation and upcoming Stage 2
+shared session navigation in the
+[TUI overhaul roadmap](docs/superpowers/specs/2026-09-18-tui-overhaul-design.md).
+
+### Build
+
 Build a standalone executable for the current machine with:
 
 ```sh

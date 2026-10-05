@@ -11,7 +11,7 @@ import { useControlHints } from "@/ui/control-hints";
 import { Box, type BoxProps } from "@/ui/primitives/box";
 import { Text } from "@/ui/primitives/text";
 import type { ThemeColor } from "@/ui/theme";
-import { assignRef } from "@/ui/utils";
+import { assignRef, isTextContent } from "@/ui/utils";
 
 export type ButtonVariant = "primary" | "secondary" | "ghost" | "destructive";
 
@@ -217,7 +217,7 @@ export function Button({
       onMouseUp={handleMouseUp}
       onMouseOut={handleMouseOut}
     >
-      <Text fg={visual.fg}>{children}</Text>
+      {isTextContent(children) ? <Text fg={visual.fg}>{children}</Text> : children}
     </Box>
   );
 }

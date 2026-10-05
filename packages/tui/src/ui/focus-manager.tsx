@@ -6,7 +6,12 @@ import { createFocusScope, type FocusScopeController } from "@/ui/focus-utils";
 
 /** A missing scope is inert, including during buffered input and scope replacement. */
 export function useFocusScope(
-  request: { scopeId: string; scopeKey: string; initialFocusId?: string } | null,
+  request: {
+    scopeId: string;
+    scopeKey: string;
+    initialFocusId?: string;
+    allowRootFocus?: boolean;
+  } | null,
 ): FocusScopeController {
   const renderer = useRenderer();
   const requestRef = useRef(request);
@@ -15,6 +20,7 @@ export function useFocusScope(
   const cached = useRef<{
     key: string;
     root: Renderable;
+    allowRootFocus: boolean;
     controller: FocusScopeController;
   } | null>(null);
 
@@ -26,11 +32,17 @@ export function useFocusScope(
         cached.current = null;
         return null;
       }
-      if (cached.current?.key !== current.scopeKey || cached.current.root !== root) {
+      const allowRootFocus = current.allowRootFocus ?? false;
+      if (
+        cached.current?.key !== current.scopeKey ||
+        cached.current.root !== root ||
+        cached.current.allowRootFocus !== allowRootFocus
+      ) {
         cached.current = {
           key: current.scopeKey,
           root,
-          controller: createFocusScope(renderer, root, current.initialFocusId),
+          allowRootFocus,
+          controller: createFocusScope(renderer, root, current.initialFocusId, allowRootFocus),
         };
       }
       return cached.current.controller;
@@ -68,7 +80,7 @@ export function useFocusScope(
       renderer.off(CliRenderEvents.FRAME, repair);
       renderer.off(CliRenderEvents.FOCUSED_RENDERABLE, queueRepair);
     };
-  }, [renderer, controller, request?.scopeId, request?.scopeKey]);
+  }, [renderer, controller, request?.scopeId, request?.scopeKey, request?.allowRootFocus]);
 
   useLayoutEffect(() => {
     controller.repair();
@@ -93,11 +105,13 @@ export function useNativeFocus(): Renderable | null {
 
 export type FocusManagerProps = {
   focusScopeId: string;
+  /** Allows intentional page-background focus while child controls remain Tab targets. */
+  allowRootFocus?: boolean;
 };
 
-export function FocusManager({ focusScopeId }: FocusManagerProps) {
+export function FocusManager({ focusScopeId, allowRootFocus = false }: FocusManagerProps) {
   const renderer = useRenderer();
-  const scope = useFocusScope({ scopeId: focusScopeId, scopeKey: focusScopeId });
+  const scope = useFocusScope({ scopeId: focusScopeId, scopeKey: focusScopeId, allowRootFocus });
 
   useKeyboard((key) => {
     if (

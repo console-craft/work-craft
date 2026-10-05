@@ -60,6 +60,11 @@ packages/tui/src/
 ├── app.tsx
 ├── entrypoint.test.ts
 ├── test-fixtures.ts
+├── demos/
+│   ├── components.tsx
+│   ├── controls.tsx
+│   ├── demo-page.tsx
+│   └── use-demo-theme.ts
 ├── client/
 │   ├── use-work-craft.test.ts
 │   └── use-work-craft.ts
@@ -116,7 +121,8 @@ perfectly symmetrical file grid. A listed test file is created only when
 existing tests naturally move to that owner or new non-trivial pure logic needs
 coverage.
 
-`ui/` owns theme types, values, and context. Application capabilities
+`ui/` owns theme types, values, context, reusable controls and composites, and
+their local focus/hint helpers. Application capabilities
 use native OpenTUI primitives directly until repeated behavior warrants a local
 UI component.
 
@@ -132,6 +138,20 @@ UI component.
   sensitive to directory depth.
 - `test-fixtures.ts` remains at the root while it supports tests across several
   capabilities.
+
+### Standalone Demos And Reusable UI
+
+`demos/` owns development-only compositions of the component library and their
+colocated behavioral tests. `main.tsx` selects the controls or composite demo
+with `CONTROLS_DEMO=true` or `COMPONENTS_DEMO=true`; the default remains `App`.
+The former root `ui-demo.tsx` is now `demos/controls.tsx`. Shared demo layout,
+background-focus policy, and theme/width cycling remain in `demos/`, while
+reusable Container/ScrollArea primitives and named composites remain in `ui/`.
+
+The implemented composites are Card, Badge, Alert, Spinner, Progress,
+Collapsible, Accordion, and Tabs. Further components are follow-up work, not
+part of the current delivered inventory. Application-specific shell and
+workbench components retain their capability owners.
 
 ### Client
 

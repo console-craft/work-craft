@@ -1,5 +1,7 @@
 import { useState } from "react";
 
+import { DemoPage } from "@/demos/demo-page";
+import { useDemoTheme } from "@/demos/use-demo-theme";
 import { Button } from "@/ui/controls/button.tsx";
 import { Checkbox } from "@/ui/controls/checkbox";
 import { Input } from "@/ui/controls/input";
@@ -10,15 +12,14 @@ import { Slider } from "@/ui/controls/slider";
 import { Switch } from "@/ui/controls/switch";
 import { Textarea } from "@/ui/controls/textarea";
 import { Toggle, ToggleGroup } from "@/ui/controls/toggle";
-import { FocusManager } from "@/ui/focus-manager";
 import { HStack } from "@/ui/primitives/hstack";
 import { Spacer } from "@/ui/primitives/spacer";
 import { Stack } from "@/ui/primitives/stack";
 import { Text } from "@/ui/primitives/text";
 import { ThemeProvider } from "@/ui/theme-provider.tsx";
-import { defaultTheme } from "@/ui/themes/default.ts";
 
-export function UIDemo() {
+export function ControlsDemo() {
+  const theme = useDemoTheme();
   const [fruit, setFruit] = useState("banana");
   const [bold, setBold] = useState(true);
   const [alignment, setAlignment] = useState<string>();
@@ -31,9 +32,9 @@ export function UIDemo() {
   const [volume, setVolume] = useState(50);
 
   return (
-    <ThemeProvider theme={defaultTheme}>
-      <FocusManager focusScopeId="ui-demo" />
-      <Stack id="ui-demo" focusable maxWidth={200} paddingX={6} paddingY={1}>
+    <ThemeProvider theme={theme}>
+      <DemoPage id="controls-demo">
+        <Text variant="muted">{`Theme: ${theme.name} · Ctrl+t to switch`}</Text>
         <Text fg="primary">BUTTONS</Text>
         <HStack>
           <Button variant="primary">Primary</Button>
@@ -44,34 +45,32 @@ export function UIDemo() {
         </HStack>
 
         <Text fg="primary">INPUTS</Text>
-        <HStack gap={1}>
-          <Input placeholder="Name" width="33%" />
-          <Spacer />
-          <Input value="Doe" width="33%" disabled />
-          <Spacer />
+        <HStack gap={3}>
+          <Input placeholder="Name" flexBasis={0} flexGrow={1} />
+          <Input value="Doe" disabled flexBasis={0} flexGrow={1} />
           <NumberInput
-            width="33%"
             value={price}
             min={0}
             step={0.1}
             max={5}
             onValueChange={setPrice}
             placeholder="Price"
+            flexBasis={0}
+            flexGrow={1}
           />
         </HStack>
 
         <Text fg="primary">TEXTAREA</Text>
-        <HStack gap={1}>
-          <Textarea placeholder="Bio" height={3} width="50%"></Textarea>
-          <Spacer />
-          <Textarea initialValue="Hello" height={3} width="50%" disabled></Textarea>
+        <HStack gap={3}>
+          <Textarea placeholder="Bio" height={3} flexBasis={0} flexGrow={1}></Textarea>
+          <Textarea initialValue="Hello" height={3} flexBasis={0} flexGrow={1} disabled></Textarea>
         </HStack>
 
         <Text fg="primary">SELECT</Text>
-        <HStack>
+        <HStack gap={2}>
           <Select
             height={6}
-            width="33%"
+            flexGrow={1}
             options={[
               { name: "Monday", description: "First day", value: "mon" },
               { name: "Wednesday", description: "Third day", value: "wed" },
@@ -81,7 +80,7 @@ export function UIDemo() {
 
           <Select
             height={6}
-            width="33%"
+            flexGrow={1}
             disabled
             options={[
               { name: "Monday", description: "First day", value: "mon" },
@@ -92,11 +91,16 @@ export function UIDemo() {
 
           <Select
             height={6}
-            width="33%"
+            flexGrow={1}
+            showDescription={false}
             options={[
-              { name: "Monday", description: "", value: "mon" },
-              { name: "Wednesday", description: "", value: "wed" },
-              { name: "Friday", description: "", value: "fri" },
+              { name: "Monday", description: "First day", value: "mon" },
+              { name: "Tuesday", description: "Second day", value: "tue" },
+              { name: "Wednesday", description: "Third day", value: "wed" },
+              { name: "Thursday", description: "Forth day", value: "thu" },
+              { name: "Friday", description: "Fifth day", value: "fri" },
+              { name: "Saturday", description: "Sixth day", value: "sat" },
+              { name: "Sunday", description: "Seventh day", value: "sun" },
             ]}
           />
         </HStack>
@@ -157,13 +161,7 @@ export function UIDemo() {
 
         <Text fg="primary">TOGGLES</Text>
         <HStack>
-          <Toggle
-            pressed={bold}
-            onPressedChange={setBold}
-
-            alignSelf="flex-start"
-            flexShrink={0}
-          >
+          <Toggle pressed={bold} onPressedChange={setBold} alignSelf="flex-start" flexShrink={0}>
             Bold
           </Toggle>
           <ToggleGroup type="single" value={alignment} onValueChange={setAlignment}>
@@ -183,27 +181,28 @@ export function UIDemo() {
         <Text fg="primary">SLIDERS</Text>
 
         <HStack>
-          <Slider
-            orientation="vertical"
-            value={volume}
-            onValueChange={setVolume}
-            min={0}
-            max={100}
-            step={5}
-            height={5}
-          />
-          <Slider
-            orientation="vertical"
-            value={volume}
-            onValueChange={setVolume}
-            min={0}
-            max={100}
-            step={5}
-            height={5}
-            disabled
-          />
-          <Spacer />
-          <Stack width="90%">
+          <HStack width={5}>
+            <Slider
+              orientation="vertical"
+              value={volume}
+              onValueChange={setVolume}
+              min={0}
+              max={100}
+              step={5}
+              height={5}
+            />
+            <Slider
+              orientation="vertical"
+              value={volume}
+              onValueChange={setVolume}
+              min={0}
+              max={100}
+              step={5}
+              height={5}
+              disabled
+            />
+          </HStack>
+          <Stack flexGrow={1} alignItems="center">
             <Slider
               value={volume}
               onValueChange={setVolume}
@@ -223,7 +222,7 @@ export function UIDemo() {
             />
           </Stack>
         </HStack>
-      </Stack>
+      </DemoPage>
     </ThemeProvider>
   );
 }
