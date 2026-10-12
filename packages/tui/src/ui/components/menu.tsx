@@ -77,6 +77,15 @@ function isActivationKey(event: KeyEvent) {
   return event.name === "return" || event.name === "linefeed" || event.name === "space";
 }
 
+function isWithinRow(node: BoxRenderable, event: MouseEvent): boolean {
+  return (
+    event.x >= node.screenX &&
+    event.x < node.screenX + node.width &&
+    event.y >= node.screenY &&
+    event.y < node.screenY + node.height
+  );
+}
+
 function isEnabledItem(
   item: MenuItemRegistration | undefined,
 ): item is MenuItemRegistration & { node: BoxRenderable } {
@@ -676,9 +685,11 @@ export function MenuItem({
   onMouseUp,
   onMouseOver,
   onMouseOut,
+  onMouseDrag,
 
   ...props
 }: MenuItemProps) {
+  const renderer = useRenderer();
   const menu = useMenu("MenuItem");
 
   const reactId = useId();
@@ -731,6 +742,8 @@ export function MenuItem({
       return;
     }
 
+    // Native text selection starts before row dispatch and would intercept subsequent drags.
+    renderer.clearSelection();
     mousePressedRef.current = true;
     menu.setActive(id);
   }
@@ -741,7 +754,13 @@ export function MenuItem({
 
     onMouseUp?.call(this, event);
 
-    if (event.defaultPrevented || disabled || !wasPressed || event.button !== MouseButton.LEFT) {
+    if (
+      event.defaultPrevented ||
+      disabled ||
+      !wasPressed ||
+      event.button !== MouseButton.LEFT ||
+      !isWithinRow(this, event)
+    ) {
       return;
     }
 
@@ -749,8 +768,18 @@ export function MenuItem({
   }
 
   function handleMouseOut(this: BoxRenderable, event: MouseEvent) {
-    mousePressedRef.current = false;
+    if (!isWithinRow(this, event)) {
+      mousePressedRef.current = false;
+    }
     onMouseOut?.call(this, event);
+  }
+
+  function handleMouseDrag(this: BoxRenderable, event: MouseEvent) {
+    // Captured child targets may not emit mouse-out when a drag leaves the row.
+    if (!isWithinRow(this, event)) {
+      mousePressedRef.current = false;
+    }
+    onMouseDrag?.call(this, event);
   }
 
   const fg = disabled ? "mutedForeground" : active ? "focusForeground" : "foreground";
@@ -767,6 +796,7 @@ export function MenuItem({
       onMouseDown={handleMouseDown}
       onMouseUp={handleMouseUp}
       onMouseOut={handleMouseOut}
+      onMouseDrag={handleMouseDrag}
     >
       {isTextContent(children) ? <Text fg={fg}>{children}</Text> : children}
     </Box>

@@ -3,6 +3,7 @@ import { expect, test } from "bun:test";
 import { testRender } from "@opentui/react/test-utils";
 import { act, type Dispatch, type ReactNode, type SetStateAction, useState } from "react";
 
+import { Dialog, DialogContent } from "@/ui/components/dialog";
 import {
   Menu,
   MenuContent,
@@ -15,6 +16,7 @@ import { getControlHints } from "@/ui/control-hints";
 import { Button } from "@/ui/controls/button";
 import { FocusManager } from "@/ui/focus-manager";
 import { Box } from "@/ui/primitives/box";
+import { Text } from "@/ui/primitives/text";
 import { ThemeProvider } from "@/ui/theme-provider";
 import { defaultTheme } from "@/ui/themes/default";
 
@@ -183,3 +185,85 @@ test("Menu hints track available actions and survive trigger refocus", async () 
     act(() => setup.renderer.destroy());
   }
 });
+
+test("Escape closes an open Menu before dismissing its enclosing Dialog", async () => {
+  const setup = await renderMenu(
+    <ThemeProvider theme={defaultTheme}>
+      <FocusManager focusScopeId="page" />
+      <Box id="page">
+        <Button id="outside">Outside</Button>
+        <Dialog defaultOpen>
+          <DialogContent id="dialog">
+            <Menu defaultOpen>
+              <MenuTrigger id="trigger">Actions</MenuTrigger>
+              <MenuContent id="menu">
+                <MenuItem>Rename</MenuItem>
+              </MenuContent>
+            </Menu>
+          </DialogContent>
+        </Dialog>
+      </Box>
+    </ThemeProvider>,
+  );
+  try {
+    await act(async () => setup.flush());
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("trigger");
+    expect(setup.renderer.root.findDescendantById("menu")).toBeDefined();
+    act(() => setup.mockInput.pressEscape());
+    await act(async () => setup.flush());
+    expect(setup.renderer.root.findDescendantById("menu")).toBeUndefined();
+    expect(setup.renderer.root.findDescendantById("dialog")).toBeDefined();
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("trigger");
+
+    act(() => setup.mockInput.pressEscape());
+    await act(async () => setup.flush());
+    expect(setup.renderer.root.findDescendantById("dialog")).toBeUndefined();
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("outside");
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
+for (const rich of [false, true]) {
+  for (const childFirst of [false, true]) {
+    test(`${rich ? "Explicit Text" : "Plain text"} Menu clicks survive ${childFirst ? "label-to-padding" : "padding-to-label"} crossings but cancel when leaving the row`, async () => {
+      let selected = 0;
+      const setup = await renderMenu(
+        <MenuFixture defaultOpen>
+          <MenuItem id="item" onSelect={() => selected++}>
+            {rich ? <Text variant="error">Rename</Text> : "Rename"}
+          </MenuItem>
+        </MenuFixture>,
+      );
+      try {
+        await act(async () => setup.flush());
+        const row = setup.renderer.root.findDescendantById("item")!;
+        const label = row.getChildren()[0]!;
+        const y = row.screenY;
+        const startX = childFirst ? label.screenX : row.screenX;
+        const endX = childFirst ? row.screenX : label.screenX;
+        expect(setup.renderer.hitTest(row.screenX, y)).toBe(row.num);
+        expect(setup.renderer.hitTest(label.screenX, y)).toBe(label.num);
+
+        await act(async () => setup.mockMouse.moveTo(startX, y));
+        await act(async () => setup.mockMouse.pressDown(startX, y));
+        await act(async () => setup.mockMouse.moveTo(endX, y));
+        await act(async () => setup.mockMouse.moveTo(70, 20));
+        await act(async () => setup.mockMouse.moveTo(endX, y));
+        await act(async () => setup.mockMouse.release(endX, y));
+        expect(selected).toBe(0);
+        expect(setup.renderer.root.findDescendantById("menu")).toBeDefined();
+
+        await act(async () => setup.mockMouse.moveTo(startX, y));
+        await act(async () => setup.mockMouse.pressDown(startX, y));
+        await act(async () => setup.mockMouse.moveTo(endX, y));
+        await act(async () => setup.mockMouse.release(endX, y));
+        await act(async () => setup.flush());
+        expect(selected).toBe(1);
+        expect(setup.renderer.root.findDescendantById("menu")).toBeUndefined();
+      } finally {
+        act(() => setup.renderer.destroy());
+      }
+    });
+  }
+}

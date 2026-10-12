@@ -157,10 +157,19 @@ export function FocusManager({ focusScopeId, allowRootFocus = false }: FocusMana
     const modal = getActiveModalFocusScope();
 
     if (modal && key.name === "escape") {
-      key.preventDefault();
-      key.stopPropagation();
-
-      modal.onEscape();
+      // Global hooks run before controls; dismiss only if local dispatch leaves Escape unhandled.
+      queueMicrotask(() => {
+        if (
+          !key.defaultPrevented &&
+          !key.propagationStopped &&
+          !modal.root.isDestroyed &&
+          getActiveModalFocusScope() === modal
+        ) {
+          key.preventDefault();
+          key.stopPropagation();
+          modal.onEscape();
+        }
+      });
 
       return;
     }
