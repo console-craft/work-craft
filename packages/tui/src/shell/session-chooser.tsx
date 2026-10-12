@@ -1,4 +1,3 @@
-import { MouseButton, type MouseEvent, type SelectRenderable } from "@opentui/core";
 import type { Snapshot } from "@work-craft/server/client";
 
 import { Button } from "@/ui/controls/button.tsx";
@@ -26,24 +25,6 @@ export function SessionChooser({
 }: SessionChooserProps) {
   const theme = useTheme();
   const ordered = [...sessions].sort((a, b) => a.position - b.position || a.id.localeCompare(b.id));
-
-  function handleMouseDown(this: SelectRenderable, event: MouseEvent): void {
-    if (event.button !== MouseButton.LEFT || event.defaultPrevented) {
-      return;
-    }
-    // ponytail: mirror OpenTUI's centered one-line viewport until Select exposes
-    // public row hit-testing; descriptions and item spacing must stay disabled.
-    const rows = Math.max(1, this.height);
-    const offset = Math.max(
-      0,
-      Math.min(this.getSelectedIndex() - Math.floor(rows / 2), ordered.length - rows),
-    );
-    const session = ordered[offset + event.y - this.screenY];
-    if (session !== undefined) {
-      onFocus(session.id);
-      onSelect(session.id);
-    }
-  }
 
   return (
     <Box border width="100%" height="100%">
@@ -81,7 +62,6 @@ export function SessionChooser({
                   onSelect(session.id);
                 }
               }}
-              onMouseDown={handleMouseDown}
             />
           )}
           <Button

@@ -13,7 +13,6 @@ import { Switch } from "@/ui/controls/switch";
 import { Textarea } from "@/ui/controls/textarea";
 import { Toggle, ToggleGroup } from "@/ui/controls/toggle";
 import { HStack } from "@/ui/primitives/hstack";
-import { Spacer } from "@/ui/primitives/spacer";
 import { Stack } from "@/ui/primitives/stack";
 import { Text } from "@/ui/primitives/text";
 import { ThemeProvider } from "@/ui/theme-provider.tsx";
@@ -73,7 +72,7 @@ export function ControlsDemo() {
             flexGrow={1}
             options={[
               { name: "Monday", description: "First day", value: "mon" },
-              { name: "Wednesday", description: "Third day", value: "wed" },
+              { name: "Wednesday", description: "Unavailable", value: "wed", disabled: true },
               { name: "Friday", description: "Fifth day", value: "fri" },
             ]}
           />

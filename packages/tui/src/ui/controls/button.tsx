@@ -7,7 +7,7 @@ import {
 } from "@opentui/core";
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 
-import { useControlHints } from "@/ui/control-hints";
+import { type ControlHintSource, useControlHints } from "@/ui/control-hints";
 import { Box, type BoxProps } from "@/ui/primitives/box";
 import { Text } from "@/ui/primitives/text";
 import type { ThemeColor } from "@/ui/theme";
@@ -48,6 +48,8 @@ export interface ButtonProps extends Omit<BoxProps, "focusable"> {
   disabled?: boolean;
   fg?: ThemeColor;
   onPress?: () => void;
+  /** Composite controls can replace activation hints, including with a live getter. */
+  controlHints?: ControlHintSource;
 }
 
 export function Button({
@@ -67,6 +69,7 @@ export function Button({
   paddingX = 1,
 
   onPress,
+  controlHints,
   onKeyDown,
   onMouseDown,
   onMouseUp,
@@ -75,7 +78,7 @@ export function Button({
   ...props
 }: ButtonProps) {
   const buttonRef = useRef<BoxRenderable | null>(null);
-  useControlHints(buttonRef, !disabled && onPress ? [activate.hint] : []);
+  useControlHints(buttonRef, disabled ? [] : (controlHints ?? (onPress ? [activate.hint] : [])));
   const mousePressedRef = useRef(false);
   const [isFocused, setIsFocused] = useState(false);
 

@@ -34,7 +34,11 @@ test("number input preserves value precision across commits, steps, and prop upd
     );
   }
 
-  const { renderer, mockInput, flush } = await testRender(<Fixture />, { width: 40, height: 5 });
+  const { renderer, mockInput, flush } = await testRender(<Fixture />, {
+    width: 40,
+    height: 5,
+    exitOnCtrlC: false,
+  });
   try {
     await flush();
     const input = renderer.root.findDescendantById("number") as InputRenderable;
@@ -54,6 +58,13 @@ test("number input preserves value precision across commits, steps, and prop upd
     expect(input.value).toBe("0.125");
     await act(async () => setValue(undefined));
     expect(input.value).toBe("");
+
+    await act(async () => setValue(0.125));
+    await act(async () => mockInput.pressKey("c", { ctrl: true }));
+    expect(input.value).toBe("");
+    expect(changes.at(-1)).toBeUndefined();
+    await act(async () => mockInput.pressKey("ARROW_UP"));
+    expect(input.value).toBe("0.1");
   } finally {
     act(() => renderer.destroy());
   }

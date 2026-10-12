@@ -71,7 +71,10 @@ async function stopProcessGroup(child: Bun.Subprocess): Promise<void> {
   await child.exited;
 }
 
-function startTui(home: string): {
+function startTui(
+  home: string,
+  env: Record<string, string> = {},
+): {
   child: Bun.Subprocess;
   output(): string;
   terminal: Bun.Terminal;
@@ -87,7 +90,7 @@ function startTui(home: string): {
   const child = Bun.spawn([process.execPath, "run", "tui"], {
     cwd: ROOT,
     detached: true,
-    env: { ...process.env, WORK_CRAFT_HOME: home },
+    env: { ...process.env, WORK_CRAFT_HOME: home, ...env },
     terminal,
   });
   return { child, output: () => output, terminal };
@@ -161,6 +164,41 @@ async function startDaemon(client: WorkCraftClient, home: string): Promise<void>
   }
 }
 
+for (const { kind, tabs, placeholder } of [
+  { kind: "input", tabs: 4, placeholder: "Name" },
+  { kind: "textarea", tabs: 6, placeholder: "Bio" },
+]) {
+  test(`demo Ctrl+C clears the focused ${kind} before a second press exits`, async () => {
+    const tui = startTui("", { CONTROLS_DEMO: "true", COMPONENTS_DEMO: "false" });
+    const input = new TextEncoder();
+    try {
+      await waitFor(() => tui.output().includes("BUTTONS"), "the controls demo");
+      const focusOutputLength = tui.output().length;
+      tui.terminal.write(input.encode("\t".repeat(tabs)));
+      await waitForTerminalInput(tui, `the demo ${kind} to receive focus`, focusOutputLength);
+      const typingOutputLength = tui.output().length;
+      tui.terminal.write(input.encode("clear-me"));
+      await waitFor(
+        () => tui.output().slice(typingOutputLength).includes("clear-me"),
+        `text in the demo ${kind}`,
+      );
+      const clearingOutputLength = tui.output().length;
+      tui.terminal.write(Uint8Array.of(3));
+      await waitFor(
+        () => tui.output().slice(clearingOutputLength).includes(placeholder),
+        `Ctrl+C to clear the demo ${kind}`,
+      );
+      expect(tui.child.exitCode).toBeNull();
+      tui.terminal.write(Uint8Array.of(3));
+      await waitFor(() => tui.child.exitCode !== null, "Ctrl+C on the empty control to exit");
+      expect(tui.child.exitCode).toBe(0);
+    } finally {
+      await stopProcessGroup(tui.child);
+      tui.terminal.close();
+    }
+  });
+}
+
 test("an empty installation offers session creation from the chooser", async () => {
   const home = await mkdtemp(join(tmpdir(), "work-craft-tui-"));
   const socketPath = join(home, "work-craft.sock");
@@ -186,6 +224,21 @@ test("an empty installation offers session creation from the chooser", async () 
     expect(tui.output()).toContain("session name");
     expect(tui.output()).toContain("HINTS");
     expect(tui.output()).toContain("Inbox");
+    const typingOutputLength = tui.output().length;
+    tui.terminal.write(new TextEncoder().encode("draft"));
+    await waitFor(
+      () => tui.output().slice(typingOutputLength).includes("draft"),
+      "text in the session prompt",
+    );
+    const clearingOutputLength = tui.output().length;
+    tui.terminal.write(Uint8Array.of(3));
+    await waitFor(
+      () => tui.output().slice(clearingOutputLength).includes("session name"),
+      "Ctrl+C to clear the session prompt",
+    );
+    tui.terminal.write(Uint8Array.of(3));
+    await Bun.sleep(100);
+    expect(tui.child.exitCode).toBeNull();
   } finally {
     await stopProcessGroup(tui.child);
     tui.terminal.close();

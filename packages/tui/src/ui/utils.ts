@@ -1,4 +1,4 @@
-import type { KeyEvent, Renderable } from "@opentui/core";
+import type { KeyEvent, Renderable, TextareaRenderable } from "@opentui/core";
 import { Children, type ReactNode, type Ref } from "react";
 
 // Focus
@@ -32,6 +32,34 @@ export function consumeNativeKey(renderable: Renderable | null, event: KeyEvent)
   if (renderable?.handleKeyPress?.(event)) {
     event.preventDefault();
   }
+}
+
+/** Nonempty focused editors own Ctrl+C; empty editors leave it available to callers. */
+export function clearTextOnCtrlC(renderable: TextareaRenderable | null, event: KeyEvent): boolean {
+  if (
+    event.defaultPrevented ||
+    event.propagationStopped ||
+    event.name !== "c" ||
+    !event.ctrl ||
+    event.shift ||
+    event.meta ||
+    event.option ||
+    event.super ||
+    event.hyper ||
+    !renderable?.focused ||
+    renderable.plainText.length === 0
+  ) {
+    return false;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+  // Programmatic selection works even when interactive selection is disabled.
+  renderable.clearSelection();
+  renderable.gotoBufferEnd();
+  renderable.setSelection(0, renderable.cursorOffset);
+  renderable.deleteCharBackward();
+  return true;
 }
 
 // Text

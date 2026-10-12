@@ -139,7 +139,7 @@ test("focused native controls consume their keys before page scroll fallback", a
     const before = area.scrollTop;
     act(() => setup.mockInput.pressKey("j"));
     await act(async () => setup.flush());
-    expect(select.getSelectedIndex()).toBe(1);
+    expect(select.getSelectedIndex()).toBe(2);
     expect(area.scrollTop).toBe(before);
     act(() => setup.mockInput.pressKey("d", { ctrl: true }));
     await act(async () => setup.flush());
@@ -237,8 +237,7 @@ test("card tabs fill the width with equal triggers and keep logs inside the card
   }
   try {
     await act(async () => setup.flush());
-    const page = setup.renderer.root.findDescendantById("components-demo")!;
-    const card = page.getChildren().at(-1)!;
+    const card = setup.renderer.root.findDescendantById("card-tabs-demo")!;
     const list = getFocusableRenderables(card)[0]!;
     expect(list.width).toBe(card.width);
     const triggers = list.getChildren();
@@ -258,13 +257,31 @@ test("card tabs fill the width with equal triggers and keep logs inside the card
     act(() => setup.mockInput.pressKey("j"));
     await act(async () => setup.flush());
     expect(logs.scrollTop).toBeGreaterThan(0);
-    const pageArea = setup.renderer.root.getChildren()[0] as ScrollBoxRenderable;
-    act(() => {
-      pageArea.scrollTo(pageArea.scrollHeight);
-      logs.scrollTo(logs.scrollHeight);
-    });
+    act(() => logs.scrollTo(logs.scrollHeight));
     await act(async () => setup.flush());
     expect(setup.captureCharFrame()).toContain("Log 29");
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
+test("table demos reflow naturally and put the height constraint on the scroll viewport", async () => {
+  const setup = await testRender(<ComponentsDemo />, { width: 100, height: 24 });
+  try {
+    await act(async () => setup.flush());
+    await act(async () => setup.flush());
+    const table = setup.renderer.root.findDescendantById("table-wrap-demo")!;
+    const initialHeight = table.height;
+    act(() => setup.resize(50, 24));
+    await act(async () => setup.flush());
+    await act(async () => setup.flush());
+    expect(table.height).toBeGreaterThan(initialHeight);
+    expect(table.width).toBeLessThanOrEqual(50);
+    const area = setup.renderer.root.findDescendantById("table-scroll-demo") as ScrollBoxRenderable;
+    const content = setup.renderer.root.findDescendantById("table-scroll-content")!;
+    expect(area.height).toBe(8);
+    expect(content.height).toBeGreaterThan(area.height);
+    expect(area.scrollHeight).toBeGreaterThan(area.height);
   } finally {
     act(() => setup.renderer.destroy());
   }
