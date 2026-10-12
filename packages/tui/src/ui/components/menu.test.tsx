@@ -160,6 +160,82 @@ test("an open menu repositions when side changes", async () => {
   }
 });
 
+test("controlled Menu waits for parent acknowledgement of opening and dismissal", async () => {
+  const requests: boolean[] = [];
+  let update!: Dispatch<SetStateAction<boolean>>;
+  function Fixture() {
+    const [open, setOpen] = useState(false);
+    update = setOpen;
+    return (
+      <MenuFixture open={open} defaultOpen onOpenChange={(next) => requests.push(next)}>
+        <MenuItem>Action</MenuItem>
+      </MenuFixture>
+    );
+  }
+  const setup = await renderMenu(<Fixture />);
+  try {
+    await act(async () => setup.flush());
+    const trigger = setup.renderer.root.findDescendantById("trigger")!;
+    act(() => setup.mockInput.pressEnter());
+    await act(async () => setup.flush());
+    expect(requests).toEqual([true]);
+    expect(setup.renderer.root.findDescendantById("menu")).toBeUndefined();
+    act(() => update(true));
+    await act(async () => setup.flush());
+    const menu = setup.renderer.root.findDescendantById("menu")!;
+    expect(menu).toBeDefined();
+    expect(setup.renderer.currentFocusedRenderable).toBe(trigger);
+    act(() => setup.mockInput.pressEscape());
+    await act(async () => setup.flush());
+    expect(requests).toEqual([true, false]);
+    expect(setup.renderer.root.findDescendantById("menu")).toBe(menu);
+    act(() => update(false));
+    await act(async () => setup.flush());
+    expect(setup.renderer.root.findDescendantById("menu")).toBeUndefined();
+    expect(setup.renderer.currentFocusedRenderable).toBe(trigger);
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
+test("automatic Menu placement flips above and clamps horizontally until resizing provides room", async () => {
+  const setup = await act(async () =>
+    testRender(
+      <ThemeProvider theme={defaultTheme}>
+        <FocusManager focusScopeId="page" />
+        <Box id="page" width="100%" height="100%">
+          <Box position="absolute" top={10} left={26}>
+            <Menu defaultOpen>
+              <MenuTrigger id="trigger">Go</MenuTrigger>
+              <MenuContent id="menu" width={12}>
+                <MenuItem>One</MenuItem>
+                <MenuItem>Two</MenuItem>
+              </MenuContent>
+            </Menu>
+          </Box>
+        </Box>
+      </ThemeProvider>,
+      { width: 30, height: 14 },
+    ),
+  );
+  try {
+    await act(async () => setup.flush());
+    await act(async () => setup.flush());
+    const menu = setup.renderer.root.findDescendantById("menu")!;
+    const trigger = setup.renderer.root.findDescendantById("trigger")!;
+    expect(menu.screenY + menu.height).toBe(trigger.screenY);
+    expect(menu.screenX + menu.width).toBe(30);
+    act(() => setup.resize(40, 20));
+    await act(async () => setup.flush());
+    await act(async () => setup.flush());
+    expect(menu.screenY).toBe(trigger.screenY + trigger.height);
+    expect(menu.screenX).toBe(trigger.screenX);
+    expect(setup.renderer.currentFocusedRenderable).toBe(trigger);
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
 test("Menu hints track available actions and survive trigger refocus", async () => {
   const setup = await renderMenu(
     <MenuFixture>

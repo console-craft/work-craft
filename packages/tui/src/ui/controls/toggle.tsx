@@ -417,6 +417,8 @@ export function Toggle({
   );
 
   useLayoutEffect(() => {
+    mousePressedRef.current = false;
+
     if (isGrouped || !isDisabled) return;
 
     const toggle = toggleRef.current;
