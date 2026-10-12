@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/console-craft/work-craft/compare/v0.8.0...v0.9.0) (2026-10-12)
+
+
+### Features
+
+* **tui:** expand interactive components and notifications ([#29](https://github.com/console-craft/work-craft/issues/29)) ([147def6](https://github.com/console-craft/work-craft/commit/147def652d0b6254187c1e9242f894c807c9035e))
+
 ## [0.8.0](https://github.com/console-craft/work-craft/compare/v0.7.0...v0.8.0) (2026-10-05)
 
 
