@@ -7,6 +7,21 @@
         "ignoreDeclarationSort": true,
         "ignoreCase": true
       }
+    ],
+
+    "no-unused-vars": [
+      "error",
+      {
+        "args": "all",
+        "argsIgnorePattern": "^_",
+        "varsIgnorePattern": "^_",
+        "caughtErrorsIgnorePattern": "^_",
+        "destructuredArrayIgnorePattern": "^_",
+        "fix": {
+          "imports": "safe-fix",
+          "variables": "off"
+        }
+      }
     ]
   }
 }

@@ -6,21 +6,21 @@ import { isEligibleFocusTarget } from "@/ui/focus-utils";
 
 export type ControlHint = { keys: string; label: string };
 
-const hintsByNode = new WeakMap<Renderable, readonly ControlHint[]>();
+/** Live getters reflect native state changes that do not cause a React render. */
+export type ControlHintSource = readonly ControlHint[] | (() => readonly ControlHint[]);
+
+const hintsByNode = new WeakMap<Renderable, { hints: ControlHintSource }>();
 const emptyHints: readonly ControlHint[] = [];
 
 /** Metadata belongs to the native endpoint, never to its siblings or ancestors. */
-export function useControlHints(
-  ref: RefObject<Renderable | null>,
-  hints: readonly ControlHint[],
-): void {
+export function useControlHints(ref: RefObject<Renderable | null>, hints: ControlHintSource): void {
   useLayoutEffect(() => {
     const node = ref.current;
     if (node === null) {
       return;
     }
     // Unique ownership even when two registrations reuse the same hint array.
-    const entry = [...hints];
+    const entry = { hints: typeof hints === "function" ? hints : [...hints] };
     hintsByNode.set(node, entry);
     node.requestRender();
     return () => {
@@ -40,7 +40,8 @@ export function getControlHints(node: Renderable | null): readonly ControlHint[]
   ) {
     return emptyHints;
   }
-  return hintsByNode.get(node) ?? emptyHints;
+  const hints = hintsByNode.get(node)?.hints;
+  return typeof hints === "function" ? hints() : (hints ?? emptyHints);
 }
 
 /** FRAME observes late registration and same-node changes without a custom event bus. */

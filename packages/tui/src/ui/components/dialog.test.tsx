@@ -1,0 +1,243 @@
+import { expect, test } from "bun:test";
+
+import {
+  type BoxRenderable,
+  type InputRenderable,
+  RGBA,
+  TextAttributes,
+  type TextRenderable,
+} from "@opentui/core";
+import { testRender } from "@opentui/react/test-utils";
+import { act, type Dispatch, type SetStateAction, useState } from "react";
+
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogTitle,
+  DialogTrigger,
+} from "@/ui/components/dialog";
+import { Button } from "@/ui/controls/button";
+import { Input } from "@/ui/controls/input";
+import { FocusManager } from "@/ui/focus-manager";
+import { getActiveModalFocusScope } from "@/ui/modal-focus";
+import { Box } from "@/ui/primitives/box";
+import { Text } from "@/ui/primitives/text";
+import { ThemeProvider } from "@/ui/theme-provider";
+import { defaultTheme } from "@/ui/themes/default";
+
+test("undefined open preserves uncontrolled dismissal and focus restoration", async () => {
+  const setup = await testRender(
+    <ThemeProvider theme={defaultTheme}>
+      <FocusManager focusScopeId="page" />
+      <Box id="page">
+        <Dialog open={undefined} defaultOpen>
+          <DialogTrigger id="trigger">Open</DialogTrigger>
+          <DialogContent id="content" initialFocusId="close">
+            <Button id="first">First</Button>
+            <DialogClose id="close">Close</DialogClose>
+          </DialogContent>
+        </Dialog>
+      </Box>
+    </ThemeProvider>,
+    { width: 80, height: 20, kittyKeyboard: true },
+  );
+  try {
+    await setup.flush();
+    expect(setup.renderer.root.findDescendantById("content")).toBeDefined();
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("close");
+    act(() => setup.mockInput.pressTab());
+    await act(async () => setup.flush());
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("first");
+    act(() => setup.mockInput.pressTab({ shift: true }));
+    await act(async () => setup.flush());
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("close");
+    act(() => setup.mockInput.pressEscape());
+    await act(async () => setup.flush());
+    expect(setup.renderer.root.findDescendantById("content")).toBeUndefined();
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("trigger");
+
+    act(() => setup.mockInput.pressEnter());
+    await act(async () => setup.flush());
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("close");
+    act(() => setup.mockInput.pressEnter());
+    await act(async () => setup.flush());
+    expect(setup.renderer.root.findDescendantById("content")).toBeUndefined();
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("trigger");
+
+    act(() => setup.mockInput.pressEnter());
+    await act(async () => setup.flush());
+    await act(async () => setup.mockMouse.click(0, 0));
+    await act(async () => setup.flush());
+    expect(setup.renderer.root.findDescendantById("content")).toBeUndefined();
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("trigger");
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
+test("dialog content applies horizontal padding", async () => {
+  const setup = await testRender(
+    <ThemeProvider theme={defaultTheme}>
+      <Dialog defaultOpen>
+        <DialogContent id="content" border={false} padding={2} width={30}>
+          <Text id="body">Body</Text>
+        </DialogContent>
+      </Dialog>
+    </ThemeProvider>,
+    { width: 60, height: 20 },
+  );
+  try {
+    await setup.flush();
+    const content = setup.renderer.root.findDescendantById("content")!;
+    const body = setup.renderer.root.findDescendantById("body")!;
+    expect(body.screenX - content.screenX).toBe(2);
+    expect(body.screenY - content.screenY).toBe(0);
+    expect(content.height).toBe(body.height);
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
+for (const { label, width, maxWidth, minWidth } of [
+  { label: "fractional width", width: 78.4, maxWidth: 120, minWidth: undefined },
+  { label: "fractional maximum", width: 79, maxWidth: 60.4, minWidth: undefined },
+  { label: "percentage maximum", width: 79, maxWidth: "50%", minWidth: undefined },
+  { label: "fractional minimum", width: 30, maxWidth: 120, minWidth: 60.4 },
+] as const) {
+  test(`dialog ${label} constrains measured inputs to whole-cell content bounds`, async () => {
+    const setup = await testRender(
+      <ThemeProvider theme={defaultTheme}>
+        <Dialog defaultOpen>
+          <DialogContent id="content" width={width} maxWidth={maxWidth} minWidth={minWidth}>
+            <Box id="nested" width="100%">
+              <Input id="input" placeholder="Search" />
+            </Box>
+          </DialogContent>
+        </Dialog>
+      </ThemeProvider>,
+      { width: maxWidth === "50%" ? 101 : 100, height: 20 },
+    );
+    try {
+      await act(async () => setup.flush());
+      const content = setup.renderer.root.findDescendantById("content")!;
+      const nested = setup.renderer.root.findDescendantById("nested")!;
+      const input = setup.renderer.root.findDescendantById("input") as InputRenderable;
+      expect(input.width).toBe(nested.width);
+      expect(input.screenX + input.width).toBe(content.screenX + content.width - 2);
+      if (maxWidth === "50%") {
+        expect(content.width).toBeLessThanOrEqual(49.5);
+      } else {
+        expect(content.width).toBeLessThanOrEqual(maxWidth);
+      }
+      if (minWidth !== undefined) {
+        expect(content.width).toBeGreaterThanOrEqual(minWidth);
+      }
+    } finally {
+      act(() => setup.renderer.destroy());
+    }
+  });
+}
+
+test("destructive dialogs update default title and border styles", async () => {
+  let setDestructive!: Dispatch<SetStateAction<boolean | undefined>>;
+  function Fixture() {
+    const [destructive, updateDestructive] = useState<boolean>();
+    setDestructive = updateDestructive;
+    return (
+      <ThemeProvider theme={defaultTheme}>
+        <Dialog defaultOpen destructive={destructive}>
+          <DialogContent id="content">
+            <DialogTitle id="title">Project</DialogTitle>
+            <DialogTitle id="override" variant="heading">
+              Override
+            </DialogTitle>
+          </DialogContent>
+        </Dialog>
+      </ThemeProvider>
+    );
+  }
+  const setup = await testRender(<Fixture />, { width: 80, height: 20 });
+  try {
+    await setup.flush();
+    const content = setup.renderer.root.findDescendantById("content") as BoxRenderable;
+    const title = setup.renderer.root.findDescendantById("title") as TextRenderable;
+    const override = setup.renderer.root.findDescendantById("override") as TextRenderable;
+    expect(title.fg.equals(RGBA.fromHex(defaultTheme.colors.primary))).toBe(true);
+    expect(title.attributes & TextAttributes.BOLD).toBe(TextAttributes.BOLD);
+    expect(content.borderColor.equals(RGBA.fromHex(defaultTheme.colors.border))).toBe(true);
+    expect(content.focusedBorderColor.equals(RGBA.fromHex(defaultTheme.colors.focus))).toBe(true);
+
+    act(() => setDestructive(true));
+    await act(async () => setup.flush());
+    expect(title.fg.equals(RGBA.fromHex(defaultTheme.colors.error))).toBe(true);
+    expect(title.attributes & TextAttributes.BOLD).toBe(0);
+    expect(override.fg.equals(RGBA.fromHex(defaultTheme.colors.primary))).toBe(true);
+    expect(content.borderColor.equals(RGBA.fromHex(defaultTheme.colors.error))).toBe(true);
+    expect(content.focusedBorderColor.equals(RGBA.fromHex(defaultTheme.colors.error))).toBe(true);
+
+    act(() => setDestructive(false));
+    await act(async () => setup.flush());
+    expect(title.fg.equals(RGBA.fromHex(defaultTheme.colors.primary))).toBe(true);
+    expect(title.attributes & TextAttributes.BOLD).toBe(TextAttributes.BOLD);
+    expect(content.borderColor.equals(RGBA.fromHex(defaultTheme.colors.border))).toBe(true);
+    expect(content.focusedBorderColor.equals(RGBA.fromHex(defaultTheme.colors.focus))).toBe(true);
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
+test("closing dialogs out of order restores background Tab navigation", async () => {
+  let setFirst!: Dispatch<SetStateAction<boolean>>;
+  let setSecond!: Dispatch<SetStateAction<boolean>>;
+  function Fixture() {
+    const [first, updateFirst] = useState(false);
+    const [second, updateSecond] = useState(false);
+    setFirst = updateFirst;
+    setSecond = updateSecond;
+    return (
+      <ThemeProvider theme={defaultTheme}>
+        <FocusManager focusScopeId="page" />
+        <Box id="page">
+          <Button id="before">Before</Button>
+          <Button id="after">After</Button>
+          <Dialog open={first} onOpenChange={updateFirst}>
+            <DialogContent id="first-dialog">
+              <Button id="first-button">First</Button>
+            </DialogContent>
+          </Dialog>
+          <Dialog open={second} onOpenChange={updateSecond}>
+            <DialogContent id="second-dialog">
+              <Button id="second-button">Second</Button>
+            </DialogContent>
+          </Dialog>
+        </Box>
+      </ThemeProvider>
+    );
+  }
+  const setup = await testRender(<Fixture />, { width: 80, height: 20 });
+  try {
+    await setup.flush();
+    act(() => setFirst(true));
+    await act(async () => setup.flush());
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("first-button");
+    act(() => setSecond(true));
+    await act(async () => setup.flush());
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("second-button");
+    act(() => setFirst(false));
+    await act(async () => setup.flush());
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("second-button");
+    act(() => setSecond(false));
+    await act(async () => setup.flush());
+    expect(getActiveModalFocusScope()?.root.id).toBeUndefined();
+    const focused = setup.renderer.currentFocusedRenderable?.id ?? "";
+    expect(["before", "after"]).toContain(focused);
+    act(() => setup.mockInput.pressTab());
+    await act(async () => setup.flush());
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe(
+      focused === "before" ? "after" : "before",
+    );
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});

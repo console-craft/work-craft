@@ -29,6 +29,7 @@
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
     "lint": "oxlint --no-error-on-unmatched-pattern .",
+    "lint:fix": "oxlint --fix .",
     "prepare": "lefthook install",
     "server": "bun src/main.ts __daemon",
     "test": "bun test",

@@ -27,7 +27,28 @@ switch (true) {
 }
 
 const renderer = await createCliRenderer({
-  exitOnCtrlC: process.env.CONTROLS_DEMO === "true" || process.env.COMPONENTS_DEMO === "true",
+  exitOnCtrlC: false,
   useKittyKeyboard: { disambiguate: true },
 });
+if (process.env.CONTROLS_DEMO === "true" || process.env.COMPONENTS_DEMO === "true") {
+  renderer.keyInput.on("keypress", (event) => {
+    if (
+      event.name !== "c" ||
+      !event.ctrl ||
+      event.shift ||
+      event.meta ||
+      event.option ||
+      event.super ||
+      event.hyper
+    ) {
+      return;
+    }
+    // Global listeners run before controls; quit only after local dispatch has had its turn.
+    queueMicrotask(() => {
+      if (!event.defaultPrevented && !event.propagationStopped) {
+        renderer.destroy();
+      }
+    });
+  });
+}
 createRoot(renderer).render(component);

@@ -5,7 +5,7 @@ import { useCallback, useLayoutEffect, useRef } from "react";
 import { nativeActionHints, useControlHints } from "@/ui/control-hints";
 import { resolveColor, type ThemeColor } from "@/ui/theme";
 import { useTheme } from "@/ui/theme-provider";
-import { assignRef, consumeNativeKey, setDisabled } from "@/ui/utils";
+import { assignRef, clearTextOnCtrlC, consumeNativeKey, setDisabled } from "@/ui/utils";
 
 type ThemedColorProps = {
   backgroundColor?: ThemeColor;
@@ -91,6 +91,9 @@ export function Textarea({
   }, [disabled]);
 
   function handleKeyDown(event: KeyEvent) {
+    if (!disabled && clearTextOnCtrlC(textareaRef.current, event)) {
+      return;
+    }
     onKeyDown?.(event);
     if (!disabled) {
       consumeNativeKey(textareaRef.current, event);

@@ -5,7 +5,7 @@ import { useCallback, useLayoutEffect, useRef } from "react";
 import { nativeActionHints, useControlHints } from "@/ui/control-hints";
 import { resolveColor, type ThemeColor } from "@/ui/theme";
 import { useTheme } from "@/ui/theme-provider";
-import { assignRef, consumeNativeKey, setDisabled } from "@/ui/utils";
+import { assignRef, clearTextOnCtrlC, consumeNativeKey, setDisabled } from "@/ui/utils";
 
 type ThemedColorProps = {
   backgroundColor?: ThemeColor;
@@ -26,7 +26,7 @@ type InputEventProps = {
 };
 
 // The inherited Textarea setter replaces Input's constructor-only defaults.
-const submitBindings = [
+export const inputSubmitBindings = [
   { name: "return", action: "submit" },
   { name: "kpenter", action: "submit" },
   { name: "linefeed", action: "submit" },
@@ -66,7 +66,7 @@ export function Input({
 }: InputProps) {
   const theme = useTheme();
   const inputRef = useRef<InputRenderable | null>(null);
-  const effectiveBindings = [...submitBindings, ...keyBindings];
+  const effectiveBindings = [...inputSubmitBindings, ...keyBindings];
   useControlHints(
     inputRef,
     !disabled && onSubmit
@@ -108,6 +108,9 @@ export function Input({
   const currentCursorColor = disabled ? "mutedForeground" : cursorColor;
 
   function handleKeyDown(event: KeyEvent) {
+    if (!disabled && clearTextOnCtrlC(inputRef.current, event)) {
+      return;
+    }
     onKeyDown?.(event);
     if (!disabled) {
       consumeNativeKey(inputRef.current, event);
