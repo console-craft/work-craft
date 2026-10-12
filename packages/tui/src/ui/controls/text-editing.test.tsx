@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 
 import type { KeyEvent, TextareaRenderable } from "@opentui/core";
 import { testRender } from "@opentui/react/test-utils";
-import { act, useState } from "react";
+import { act, type Dispatch, type SetStateAction, useState } from "react";
 
 import { Input } from "@/ui/controls/input";
 import { Textarea } from "@/ui/controls/textarea";
@@ -127,6 +127,82 @@ for (const { kind, selectable } of [
       expect(appKeys).toEqual([]);
     } finally {
       act(() => renderer.destroy());
+    }
+  });
+}
+
+for (const kind of ["input", "textarea"] as const) {
+  test(`${kind} preserves native submission alongside custom bindings and releases editing focus when disabled`, async () => {
+    const submissions: string[] = [];
+    let disable!: Dispatch<SetStateAction<boolean>>;
+    let cancel = false;
+    let editor: TextareaRenderable | null = null;
+    function Fixture() {
+      const [disabled, setDisabled] = useState(false);
+      disable = setDisabled;
+      const props = {
+        id: "editor",
+        focused: true,
+        disabled,
+        width: 20,
+        keyBindings: [{ name: "s", ctrl: true, action: "submit" as const }],
+        onKeyDown: (event: KeyEvent) => {
+          if (cancel) {
+            event.preventDefault();
+          }
+        },
+      };
+      return (
+        <ThemeProvider theme={defaultTheme}>
+          {kind === "input" ? (
+            <Input {...props} value="draft" onSubmit={(value) => submissions.push(value)} />
+          ) : (
+            <Textarea
+              {...props}
+              height={3}
+              initialValue="draft"
+              onSubmit={() => submissions.push(editor!.plainText)}
+            />
+          )}
+        </ThemeProvider>
+      );
+    }
+    const setup = await testRender(<Fixture />, { width: 25, height: 5, kittyKeyboard: true });
+    try {
+      await act(async () => setup.flush());
+      editor = setup.renderer.root.findDescendantById("editor") as TextareaRenderable;
+      act(() => editor!.gotoBufferEnd());
+      if (kind === "textarea") {
+        act(() => setup.mockInput.pressEnter({ shift: true }));
+        expect(editor.plainText).toBe("draft\n");
+        expect(submissions).toEqual([]);
+      }
+      const text = editor.plainText;
+      act(() => setup.mockInput.pressEnter(kind === "textarea" ? { ctrl: true } : {}));
+      expect(submissions).toEqual([text]);
+      act(() => setup.mockInput.pressKey("s", { ctrl: true }));
+      expect(submissions).toEqual([text, text]);
+      cancel = true;
+      act(() => setup.mockInput.pressKey("s", { ctrl: true }));
+      cancel = false;
+      expect(submissions).toHaveLength(2);
+      act(() => disable(true));
+      await act(async () => setup.flush());
+      expect(editor.focusable).toBe(false);
+      expect(editor.focused).toBe(false);
+      const disabledText = editor.plainText;
+      await act(async () => setup.mockInput.typeText("ignored"));
+      act(() => setup.mockInput.pressKey("s", { ctrl: true }));
+      expect(editor.plainText).toBe(disabledText);
+      expect(submissions).toHaveLength(2);
+      act(() => disable(false));
+      await act(async () => setup.flush());
+      act(() => editor!.focus());
+      act(() => setup.mockInput.pressKey("s", { ctrl: true }));
+      expect(submissions.at(-1)).toBe(disabledText);
+      expect(submissions).toHaveLength(3);
+    } finally {
+      act(() => setup.renderer.destroy());
     }
   });
 }

@@ -241,3 +241,62 @@ test("closing dialogs out of order restores background Tab navigation", async ()
     act(() => setup.renderer.destroy());
   }
 });
+
+test("controlled Dialog waits for parent acknowledgement and blocks backdrop clicks when dismissal is disabled", async () => {
+  const requests: boolean[] = [];
+  let update!: Dispatch<SetStateAction<boolean>>;
+  let backgroundPresses = 0;
+  function Fixture() {
+    const [open, setOpen] = useState(false);
+    update = setOpen;
+    return (
+      <ThemeProvider theme={defaultTheme}>
+        <FocusManager focusScopeId="page" />
+        <Box id="page">
+          <Button id="background" onPress={() => backgroundPresses++}>
+            Background
+          </Button>
+          <Dialog
+            open={open}
+            defaultOpen
+            closeOnBackdropClick={false}
+            onOpenChange={(next) => requests.push(next)}
+          >
+            <DialogTrigger id="trigger">Open</DialogTrigger>
+            <DialogContent id="dialog">
+              <DialogClose id="close">Close</DialogClose>
+            </DialogContent>
+          </Dialog>
+        </Box>
+      </ThemeProvider>
+    );
+  }
+  const setup = await testRender(<Fixture />, { width: 60, height: 15, kittyKeyboard: true });
+  try {
+    await act(async () => setup.flush());
+    const trigger = setup.renderer.root.findDescendantById("trigger")!;
+    act(() => trigger.focus());
+    act(() => setup.mockInput.pressEnter());
+    await act(async () => setup.flush());
+    expect(requests).toEqual([true]);
+    expect(setup.renderer.root.findDescendantById("dialog")).toBeUndefined();
+    expect(setup.renderer.currentFocusedRenderable).toBe(trigger);
+    act(() => update(true));
+    await act(async () => setup.flush());
+    const dialog = setup.renderer.root.findDescendantById("dialog")!;
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("close");
+    await act(async () => setup.mockMouse.click(0, 0));
+    expect(requests).toEqual([true]);
+    expect(backgroundPresses).toBe(0);
+    act(() => setup.mockInput.pressEscape());
+    await act(async () => setup.flush());
+    expect(requests).toEqual([true, false]);
+    expect(setup.renderer.root.findDescendantById("dialog")).toBe(dialog);
+    act(() => update(false));
+    await act(async () => setup.flush());
+    expect(setup.renderer.root.findDescendantById("dialog")).toBeUndefined();
+    expect(setup.renderer.currentFocusedRenderable).toBe(trigger);
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});

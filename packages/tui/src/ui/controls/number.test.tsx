@@ -113,3 +113,64 @@ test("number input keeps small committed and supplied values editable as decimal
     act(() => renderer.destroy());
   }
 });
+
+test("number input retains decimal drafts, rejects invalid characters and clamps only on commit", async () => {
+  const changes: (number | undefined)[] = [];
+  const submissions: (number | undefined)[] = [];
+  function Fixture() {
+    const [value, setValue] = useState<number>();
+    return (
+      <ThemeProvider theme={defaultTheme}>
+        <NumberInput
+          id="number"
+          focused
+          value={value}
+          min={0}
+          max={10}
+          onValueChange={(next) => {
+            changes.push(next);
+            setValue(next);
+          }}
+          onSubmit={(next) => submissions.push(next)}
+        />
+        <NumberInput id="after" />
+      </ThemeProvider>
+    );
+  }
+  const setup = await testRender(<Fixture />, { width: 30, height: 5, exitOnCtrlC: false });
+  try {
+    await act(async () => setup.flush());
+    const input = setup.renderer.root.findDescendantById("number") as InputRenderable;
+    await act(async () => setup.mockInput.typeText("-."));
+    expect(input.value).toBe("-.");
+    expect(changes).toEqual([]);
+    await act(async () => setup.mockInput.typeText("5"));
+    expect(input.value).toBe("-.5");
+    expect(changes).toEqual([-0.5]);
+    await act(async () => setup.mockInput.typeText("x"));
+    expect(input.value).toBe("-.5");
+    expect(changes).toEqual([-0.5]);
+    act(() => setup.mockInput.pressEnter());
+    await act(async () => setup.flush());
+    expect(input.value).toBe("0");
+    expect(submissions).toEqual([0]);
+    act(() => setup.mockInput.pressKey("c", { ctrl: true }));
+    await act(async () => setup.flush());
+    await act(async () => setup.mockInput.typeText("01."));
+    expect(input.value).toBe("01.");
+    act(() => setup.mockInput.pressEnter());
+    await act(async () => setup.flush());
+    expect(input.value).toBe("1");
+    act(() => setup.mockInput.pressKey("c", { ctrl: true }));
+    await act(async () => setup.flush());
+    await act(async () => setup.mockInput.typeText("25"));
+    expect(input.value).toBe("25");
+    expect(changes.at(-1)).toBe(25);
+    act(() => setup.renderer.root.findDescendantById("after")!.focus());
+    await act(async () => setup.flush());
+    expect(input.value).toBe("10");
+    expect(changes.at(-1)).toBe(10);
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
