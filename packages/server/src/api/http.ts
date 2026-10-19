@@ -36,7 +36,10 @@ export function startHttpServer(app: WorkCraftApp, socketPath: string): Bun.Serv
         return Response.json({ error: "Not found" }, { status: 404 });
       } catch (error) {
         if (error instanceof ProtocolError) {
-          return Response.json({ error: error.message }, { status: 400 });
+          return Response.json(
+            { error: error.message, ...(error.field === undefined ? {} : { field: error.field }) },
+            { status: 400 },
+          );
         }
         return Response.json({ error: "Internal server error" }, { status: 500 });
       }

@@ -1,6 +1,6 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -86,6 +86,109 @@ test("runs a shell through Bun.Terminal and emits its lifecycle", async () => {
   expect(new TextDecoder().decode(Buffer.concat(output))).toContain("work-craft-pty");
   expect(statuses).toEqual(["starting", "running", "exited"]);
   expect(registry.isLive("pane-1")).toBe(false);
+});
+
+test("live cwd follows shell cd, not foreground child cd", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "work-craft-runtime-cwd-")));
+  let output = "";
+  const registry = runtime({
+    onOutput: (_id, bytes) => {
+      output += new TextDecoder().decode(bytes);
+    },
+  });
+  const quote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
+  async function waitForOutput(sentinel: string): Promise<void> {
+    const deadline = Date.now() + 2_000;
+    while (!output.includes(sentinel) && Date.now() < deadline) {
+      await Bun.sleep(10);
+    }
+    expect(output).toContain(sentinel);
+  }
+  try {
+    const pane = shellPane("pane-1", root);
+    await registry.start(pane);
+    for (const [index, name] of ["ordinary space ü ", "back\\slash", "new\nline"].entries()) {
+      const path = join(root, name);
+      await mkdir(path);
+      registry.write("pane-1", Buffer.from(`cd ${quote(path)}; printf 'cwd-%s-ready' ${index}\n`));
+      await waitForOutput(`cwd-${index}-ready`);
+      expect(await registry.currentDirectory("pane-1")).toBe(path);
+    }
+    registry.write("pane-1", Buffer.from(`sh -c 'cd /; printf child-%s-ready cwd; sleep 30'\n`));
+    await waitForOutput("child-cwd-ready");
+    expect(await registry.currentDirectory("pane-1")).toBe(join(root, "new\nline"));
+    expect(pane.cwd).toBe(root);
+  } finally {
+    await registry.stopAll();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("current directory rejects missing and exited runtimes", async () => {
+  const registry = runtime();
+  await expect(registry.currentDirectory("missing")).rejects.toThrow("no live runtime");
+  await registry.start(shellPane("pane-1", process.cwd(), "/bin/sh", ["-c", "exit 0"]));
+  await registry.waitForExit("pane-1");
+  await expect(registry.currentDirectory("pane-1")).rejects.toThrow("no live runtime");
+});
+
+test("current directory rejects a signal-terminated runtime", async () => {
+  const registry = runtime();
+  await registry.start(shellPane("pane-1", process.cwd(), "/bin/sh", ["-c", "kill -KILL $$"]));
+  await registry.waitForExit("pane-1");
+  await expect(registry.currentDirectory("pane-1")).rejects.toThrow("no live runtime");
+  expect(registry.isLive("pane-1")).toBe(false);
+});
+
+test("a replaced runtime cannot supply a stale cwd", async () => {
+  const cwd = await import("./cwd.ts");
+  const registry = runtime();
+  await registry.start(shellPane("pane-1", process.cwd()));
+  let complete!: (path: string) => void;
+  const probe = spyOn(cwd, "readProcessCwd").mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        complete = resolve;
+      }),
+  );
+  try {
+    const pending = registry.currentDirectory("pane-1");
+    await registry.stopAll();
+    await registry.start(shellPane("pane-1", process.cwd()));
+    complete(process.cwd());
+    await expect(pending).rejects.toThrow("runtime changed");
+    expect(registry.isLive("pane-1")).toBe(true);
+  } finally {
+    probe.mockRestore();
+  }
+});
+
+test("an exiting runtime cannot supply cwd after validation", async () => {
+  const cwd = await import("./cwd.ts");
+  const registry = runtime();
+  await registry.start(shellPane("pane-1", process.cwd()));
+  let complete!: (path: string) => void;
+  let validating!: () => void;
+  const started = new Promise<void>((resolve) => {
+    validating = resolve;
+  });
+  const validate = spyOn(cwd, "validateSplitCwd").mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        complete = resolve;
+        validating();
+      }),
+  );
+  try {
+    const pending = registry.currentDirectory("pane-1");
+    await started;
+    registry.write("pane-1", Buffer.from("exit\n"));
+    await registry.waitForExit("pane-1");
+    complete(process.cwd());
+    await expect(pending).rejects.toThrow("runtime changed");
+  } finally {
+    validate.mockRestore();
+  }
 });
 
 test("refuses a duplicate live runtime for one pane ID", async () => {
@@ -369,8 +472,7 @@ test("persists shell output after the process exits", async () => {
     INSERT INTO sessions VALUES ('session-1', 'Main', 0);
     INSERT INTO workspaces VALUES ('workspace-1', 'Work');
     INSERT INTO session_workspaces VALUES ('session-1', 'workspace-1', 0);
-    INSERT INTO projects VALUES ('project-1', 'workspace-1', 'implementation', 'Work Craft', 0);
-    INSERT INTO items VALUES ('item-1', 'project-1', 'surface', 'Build', 0, '{}', NULL);
+    INSERT INTO items VALUES ('item-1', 'workspace-1', 'design', NULL, 'generic', 'Build', 0, 0, '{}');
     INSERT INTO surfaces VALUES ('surface-1', 'item-1', NULL);
     INSERT INTO panes VALUES ('pane-1', 'surface-1', 'terminal', 'Shell', '/tmp', '{"type":"shell","executable":"/bin/sh","args":[]}', 'running', NULL, NULL, NULL);
   `);

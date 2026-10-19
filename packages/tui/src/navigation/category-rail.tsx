@@ -1,19 +1,11 @@
-import type { BoxRenderable, KeyEvent } from "@opentui/core";
 import type { CategoryKind, Snapshot } from "@work-craft/server/client";
-import { type ReactNode, useLayoutEffect, useRef } from "react";
+import { type ReactNode, useContext } from "react";
 
-import { useControlHints } from "@/ui/control-hints";
-import { Box } from "@/ui/primitives/box.tsx";
-import { Icon, type IconProps } from "@/ui/primitives/icon.tsx";
-import { Text } from "@/ui/primitives/text.tsx";
-import { useTheme } from "@/ui/theme-provider.tsx";
+import { Toggle, ToggleGroup, ToggleGroupContext } from "@/ui/controls/toggle";
+import { type IconName, icons } from "@/ui/icons/nerd";
+import { Text } from "@/ui/primitives/text";
 
-const activate = {
-  names: ["return", "enter", "linefeed"],
-  hint: { keys: "Enter", label: "Activate" },
-};
-
-const CATEGORY_ICONS: Record<CategoryKind, IconProps["name"]> = {
+const CATEGORY_ICONS: Record<CategoryKind, IconName> = {
   inbox: "inbox",
   today: "calendar",
   design: "lightbulb",
@@ -22,106 +14,83 @@ const CATEGORY_ICONS: Record<CategoryKind, IconProps["name"]> = {
   operations: "tools",
 };
 
+interface CategoryProps {
+  kind: CategoryKind;
+  icon: string;
+}
+
+function Category({ kind, icon }: CategoryProps): ReactNode {
+  const group = useContext(ToggleGroupContext);
+  const isPressed = group?.isPressed(kind!);
+  const isActive = group?.focused && group.activeValue === kind;
+  // kept for future reference
+  const isDisabled = false;
+
+  const backgroundColor = isDisabled
+    ? "background"
+    : isActive
+      ? "focus"
+      : isPressed
+        ? "muted"
+        : "background";
+
+  const foregroundColor = isDisabled
+    ? "secondary"
+    : isActive
+      ? "primary"
+      : isPressed
+        ? "primary"
+        : "foreground";
+
+  return (
+    <Toggle
+      id={`category:${kind}`}
+      value={kind}
+      paddingY={1}
+      bg={backgroundColor}
+      alignItems="center"
+      justifyContent="center"
+    >
+      <Text fg={foregroundColor} textAlign="center">
+        {icon}
+      </Text>
+    </Toggle>
+  );
+}
+
 export type CategoryRailProps = {
   categories: Snapshot["categories"];
   active: CategoryKind;
-  cursor: CategoryKind;
   focused: boolean;
-  onActivate(kind: CategoryKind, source: "keyboard" | "mouse"): void;
-  onFocus(kind: CategoryKind): void;
+  onActivate(kind: CategoryKind): void;
 };
 
 export function CategoryRail({
   active,
   categories,
-  cursor,
   focused,
   onActivate,
-  onFocus,
 }: CategoryRailProps): ReactNode {
-  const theme = useTheme();
-  const regionRef = useRef<BoxRenderable | null>(null);
-  useControlHints(regionRef, categories.some(({ kind }) => kind === cursor) ? [activate.hint] : []);
-  const cursorRef = useRef(cursor);
-  useLayoutEffect(() => {
-    cursorRef.current = cursor;
-  }, [cursor]);
-
-  function handleKeyDown(event: KeyEvent): void {
-    if (
-      event.defaultPrevented ||
-      event.ctrl ||
-      event.meta ||
-      event.option ||
-      event.super ||
-      event.hyper ||
-      event.shift
-    ) {
-      return;
-    }
-    const offset = ["j", "down"].includes(event.name)
-      ? 1
-      : ["k", "up"].includes(event.name)
-        ? -1
-        : 0;
-    if (offset !== 0) {
-      event.preventDefault();
-      event.stopPropagation();
-      const index = categories.findIndex(({ kind }) => kind === cursorRef.current);
-      const next = index < 0 ? undefined : categories[index + offset];
-      if (next !== undefined) {
-        cursorRef.current = next.kind;
-        onFocus(next.kind);
-      }
-    } else if (activate.names.includes(event.name)) {
-      event.preventDefault();
-      event.stopPropagation();
-      if (categories.some(({ kind }) => kind === cursorRef.current)) {
-        onActivate(cursorRef.current, "keyboard");
-      }
-    }
-  }
   return (
-    <Box
+    <ToggleGroup
+      bg="background"
       id="region:category"
-      ref={regionRef}
+      type="single"
+      value={active}
+      orientation="vertical"
+      gap={0}
       width={5}
-      focusable
       focused={focused}
-      onKeyDown={handleKeyDown}
+      onValueChange={(next) => {
+        const category = categories.find(({ kind }) => kind === (next ?? active));
+        if (category !== undefined) {
+          onActivate(category.kind);
+        }
+      }}
     >
-      {categories.map((category) => {
-        const selected = focused && category.kind === cursor;
-        const color = selected
-          ? theme.colors.foreground
-          : category.kind === active
-            ? theme.colors.primary
-            : theme.colors.mutedForeground;
-        return (
-          <Box
-            id={`category:${category.kind}`}
-            key={category.kind}
-            flexDirection="row"
-            height={1}
-            onMouseDown={() => {
-              cursorRef.current = category.kind;
-              onFocus(category.kind);
-              onActivate(category.kind, "mouse");
-            }}
-          >
-            <Text fg={color} width={2}>
-              {`${selected ? ">" : category.kind === active ? "*" : " "} `}
-            </Text>
-            <Icon
-              id={`category-icon:${category.kind}`}
-              name={CATEGORY_ICONS[category.kind]}
-              fg={color}
-              width={2}
-              flexShrink={0}
-            />
-          </Box>
-        );
-      })}
-    </Box>
+      {categories.map(({ kind }) => (
+        <Category key={kind} kind={kind} icon={icons[CATEGORY_ICONS[kind]]} />
+      ))}
+    </ToggleGroup>
   );
 }

@@ -3,13 +3,17 @@ import type { Snapshot, StreamConnection } from "@work-craft/server/client";
 import type { ReactNode } from "react";
 
 import type { TerminalBuffer } from "@/client/use-work-craft.ts";
+import { EmptyState, EmptyStateDescription, EmptyStateTitle } from "@/ui/components/empty-state";
 import { Box } from "@/ui/primitives/box.tsx";
-import { Text } from "@/ui/primitives/text.tsx";
-import { useTheme } from "@/ui/theme-provider.tsx";
+import { WORKBENCH_PADDING_X } from "@/workbench/layout.ts";
 import { SurfaceView } from "@/workbench/surface-view.tsx";
 import { TabBar } from "@/workbench/tab-bar.tsx";
 
 export type WorkbenchProps = {
+  connected: boolean;
+  reactivatingPaneIds: ReadonlySet<string>;
+  canReactivate(paneId: string): boolean;
+  onReactivatePane(paneId: string): void;
   snapshot: Snapshot | null;
   stream: StreamConnection | null;
   terminals: ReadonlyMap<string, TerminalBuffer>;
@@ -21,52 +25,81 @@ export type WorkbenchProps = {
   workbenchFocused: boolean;
   focusedPaneId: string | null;
   undersized: boolean;
-  tabError: string | null;
-  workbenchError: string | null;
+  failed?: boolean;
+  inputEnabled?: boolean;
+  entryEnabled?: boolean;
+  canReceiveInput?(paneId?: string): boolean;
+  canResize?(): boolean;
+  onSourceFailure?(source: { paneId: string; message: string }): void;
   onFocusTab(id: string): void;
   onActivateTab(id: string): void;
+  onEnterTab(id: string): void;
+  onTabScrollInteraction(): void;
   onFocusPane(id: string): void;
   onTerminalReady(id: string, terminal: EmbeddedTerminalRenderable | null): void;
 };
 
 export function Workbench({
+  connected,
+  reactivatingPaneIds,
+  canReactivate,
+  onReactivatePane,
+  canResize,
+  inputEnabled,
+  entryEnabled,
+  canReceiveInput,
   activeTabId,
   focusedPaneId,
   snapshot,
   stream,
   surface,
   tabCursorId,
-  tabError,
   tabs,
   tabsFocused,
   terminals,
   undersized,
-  workbenchError,
+  failed,
+  onSourceFailure,
   workbenchFocused,
   onActivateTab,
+  onEnterTab,
+  onTabScrollInteraction,
   onFocusPane,
   onFocusTab,
   onTerminalReady,
 }: WorkbenchProps): ReactNode {
-  const theme = useTheme();
   return (
-    <Box flexGrow={1} minWidth={0}>
+    <Box flexGrow={1} minWidth={0} minHeight={0} height="100%" overflow="hidden">
       <TabBar
         activeId={activeTabId}
         cursorId={tabCursorId}
-        error={tabError}
+        failed={failed}
+        inputEnabled={inputEnabled}
+        entryEnabled={entryEnabled}
+        canReceiveInput={canReceiveInput}
         focused={tabsFocused}
         tabs={tabs}
         onActivate={onActivateTab}
+        onEnter={onEnterTab}
+        onScrollInteraction={onTabScrollInteraction}
         onFocus={onFocusTab}
       />
-      <Box border id="region:workbench" flexGrow={1} minHeight={0} borderStyle="single">
-        {workbenchError === null ? null : <Text fg={theme.colors.error}>{workbenchError}</Text>}
+      <Box id="region:workbench" flexGrow={1} minHeight={0} paddingX={WORKBENCH_PADDING_X}>
         {surface === undefined || snapshot === null ? (
-          <Text fg={theme.colors.mutedForeground}>Select an item with an execution surface</Text>
+          <EmptyState gap={0} flexGrow={1} minHeight={0}>
+            <EmptyStateTitle>No execution surface</EmptyStateTitle>
+            <EmptyStateDescription>Select an item with an execution surface</EmptyStateDescription>
+          </EmptyState>
         ) : (
           <SurfaceView
+            connected={connected}
+            reactivatingPaneIds={reactivatingPaneIds}
+            canReactivate={canReactivate}
+            onReactivatePane={onReactivatePane}
             focusedPaneId={focusedPaneId}
+            inputEnabled={inputEnabled}
+            canReceiveInput={canReceiveInput}
+            canResize={canResize}
             snapshot={snapshot}
             stream={stream}
             surface={surface}
@@ -75,6 +108,7 @@ export function Workbench({
             workbenchFocused={workbenchFocused}
             onFocusPane={onFocusPane}
             onTerminalReady={onTerminalReady}
+            onSourceFailure={onSourceFailure}
           />
         )}
       </Box>

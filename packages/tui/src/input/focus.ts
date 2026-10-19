@@ -1,44 +1,17 @@
-import type { LayoutNode } from "@work-craft/server/client";
-
 export type Direction = "left" | "right" | "up" | "down";
 export type Rect = { x: number; y: number; width: number; height: number };
 export type FocusTarget =
-  | { region: "workspace" | "session" | "category" | "navigator" | "tabs" }
-  | { region: "workbench"; paneId: string };
+  | { region: "workspace" | "session" | "category" | "tabs" }
+  | { region: "navigator"; control?: "filter" | "results" }
+  | { region: "workbench"; paneId: string; control?: "reactivate" };
 export type FocusNode = { target: FocusTarget; rect: Rect };
 
 export function focusKey(target: FocusTarget): string {
-  return target.region === "workbench" ? `workbench:${target.paneId}` : target.region;
-}
-
-export function projectPaneFocusNodes(layout: LayoutNode, bounds: Rect): FocusNode[] {
-  if (layout.type === "pane") {
-    return [{ target: { region: "workbench", paneId: layout.paneId }, rect: bounds }];
-  }
-  if (layout.direction === "vertical") {
-    const dividerWidth = Math.min(1, bounds.width);
-    const paneWidth = bounds.width - dividerWidth;
-    const firstWidth = Math.round(paneWidth * layout.ratio);
-    return [
-      ...projectPaneFocusNodes(layout.first, { ...bounds, width: firstWidth }),
-      ...projectPaneFocusNodes(layout.second, {
-        ...bounds,
-        x: bounds.x + firstWidth + dividerWidth,
-        width: paneWidth - firstWidth,
-      }),
-    ];
-  }
-  const dividerHeight = Math.min(1, bounds.height);
-  const paneHeight = bounds.height - dividerHeight;
-  const firstHeight = Math.round(paneHeight * layout.ratio);
-  return [
-    ...projectPaneFocusNodes(layout.first, { ...bounds, height: firstHeight }),
-    ...projectPaneFocusNodes(layout.second, {
-      ...bounds,
-      y: bounds.y + firstHeight + dividerHeight,
-      height: paneHeight - firstHeight,
-    }),
-  ];
+  return target.region === "workbench"
+    ? `workbench:${target.paneId}${target.control ? `:${target.control}` : ""}`
+    : target.region === "navigator" && target.control === "filter"
+      ? "navigator:filter"
+      : target.region;
 }
 
 function center(rect: Rect): { x: number; y: number } {

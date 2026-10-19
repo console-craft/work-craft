@@ -8,6 +8,7 @@
 - Preserve the local-first, single-daemon architecture: the server owns durable state and runtimes; the TUI and CLI are disposable clients.
 - Use React with OpenTUI for the TUI. Do not introduce Solid.
 - Keep theme types and providers in `packages/tui/src/ui`; add reusable UI only when concrete callers need it.
+- Application overlays must not cover or dim the one-row status bar; reserve its bottom row while keeping component-library full-screen defaults.
 - Prefer native OpenTUI primitives until a dedicated local primitive or component exists. Keep application-specific behavior in callers.
 - Keep the CLI non-interactive and Unix-like, with plain-text or JSON output.
 - Do not introduce remote, distributed, or plugin-system abstractions without an explicit requirement.

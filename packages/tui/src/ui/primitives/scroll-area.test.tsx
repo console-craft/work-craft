@@ -12,6 +12,7 @@ import { act, createRef, type Dispatch, type SetStateAction, useState } from "re
 import { getControlHints } from "@/ui/control-hints";
 import { Button } from "@/ui/controls/button";
 import { Input } from "@/ui/controls/input";
+import { Box } from "@/ui/primitives/box";
 import { Container } from "@/ui/primitives/container";
 import { HStack } from "@/ui/primitives/hstack";
 import { ScrollArea } from "@/ui/primitives/scroll-area";
@@ -21,6 +22,73 @@ import type { Theme } from "@/ui/theme";
 import { ThemeProvider } from "@/ui/theme-provider";
 import { catppuccinTheme } from "@/ui/themes/catppuccin";
 import { defaultTheme } from "@/ui/themes/default";
+
+test("horizontal overflow does not create vertical overflow for short content", async () => {
+  const ref = createRef<ScrollBoxRenderable>();
+  let resize!: Dispatch<SetStateAction<{ width: number; contentHeight: number }>>;
+  function Fixture() {
+    const [size, setSize] = useState({ width: 20, contentHeight: 2 });
+    resize = setSize;
+    return (
+      <ThemeProvider theme={defaultTheme}>
+        <ScrollArea ref={ref} width={size.width} height={8} scrollX>
+          <Box width={60} height={size.contentHeight} />
+        </ScrollArea>
+      </ThemeProvider>
+    );
+  }
+  const setup = await testRender(<Fixture />, { width: 80, height: 12 });
+  try {
+    await act(async () => setup.flush());
+    const area = ref.current!;
+    expect(area.horizontalScrollBar.visible).toBe(true);
+    expect(area.verticalScrollBar.visible).toBe(false);
+    expect(area.scrollHeight).toBeLessThanOrEqual(area.viewport.height);
+
+    act(() => resize({ width: 20, contentHeight: 7 }));
+    await act(async () => setup.flush());
+    expect(area.viewport.height).toBe(7);
+    expect(area.verticalScrollBar.visible).toBe(false);
+
+    act(() => resize({ width: 20, contentHeight: 8 }));
+    await act(async () => setup.flush());
+    expect(area.horizontalScrollBar.visible).toBe(true);
+    expect(area.verticalScrollBar.visible).toBe(true);
+
+    act(() => resize({ width: 80, contentHeight: 2 }));
+    await act(async () => setup.flush());
+    expect(area.horizontalScrollBar.visible).toBe(false);
+    expect(area.verticalScrollBar.visible).toBe(false);
+
+    act(() => resize({ width: 20, contentHeight: 2 }));
+    await act(async () => setup.flush());
+    expect(ref.current).toBe(area);
+    expect(area.horizontalScrollBar.visible).toBe(true);
+    expect(area.verticalScrollBar.visible).toBe(false);
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
+test("two-axis scrolling preserves explicit content minimum height", async () => {
+  const ref = createRef<ScrollBoxRenderable>();
+  const setup = await testRender(
+    <ThemeProvider theme={defaultTheme}>
+      <ScrollArea ref={ref} width={20} height={8} scrollX contentOptions={{ minHeight: 12 }}>
+        <Box width={60} height={2} />
+      </ScrollArea>
+    </ThemeProvider>,
+    { width: 30, height: 12 },
+  );
+  try {
+    await act(async () => setup.flush());
+    expect(ref.current!.content.height).toBe(12);
+    expect(ref.current!.horizontalScrollBar.visible).toBe(true);
+    expect(ref.current!.verticalScrollBar.visible).toBe(true);
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
 
 test("scroll area adopts themed borders, React props, refs, and local key hints", async () => {
   const ref = createRef<ScrollBoxRenderable>();

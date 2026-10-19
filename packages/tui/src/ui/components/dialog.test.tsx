@@ -76,6 +76,43 @@ test("undefined open preserves uncontrolled dismissal and focus restoration", as
   }
 });
 
+test("restoration veto prevents queued focus theft", async () => {
+  let update!: Dispatch<SetStateAction<boolean>>;
+  let allowRestore = true;
+  function Fixture() {
+    const [open, setOpen] = useState(false);
+    update = setOpen;
+    return (
+      <ThemeProvider theme={defaultTheme}>
+        <Box>
+          <Button id="origin">Origin</Button>
+          <Button id="destination">Destination</Button>
+          <Dialog open={open}>
+            <DialogContent canRestoreFocus={() => allowRestore}>
+              <Button id="close">Close</Button>
+            </DialogContent>
+          </Dialog>
+        </Box>
+      </ThemeProvider>
+    );
+  }
+  const setup = await testRender(<Fixture />, { width: 80, height: 20 });
+  try {
+    await setup.flush();
+    act(() => setup.renderer.root.findDescendantById("origin")!.focus());
+    act(() => update(true));
+    await act(async () => setup.flush());
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("close");
+    act(() => update(false));
+    allowRestore = false;
+    act(() => setup.renderer.root.findDescendantById("destination")!.focus());
+    await act(async () => setup.flush());
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("destination");
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
 test("dialog content applies horizontal padding", async () => {
   const setup = await testRender(
     <ThemeProvider theme={defaultTheme}>
@@ -98,6 +135,62 @@ test("dialog content applies horizontal padding", async () => {
     act(() => setup.renderer.destroy());
   }
 });
+
+for (const { label, margins, bounds } of [
+  { label: "default", margins: undefined, bounds: { x: 0, y: 0, width: 80, height: 20 } },
+  {
+    label: "bottom row reserved",
+    margins: { bottom: 1 },
+    bounds: { x: 0, y: 0, width: 80, height: 19 },
+  },
+  {
+    label: "all edges reserved",
+    margins: { top: 3, right: 4, bottom: 1, left: 2 },
+    bounds: { x: 2, y: 3, width: 74, height: 16 },
+  },
+] as const) {
+  test(`dialog overlay ${label} constrains both backdrop and content`, async () => {
+    const requests: boolean[] = [];
+    const setup = await testRender(
+      <ThemeProvider theme={defaultTheme}>
+        <Dialog open onOpenChange={(open) => requests.push(open)}>
+          <DialogContent
+            id="content"
+            overlayMargins={margins}
+            width="100%"
+            maxWidth={100}
+            maxHeight="100%"
+          >
+            <Input id="input" />
+          </DialogContent>
+        </Dialog>
+      </ThemeProvider>,
+      { width: 80, height: 20 },
+    );
+    try {
+      await act(async () => setup.flush());
+      const content = setup.renderer.root.findDescendantById("content")!;
+      const overlay = content.parent!;
+      expect({
+        x: overlay.screenX,
+        y: overlay.screenY,
+        width: overlay.width,
+        height: overlay.height,
+      }).toEqual(bounds);
+      expect(content.screenX).toBeGreaterThanOrEqual(bounds.x);
+      expect(content.screenX + content.width).toBeLessThanOrEqual(bounds.x + bounds.width);
+      expect(content.screenY + content.height).toBeLessThanOrEqual(bounds.y + bounds.height);
+      await act(async () => setup.mockMouse.click(0, 19));
+      expect(requests).toEqual(margins === undefined ? [false] : []);
+      if (margins !== undefined) {
+        await act(async () => setup.mockMouse.click(bounds.x, bounds.y));
+        expect(requests).toEqual([false]);
+      }
+    } finally {
+      act(() => setup.renderer.destroy());
+    }
+  });
+}
 
 for (const { label, width, maxWidth, minWidth } of [
   { label: "fractional width", width: 78.4, maxWidth: 120, minWidth: undefined },

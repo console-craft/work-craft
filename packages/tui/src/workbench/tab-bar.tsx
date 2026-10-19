@@ -1,131 +1,138 @@
-import type { BoxRenderable, KeyEvent } from "@opentui/core";
+import {
+  type BoxRenderable,
+  type KeyEvent,
+  type MouseEvent,
+  RenderableEvents,
+} from "@opentui/core";
 import type { Snapshot } from "@work-craft/server/client";
 import { type ReactNode, useLayoutEffect, useRef } from "react";
 
-import { useControlHints } from "@/ui/control-hints";
+import { Tabs, TabsList, TabsTrigger } from "@/ui/components/tabs";
 import { Box } from "@/ui/primitives/box.tsx";
 import { Text } from "@/ui/primitives/text.tsx";
-import { useTheme } from "@/ui/theme-provider.tsx";
-
-const activate = {
-  names: ["return", "enter", "linefeed"],
-  hint: { keys: "Enter", label: "Activate" },
-};
+import { TAB_STRIP_HEIGHT } from "@/workbench/layout";
 
 export type TabBarProps = {
   tabs: Snapshot["tabs"];
   activeId: string | null;
   cursorId: string | null;
   focused: boolean;
-  error: string | null;
+  failed?: boolean;
+  inputEnabled?: boolean;
+  entryEnabled?: boolean;
+  canReceiveInput?(): boolean;
   onActivate(id: string): void;
+  onEnter(id: string): void;
   onFocus(id: string): void;
+  onScrollInteraction(): void;
 };
 
-export function TabBar({
-  activeId,
-  cursorId,
-  error,
-  focused,
-  tabs,
-  onActivate,
-  onFocus,
-}: TabBarProps): ReactNode {
-  const theme = useTheme();
+export function TabBar(props: TabBarProps): ReactNode {
   const regionRef = useRef<BoxRenderable | null>(null);
-  useControlHints(regionRef, tabs.some(({ id }) => id === cursorId) ? [activate.hint] : []);
-  const cursorRef = useRef(cursorId);
-  useLayoutEffect(() => {
-    cursorRef.current = cursorId;
-  }, [cursorId]);
+  const live = useRef(props);
+  live.current = props;
+  const candidate = useRef(props.cursorId ?? props.activeId);
+  candidate.current = props.cursorId ?? props.activeId;
 
-  function handleKeyDown(event: KeyEvent): void {
-    if (
-      event.defaultPrevented ||
-      event.ctrl ||
-      event.meta ||
-      event.option ||
-      event.super ||
-      event.hyper ||
-      event.shift
-    ) {
-      return;
-    }
-    const offset = ["l", "right"].includes(event.name)
-      ? 1
-      : ["h", "left"].includes(event.name)
-        ? -1
-        : 0;
-    if (offset !== 0) {
+  function enabled(): boolean {
+    return live.current.inputEnabled !== false && (live.current.canReceiveInput?.() ?? true);
+  }
+  function gate(event: KeyEvent | MouseEvent): void {
+    if (!enabled()) {
       event.preventDefault();
       event.stopPropagation();
-      const index = tabs.findIndex(({ id }) => id === cursorRef.current);
-      const next = index < 0 ? undefined : tabs[index + offset];
-      if (next !== undefined) {
-        cursorRef.current = next.id;
-        onFocus(next.id);
-      }
-    } else if (activate.names.includes(event.name)) {
-      event.preventDefault();
-      event.stopPropagation();
-      const id = cursorRef.current;
-      if (id !== null && tabs.some((tab) => tab.id === id)) {
-        onActivate(id);
-      }
     }
   }
+  useLayoutEffect(() => {
+    const node = regionRef.current;
+    if (!node) {
+      return;
+    }
+    function refocus(): void {
+      const id = live.current.activeId;
+      if (enabled() && id !== null) {
+        candidate.current = id;
+        live.current.onFocus(id);
+      }
+    }
+    node.on(RenderableEvents.FOCUSED, refocus);
+    return () => {
+      node.off(RenderableEvents.FOCUSED, refocus);
+    };
+  }, []);
+  useLayoutEffect(() => {
+    if (regionRef.current) {
+      regionRef.current.focusable = props.inputEnabled !== false;
+    }
+  });
+
   return (
-    <Box
-      id="region:tabs"
-      ref={regionRef}
-      flexDirection="row"
-      height={1}
-      focusable
-      focused={focused}
-      onKeyDown={handleKeyDown}
-      onMouseDown={() => {
-        // A click is a focus request even when native focus is already projected here.
-        const tab =
-          tabs.find(({ id }) => id === cursorRef.current) ??
-          tabs.find(({ id }) => id === activeId) ??
-          tabs[0];
-        if (tab !== undefined) {
-          cursorRef.current = tab.id;
-          onFocus(tab.id);
-        }
-      }}
-    >
-      <Box flexDirection="row" flexGrow={1} minWidth={0} overflow="hidden">
-        {tabs.map((tab) => {
-          const cursor = focused && tab.id === cursorId;
-          return (
-            <Text
-              id={`tab:${tab.id}`}
+    <Box flexDirection="row" height={TAB_STRIP_HEIGHT} flexShrink={0} minWidth={0}>
+      <Tabs
+        value={props.cursorId ?? props.activeId ?? undefined}
+        flexGrow={1}
+        minWidth={0}
+        onValueChange={(id) => {
+          if (!enabled()) {
+            return;
+          }
+          candidate.current = id;
+          live.current.onFocus(id);
+          live.current.onActivate(id);
+        }}
+        onActivate={(id) => {
+          if (enabled() && live.current.entryEnabled !== false) {
+            live.current.onEnter(id);
+          }
+        }}
+      >
+        <TabsList
+          id="region:tabs"
+          ref={regionRef}
+          refocusValue={props.activeId ?? undefined}
+          controlHints={() =>
+            enabled() &&
+            live.current.entryEnabled !== false &&
+            live.current.tabs.some(({ id }) => id === candidate.current)
+              ? [{ keys: "Enter/Space", label: "Enter terminal" }]
+              : []
+          }
+          focused={props.inputEnabled !== false && props.focused}
+          onKeyDown={gate}
+          onScrollInteraction={() => {
+            if (enabled()) {
+              live.current.onScrollInteraction();
+            }
+          }}
+          onMouseDown={(event) => {
+            gate(event);
+            if (enabled() && candidate.current !== null) {
+              live.current.onFocus(candidate.current);
+            }
+          }}
+          bg="background"
+        >
+          {props.tabs.map((tab) => (
+            <TabsTrigger
               key={tab.id}
-              fg={
-                cursor
-                  ? theme.colors.foreground
-                  : tab.id === activeId
-                    ? theme.colors.primary
-                    : theme.colors.mutedForeground
-              }
-              onMouseDown={(event) => {
-                event.stopPropagation();
-                cursorRef.current = tab.id;
-                onFocus(tab.id);
-                onActivate(tab.id);
-              }}
+              id={`tab:${tab.id}`}
+              value={tab.id}
+              onMouseDown={gate}
+              onMouseUp={gate}
+              flexGrow={1}
+              flexBasis={0}
+              justifyContent="center"
             >
-              {` ${cursor ? ">" : tab.id === activeId ? "*" : " "}${tab.title} `}
-            </Text>
-          );
-        })}
-      </Box>
-      {error === null ? null : (
-        <Text id="tab-error" flexShrink={0} fg={theme.colors.error}>
-          {` ${error}`}
+              {tab.title}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
+      {props.failed ? (
+        <Text id="tab-error" flexShrink={0} fg="error">
+          !
         </Text>
-      )}
+      ) : null}
     </Box>
   );
 }

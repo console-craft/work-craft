@@ -14,9 +14,12 @@ test("parses ensure and destroy commands", () => {
     itemId: "item-1",
     cwd: "/tmp",
   });
-  expect(parseCommand({ type: "surface.ensureHere", projectId: "project-1" })).toEqual({
-    type: "surface.ensureHere",
-    projectId: "project-1",
+  expect(
+    parseCommand({ type: "directory.register", workspaceId: "workspace-1", path: "/tmp" }),
+  ).toEqual({
+    type: "directory.register",
+    workspaceId: "workspace-1",
+    path: "/tmp",
   });
   expect(parseCommand({ type: "daemon.destroy" })).toEqual({ type: "daemon.destroy" });
 });
@@ -83,4 +86,9 @@ test("parses protocol messages and rejects invalid boundaries", () => {
 test("round-trips raw terminal bytes through base64", () => {
   const bytes = Uint8Array.from([0, 255, 27, 91, 109]);
   expect(decodeBytes(encodeBytes(bytes))).toEqual(bytes);
+});
+
+test("validation errors retain an optional field without changing operational errors", () => {
+  expect(new ProtocolError("invalid", "path").field).toBe("path");
+  expect(new ProtocolError("failed").field).toBeUndefined();
 });

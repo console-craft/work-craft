@@ -1,130 +1,118 @@
-import type { BoxRenderable, KeyEvent } from "@opentui/core";
-import { type ReactNode, useLayoutEffect, useRef } from "react";
+import { type ReactNode, useContext } from "react";
 
-import { ellipsize } from "@/shell/layout.ts";
-import { useControlHints } from "@/ui/control-hints";
-import { Box } from "@/ui/primitives/box.tsx";
-import { Text } from "@/ui/primitives/text.tsx";
-import { useTheme } from "@/ui/theme-provider.tsx";
+import { SHELL_HEADER_HEIGHT } from "@/shell/layout.ts";
+import { HorizontalScroller } from "@/ui/components/horizontal-scroller";
+import { Toggle, ToggleGroup, ToggleGroupContext } from "@/ui/controls/toggle";
+import { icons } from "@/ui/icons/nerd";
+import { Text } from "@/ui/primitives/text";
 
-const activate = {
-  names: ["return", "enter", "linefeed"],
-  hint: { keys: "Enter", label: "Activate" },
-};
+const WORKSPACE_NUMBERS = [
+  icons.number1CircleOutline,
+  icons.number2CircleOutline,
+  icons.number3CircleOutline,
+  icons.number4CircleOutline,
+  icons.number5CircleOutline,
+  icons.number6CircleOutline,
+  icons.number7CircleOutline,
+  icons.number8CircleOutline,
+  icons.number9CircleOutline,
+  icons.number10CircleOutline,
+] as const;
+
+function WorkspaceToggle({
+  id,
+  name,
+  index,
+}: {
+  id: string;
+  name: string;
+  index: number;
+}): ReactNode {
+  const group = useContext(ToggleGroupContext);
+  const isPressed = group?.isPressed(id);
+  const isActive = group?.focused && group.activeValue === id;
+  // kept for future reference
+  const isDisabled = false;
+  const number = WORKSPACE_NUMBERS[index];
+
+  const backgroundColor = isDisabled
+    ? "muted"
+    : isActive
+      ? "focus"
+      : isPressed
+        ? "foreground"
+        : "background";
+
+  const foregroundColor = isDisabled
+    ? "secondary"
+    : isActive
+      ? "foreground"
+      : isPressed
+        ? "background"
+        : "focus";
+
+  return (
+    <Toggle id={`workspace:${id}`} value={id} height={SHELL_HEADER_HEIGHT} bg={backgroundColor}>
+      <Text fg={foregroundColor} textAlign="center" wrapMode="none">
+        {number === undefined ? name : `${number} ${name}`}
+      </Text>
+    </Toggle>
+  );
+}
 
 export type WorkspaceBarProps = {
   workspaces: readonly { id: string; name: string }[];
-  visibleIds: readonly string[];
   activeId: string | null;
-  cursorId: string | null;
   focused: boolean;
-  hasPrevious: boolean;
-  hasNext: boolean;
-  width: number;
   onActivate(id: string): void;
-  onFocus(id: string): void;
 };
+
+function WorkspaceScroller({ workspaces }: Pick<WorkspaceBarProps, "workspaces">): ReactNode {
+  const group = useContext(ToggleGroupContext);
+  return (
+    <HorizontalScroller
+      id="workspace-scroll"
+      flexGrow={1}
+      flexShrink={1}
+      minWidth={0}
+      height={SHELL_HEADER_HEIGHT}
+      revealId={group?.focused && group.activeValue ? `workspace:${group.activeValue}` : undefined}
+    >
+      {workspaces.map(({ id, name }, index) => (
+        <WorkspaceToggle key={id} id={id} name={name} index={index} />
+      ))}
+    </HorizontalScroller>
+  );
+}
 
 export function WorkspaceBar({
   activeId,
-  cursorId,
   focused,
-  hasNext,
-  hasPrevious,
-  visibleIds,
-  width,
   workspaces,
   onActivate,
-  onFocus,
 }: WorkspaceBarProps): ReactNode {
-  const theme = useTheme();
-  const regionRef = useRef<BoxRenderable | null>(null);
-  useControlHints(regionRef, workspaces.some(({ id }) => id === cursorId) ? [activate.hint] : []);
-  const cursorRef = useRef(cursorId);
-  useLayoutEffect(() => {
-    cursorRef.current = cursorId;
-  }, [cursorId]);
-
-  function handleKeyDown(event: KeyEvent): void {
-    if (
-      event.defaultPrevented ||
-      event.ctrl ||
-      event.meta ||
-      event.option ||
-      event.super ||
-      event.hyper ||
-      event.shift
-    ) {
-      return;
-    }
-    const offset = ["l", "right"].includes(event.name)
-      ? 1
-      : ["h", "left"].includes(event.name)
-        ? -1
-        : 0;
-    if (offset !== 0) {
-      event.preventDefault();
-      event.stopPropagation();
-      const index = workspaces.findIndex(({ id }) => id === cursorRef.current);
-      const next = index < 0 ? undefined : workspaces[index + offset];
-      if (next !== undefined) {
-        cursorRef.current = next.id;
-        onFocus(next.id);
-      }
-    } else if (activate.names.includes(event.name)) {
-      event.preventDefault();
-      event.stopPropagation();
-      const id = cursorRef.current;
-      if (id !== null && workspaces.some((workspace) => workspace.id === id)) {
-        onActivate(id);
-      }
-    }
-  }
   return (
-    <Box
+    <ToggleGroup
       id="region:workspace"
-      ref={regionRef}
-      flexDirection="row"
-      width={width}
+      type="single"
+      value={activeId ?? undefined}
+      orientation="horizontal"
+      gap={0}
+      height={SHELL_HEADER_HEIGHT}
       overflow="hidden"
-      focusable
       focused={focused}
-      onKeyDown={handleKeyDown}
-    >
-      {hasPrevious ? <Text>{"<"}</Text> : null}
-      {visibleIds.map((id) => {
-        const workspace = workspaces.find((candidate) => candidate.id === id);
-        if (workspace === undefined) {
-          return null;
+      flexGrow={1}
+      flexShrink={1}
+      minWidth={0}
+      flexBasis={0}
+      onValueChange={(next) => {
+        const id = next ?? activeId;
+        if (id !== null && workspaces.some((workspace) => workspace.id === id)) {
+          onActivate(id);
         }
-        const cursor = focused && id === cursorId;
-        const active = id === activeId;
-        const label =
-          visibleIds.length === 1
-            ? ellipsize(workspace.name, width - Number(hasPrevious) - Number(hasNext) - 3)
-            : workspace.name;
-        return (
-          <Text
-            id={`workspace:${id}`}
-            key={id}
-            fg={
-              cursor
-                ? theme.colors.foreground
-                : active
-                  ? theme.colors.primary
-                  : theme.colors.mutedForeground
-            }
-            onMouseDown={() => {
-              cursorRef.current = id;
-              onFocus(id);
-              onActivate(id);
-            }}
-          >
-            {` ${cursor ? ">" : active ? "*" : " "}${label} `}
-          </Text>
-        );
-      })}
-      {hasNext ? <Text>{">"}</Text> : null}
-    </Box>
+      }}
+    >
+      <WorkspaceScroller workspaces={workspaces} />
+    </ToggleGroup>
   );
 }

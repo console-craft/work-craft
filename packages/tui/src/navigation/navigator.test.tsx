@@ -1,273 +1,151 @@
 import { expect, test } from "bun:test";
 
-import { BoxRenderable, TextRenderable } from "@opentui/core";
-import { testRender as renderWithoutTheme } from "@opentui/react/test-utils";
-import { act, type ReactNode, useState } from "react";
+import { BoxRenderable, parseColor, type ScrollBoxRenderable } from "@opentui/core";
+import { testRender } from "@opentui/react/test-utils";
+import { act, useState } from "react";
 
-import { CategoryRail } from "@/navigation/category-rail.tsx";
-import type { NavigatorEntry } from "@/navigation/model.ts";
+import { navigatorEntries } from "@/navigation/model.ts";
 import { Navigator } from "@/navigation/navigator.tsx";
 import { snapshotFixture } from "@/test-fixtures.ts";
-import { ThemeProvider } from "@/ui/theme-provider.tsx";
-import { defaultTheme } from "@/ui/themes/default.ts";
+import { ThemeProvider } from "@/ui/theme-provider";
+import { defaultTheme } from "@/ui/themes/default";
 
-function testRender(node: ReactNode, options: Parameters<typeof renderWithoutTheme>[1]) {
-  return renderWithoutTheme(<ThemeProvider theme={defaultTheme}>{node}</ThemeProvider>, options);
-}
-
-const entries: NavigatorEntry[] = [
-  {
-    key: "project:project-1",
-    kind: "project",
-    id: "project-1",
-    projectId: "project-1",
-    label: "Work Craft",
-    depth: 0,
-  },
-  {
-    key: "item:item-1",
-    kind: "item",
-    id: "item-1",
-    projectId: "project-1",
-    label: "Ship navigator",
-    depth: 1,
-  },
-];
-
-test("standalone category browsing is buffered, nonactivating, and does not wrap", async () => {
-  const calls: string[] = [];
-  const setup = await testRender(
-    <CategoryRail
-      categories={snapshotFixture().categories.slice(0, 2)}
-      active="inbox"
-      cursor="inbox"
-      focused
-      onFocus={(kind) => calls.push(`focus:${kind}`)}
-      onActivate={(kind) => calls.push(`activate:${kind}`)}
-    />,
-    { width: 5, height: 6 },
-  );
-  try {
-    await setup.flush();
-    await act(async () => setup.mockInput.pressKeys(["j", "\r", "j"]));
-    expect(calls).toEqual(["focus:today", "activate:today"]);
-  } finally {
-    act(() => setup.renderer.destroy());
-  }
-});
-
-test("navigator click leaves the composite focused and buffered browsing uses the clicked cursor", async () => {
-  const calls: string[] = [];
-  function Fixture(): ReactNode {
-    const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set(["project-1"]));
+async function fixture() {
+  const opened: string[] = [];
+  const candidates: (string | null)[] = [];
+  function Fixture() {
+    const [query, setQuery] = useState("");
+    const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set(["root-1"]));
     return (
-      <Navigator
-        title="Implementation"
-        entries={entries}
-        mode="expanded"
-        width={24}
-        height={10}
-        focused={false}
-        cursorKey="item:item-1"
-        activeKey={null}
-        error={null}
-        expandedProjectIds={expanded}
-        onExpand={(id, value) => {
-          calls.push(`expand:${id}:${value}`);
-          setExpanded(value ? new Set([id]) : new Set());
-        }}
-        onFocus={(key) => calls.push(`focus:${key}`)}
-        onActivate={(key) => calls.push(`activate:${key}`)}
-      />
+      <ThemeProvider theme={defaultTheme}>
+        <Navigator
+          entries={navigatorEntries(
+            snapshotFixture(),
+            "workspace-shared",
+            "implementation",
+            expanded,
+            query,
+            "/work",
+          )}
+          query={query}
+          homePath="/work"
+          activeItemId="root-1"
+          initialCursorId="root-1"
+          title="Coding"
+          width={40}
+          height={14}
+          interactive
+          focusedControl="filter"
+          onQueryChange={setQuery}
+          onCursorChange={(id) => candidates.push(id)}
+          onInteraction={() => {}}
+          onExpand={(id, value) => setExpanded(value ? new Set([id]) : new Set())}
+          onActivate={(id) => opened.push(id)}
+        />
+      </ThemeProvider>
     );
   }
-  const setup = await testRender(<Fixture />, { width: 30, height: 10 });
+  const setup = await testRender(<Fixture />, { width: 50, height: 18 });
+  await setup.flush();
+  return { ...setup, opened, candidates };
+}
+
+test("filter edits n o a j k h l Space and Enter does not open; Tab cycles two native stops", async () => {
+  const f = await fixture();
   try {
-    await setup.flush();
-    const row = setup.renderer.root.findDescendantById("navigator-row:project:project-1")!;
-    await act(async () => {
-      await setup.mockMouse.click(row.screenX + 2, row.screenY);
-      await setup.mockInput.pressKeys(["h", "h", "l", "h", "j", "\r", "j"]);
+    await act(async () => f.mockInput.typeText("noajkhl "));
+    expect(f.opened).toEqual([]);
+    await act(async () => f.mockInput.pressEnter());
+    expect(f.opened).toEqual([]);
+    expect(f.renderer.currentFocusedRenderable?.id).toBe("navigator:filter");
+    await act(async () => f.mockInput.pressKey("u", { ctrl: true }));
+    await act(async () => f.mockInput.pressTab());
+    expect(f.renderer.currentFocusedRenderable?.id).toBe("region:navigator");
+    await act(async () => f.mockInput.pressTab({ shift: true }));
+    expect(f.renderer.currentFocusedRenderable?.id).toBe("navigator:filter");
+  } finally {
+    act(() => f.renderer.destroy());
+  }
+});
+
+test("buffered query transfer never opens an old row and first match is not contextual ancestor", async () => {
+  const f = await fixture();
+  try {
+    act(() => {
+      f.mockInput.typeText("feature");
+      f.mockInput.pressKey("n", { ctrl: true });
+      f.mockInput.pressEnter();
     });
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:navigator");
-    expect(calls).toEqual([
-      "focus:project:project-1",
-      "activate:project:project-1",
-      "expand:project-1:false",
-      "expand:project-1:true",
-      "expand:project-1:false",
-      "focus:item:item-1",
-      "activate:item:item-1",
-    ]);
-    await act(async () => setup.mockInput.pressKeys(["k", "l"]));
-    expect(calls.slice(-2)).toEqual(["focus:project:project-1", "expand:project-1:true"]);
+    expect(f.opened).toEqual([]);
+    await act(async () => f.flush());
+    expect(f.renderer.currentFocusedRenderable?.id).toBe("region:navigator");
+    await act(async () => f.mockInput.pressEnter());
+    expect(f.opened).toEqual(["item-1"]);
+  } finally {
+    act(() => f.renderer.destroy());
+  }
+});
+
+test("narrow Navigator results show only a horizontal scrollbar when their rows fit", async () => {
+  const setup = await testRender(
+    <ThemeProvider theme={defaultTheme}>
+      <Navigator
+        entries={navigatorEntries(
+          snapshotFixture(),
+          "workspace-shared",
+          "implementation",
+          new Set(["root-1"]),
+          "",
+          "/work",
+        )}
+        query=""
+        homePath="/work"
+        activeItemId="root-1"
+        initialCursorId="root-1"
+        title="Coding"
+        width={20}
+        height={24}
+        interactive
+        focusedControl="results"
+        onQueryChange={() => {}}
+        onCursorChange={() => {}}
+        onExpand={() => {}}
+        onActivate={() => {}}
+        onInteraction={() => {}}
+      />
+    </ThemeProvider>,
+    { width: 40, height: 26 },
+  );
+  try {
+    await act(async () => setup.flush());
+    const list = setup.renderer.root.findDescendantById("region:navigator")!;
+    const area = list.getChildren()[0] as ScrollBoxRenderable;
+    expect(area.content.getChildren()).toHaveLength(2);
+    expect(area.horizontalScrollBar.visible).toBe(true);
+    expect(area.verticalScrollBar.visible).toBe(false);
   } finally {
     act(() => setup.renderer.destroy());
   }
 });
 
-test("category icons keep the fixed-width rail and row mouse activation", async () => {
-  const calls: string[] = [];
-  const setup = await testRender(
-    <CategoryRail
-      categories={snapshotFixture().categories}
-      active="inbox"
-      cursor="implementation"
-      focused
-      onFocus={(kind) => calls.push(`focus:${kind}`)}
-      onActivate={(kind) => calls.push(`activate:${kind}`)}
-    />,
-    { width: 5, height: 6 },
-  );
-  await setup.flush();
-  const rail = setup.renderer.root.findDescendantById("region:category")!;
-  const row = setup.renderer.root.findDescendantById("category:implementation")!;
-  const icon = setup.renderer.root.findDescendantById(
-    "category-icon:implementation",
-  ) as TextRenderable;
-  expect(icon).toBeInstanceOf(TextRenderable);
-  expect(rail.width).toBe(5);
-  expect(row.height).toBe(1);
-  expect(icon.screenX + icon.width).toBeLessThanOrEqual(rail.screenX + rail.width);
-  expect(setup.captureCharFrame()).toContain(">");
-  expect(setup.captureCharFrame()).toContain("*");
-
-  await act(async () => setup.mockMouse.click(icon.screenX, icon.screenY));
-  expect(calls).toEqual(["focus:implementation", "activate:implementation"]);
-  act(() => setup.renderer.destroy());
-});
-
-test("navigator renders one stable projection in expanded and compact modes", async () => {
-  const expanded = await testRender(
-    <Navigator
-      title="Implementation"
-      activeKey="project:project-1"
-      cursorKey="item:item-1"
-      entries={entries}
-      expandedProjectIds={new Set(["project-1"])}
-      onExpand={() => {}}
-      error={null}
-      focused
-      height={10}
-      mode="expanded"
-      width={24}
-      onActivate={() => {}}
-      onFocus={() => {}}
-    />,
-    { width: 30, height: 10 },
-  );
-  await expanded.flush();
-  expect(expanded.captureCharFrame()).toContain("Implementation");
-  expect(expanded.captureCharFrame()).toContain("Work Craft");
-  expect(expanded.captureCharFrame()).toContain("Ship navigator");
-  act(() => expanded.renderer.destroy());
-
-  const compact = await testRender(
-    <Navigator
-      title="Implementation"
-      activeKey="project:project-1"
-      cursorKey="item:item-1"
-      entries={entries}
-      expandedProjectIds={new Set(["project-1"])}
-      onExpand={() => {}}
-      error={null}
-      focused
-      height={10}
-      mode="compact"
-      width={7}
-      onActivate={() => {}}
-      onFocus={() => {}}
-    />,
-    { width: 10, height: 10 },
-  );
-  await compact.flush();
-  const frame = compact.captureCharFrame();
-  expect(frame).toContain("WC");
-  expect(frame).toContain("·");
-  expect(frame).not.toContain("Ship navigator");
-  act(() => compact.renderer.destroy());
-});
-
-test("navigator renders Unicode initials and truncates ANSI labels by visible width", async () => {
-  const compact = await testRender(
-    <Navigator
-      title="Projects"
-      activeKey={null}
-      cursorKey={null}
-      entries={[{ ...entries[0], label: "🧠 Craft" }]}
-      expandedProjectIds={new Set()}
-      onExpand={() => {}}
-      error={null}
-      focused={false}
-      height={5}
-      mode="compact"
-      width={7}
-      onActivate={() => {}}
-      onFocus={() => {}}
-    />,
-    { width: 10, height: 6 },
-  );
-  await compact.flush();
-  expect(compact.captureCharFrame()).toContain("🧠C");
-  act(() => compact.renderer.destroy());
-
-  const narrow = await testRender(
-    <Navigator
-      title="Projects"
-      activeKey={null}
-      cursorKey={null}
-      entries={[{ ...entries[0], label: "\x1b[31mNavigator\x1b[0m" }]}
-      expandedProjectIds={new Set()}
-      onExpand={() => {}}
-      error={null}
-      focused={false}
-      height={5}
-      mode="expanded"
-      width={10}
-      onActivate={() => {}}
-      onFocus={() => {}}
-    />,
-    { width: 12, height: 6 },
-  );
-  await narrow.flush();
-  const frame = narrow.captureCharFrame();
-  expect(frame).toContain("Nav…");
-  expect(frame).not.toContain("Navigator");
-  act(() => narrow.renderer.destroy());
-});
-
-test("navigator border uses the active theme", async () => {
-  const theme = {
-    ...defaultTheme,
-    name: "semantic-test",
-    colors: { ...defaultTheme.colors, border: "#0D0E0F" },
-  };
-  const setup = await testRender(
-    <ThemeProvider theme={theme}>
-      <Navigator
-        title="Implementation"
-        activeKey={null}
-        cursorKey={null}
-        entries={[]}
-        expandedProjectIds={new Set()}
-        onExpand={() => {}}
-        error={null}
-        focused={false}
-        height={3}
-        mode="expanded"
-        width={20}
-        onActivate={() => {}}
-        onFocus={() => {}}
-      />
-    </ThemeProvider>,
-    { width: 40, height: 8 },
-  );
-  await setup.flush();
-
-  expect(
-    (
-      setup.renderer.root.findDescendantById("region:navigator") as BoxRenderable
-    ).borderColor.toInts(),
-  ).toEqual([13, 14, 15, 255]);
-  act(() => setup.renderer.destroy());
+test("two-cell rows use stable IDs, themed filter border, path and branch, and primary-release activation", async () => {
+  const f = await fixture();
+  try {
+    const row = f.renderer.root.findDescendantById("navigator-row:item-1")!;
+    expect(row.height).toBe(2);
+    expect(row.focusable).toBe(false);
+    expect(f.captureCharFrame()).toContain("feature");
+    expect(f.captureCharFrame()).toContain("~/Ship navigator");
+    const list = f.renderer.root.findDescendantById("region:navigator") as BoxRenderable;
+    const filterBorder = f.renderer.root.findDescendantById("navigator:filter")!
+      .parent as BoxRenderable;
+    expect(filterBorder.borderColor.toInts()).toEqual(
+      parseColor(defaultTheme.colors.border).toInts(),
+    );
+    await act(async () => f.mockMouse.click(row.screenX + 10, row.screenY));
+    expect(f.opened).toEqual(["item-1"]);
+    expect(f.renderer.currentFocusedRenderable).toBe(list);
+  } finally {
+    act(() => f.renderer.destroy());
+  }
 });

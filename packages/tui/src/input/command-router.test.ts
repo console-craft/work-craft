@@ -34,7 +34,6 @@ const allCommands = new Set<CommandId>([
   "pane.restart",
   "cursor.activate",
   "context.create",
-  "project.openTerminal",
   "navigator.shrink",
   "navigator.grow",
   "dialog.cancel",
@@ -62,7 +61,8 @@ test("common movement hints are hidden while application actions remain visible"
   const modalKeys = commandHints(initialRouterState, modal).map((hint) => hint.keys);
   expect(modalKeys).toContain("Hyper+r");
   expect(modalKeys).toContain("Hyper+q");
-  expect(modalKeys).toContain("n");
+  expect(modalKeys).toContain("leader+n");
+  expect(modalKeys).not.toContain("n");
   expect(modalKeys).not.toContain("Hyper+j");
   expect(modalKeys).not.toContain("Tab");
   const navigator = { ...terminalContext, focus: { region: "navigator" as const } };
@@ -210,7 +210,7 @@ test("composite browsing and activation stay local while contextual commands rou
   });
 
   expect(route({ name: "n" }, context("workspace"))).toBe("context.create");
-  expect(route({ name: "o" }, context("navigator"))).toBe("project.openTerminal");
+  expect(route({ name: "o" }, context("navigator"))).toBeUndefined();
   expect(route({ name: "left", ctrl: true }, context("navigator"))).toBe("navigator.shrink");
   expect(route({ name: "right", ctrl: true }, context("navigator"))).toBe("navigator.grow");
   for (const region of ["workspace", "category", "navigator", "tabs"] as const) {
@@ -249,9 +249,12 @@ test("modal policy allows reconnect/quit and native input, not background comman
     for (const name of ["j", "k", "up", "down", "return"]) {
       expect(routeKey(initialRouterState, { name }, context, 0).handled).toBe(false);
     }
-    for (const name of ["h", "j", "k", "l", "space"]) {
+    for (const name of ["h", "j", "k", "l"]) {
       expect(routeKey(initialRouterState, { name, ctrl: true }, context, 0).handled).toBe(false);
     }
+    expect(routeKey(initialRouterState, { name: "space", ctrl: true }, context, 0).handled).toBe(
+      dialog === "sessions",
+    );
     const pending = { ...initialRouterState, leaderStartedAt: 1 };
     expect(
       routeKey(pending, { name: "space", ctrl: true }, context, 2).state.leaderStartedAt,
@@ -264,7 +267,7 @@ test("session dialog traps keys and has its own scoped commands", () => {
   expect(route({ name: "j" }, dialogContext)).toBeUndefined();
   expect(route({ name: "up" }, dialogContext)).toBeUndefined();
   expect(route({ name: "return" }, dialogContext)).toBeUndefined();
-  expect(route({ name: "n" }, dialogContext)).toBe("context.create");
+  expect(routeKey(initialRouterState, { name: "n" }, dialogContext, 0).handled).toBe(false);
   expect(route({ name: "escape" }, dialogContext)).toBe("dialog.cancel");
   expect(route({ name: "q", hyper: true }, dialogContext)).toBe("client.quit");
 
@@ -277,6 +280,46 @@ test("session dialog traps keys and has its own scoped commands", () => {
   expect(route({ name: "j" }, createContext)).toBeUndefined();
   expect(routeKey(initialRouterState, { name: "j" }, createContext, 0).handled).toBe(false);
   expect(routeKey(initialRouterState, { name: "h" }, createContext, 0).handled).toBe(false);
+});
+
+test("chooser leader+n creates a session without stealing query n", () => {
+  const chooser = { ...terminalContext, dialog: "sessions" as const };
+  expect(routeKey(initialRouterState, { name: "n" }, chooser, 0).handled).toBe(false);
+  const prefix = routeKey(initialRouterState, { name: "space", ctrl: true }, chooser, 100);
+  expect(prefix.handled).toBe(true);
+  expect(prefix.state.leaderStartedAt).toBe(100);
+  const creation = routeKey(prefix.state, { name: "n" }, chooser, 101);
+  expect(creation.command).toBe("context.create");
+  expect(creation.state.leaderStartedAt).toBeNull();
+  expect(commandHints(prefix.state, chooser).map(({ keys }) => keys)).toContain("leader+n");
+  for (const name of ["s", "v", "r", "b"]) {
+    const invalid = routeKey(prefix.state, { name }, chooser, 101);
+    expect(invalid.handled).toBe(true);
+    expect(invalid.command).toBeUndefined();
+    expect(invalid.state.invalidMessage).toBe(`Invalid leader key: ${name}`);
+  }
+  const unavailable = { ...chooser, availableCommands: new Set<CommandId>() };
+  expect(routeKey(prefix.state, { name: "n" }, unavailable, 101).command).toBeUndefined();
+  expect(commandHints(prefix.state, unavailable)).toEqual([]);
+});
+
+test("chooser prefix retains normal Escape, Ctrl+C, reconnect and quit behavior", () => {
+  const chooser = { ...terminalContext, dialog: "sessions" as const };
+  const pending = { ...initialRouterState, leaderStartedAt: 100 };
+  const escape = routeKey(pending, { name: "escape" }, chooser, 101);
+  expect(escape.command).toBe("dialog.cancel");
+  expect(escape.state.leaderStartedAt).toBeNull();
+  const startup = { ...chooser, availableCommands: new Set<CommandId>(["context.create"]) };
+  const blocked = routeKey(pending, { name: "escape" }, startup, 101);
+  expect(blocked.handled).toBe(true);
+  expect(blocked.command).toBeUndefined();
+  expect(blocked.state.leaderStartedAt).toBeNull();
+  const clear = routeKey(pending, { name: "c", ctrl: true }, chooser, 101);
+  expect(clear.handled).toBe(false);
+  expect(clear.state.leaderStartedAt).toBeNull();
+  expect(clear.state.invalidMessage).toBeNull();
+  expect(routeKey(pending, { name: "r", hyper: true }, chooser, 101).command).toBe("client.reload");
+  expect(routeKey(pending, { name: "q", hyper: true }, chooser, 101).command).toBe("client.quit");
 });
 
 test("unavailable edge commands do not wrap or appear in hints", () => {

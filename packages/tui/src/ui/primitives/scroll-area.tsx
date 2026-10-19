@@ -184,6 +184,7 @@ export function ScrollArea({
   scrollbarOptions,
   verticalScrollbarOptions,
   horizontalScrollbarOptions,
+  contentOptions,
   scrollX = false,
   scrollY = true,
   onKeyDown,
@@ -381,6 +382,11 @@ export function ScrollArea({
       ref={handleRef}
       scrollX={scrollX}
       scrollY={scrollY}
+      contentOptions={{
+        // OpenTUI 0.5.14 keeps 100% height after the horizontal bar consumes a row.
+        ...(scrollX && scrollY ? { minHeight: 0 } : {}),
+        ...contentOptions,
+      }}
       border={border}
       borderStyle={
         borderStyle ??

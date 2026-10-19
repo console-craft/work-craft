@@ -5,28 +5,26 @@ import {
   categoriesForWorkspace,
   navigatorEntries,
   type NavigatorEntry,
-  projectIdForEntry,
+  rootIdForEntry,
   workspacesForSession,
 } from "@/navigation/model.ts";
-import type { NavigatorPreference } from "@/shell/layout.ts";
 import { paneIds } from "@/workbench/layout.ts";
 
-export type CreateKind = "session" | "workspace" | "project" | "item";
+export type CreateKind = "session" | "workspace" | "directory" | "generic-root" | "generic-child";
 
 export type ShellModelState = {
   activeSessionId: string | null;
   activeWorkspaceId: string | null;
   activeCategory: CategoryKind;
   activeNavigatorKey: string | null;
-  workspaceCursorId: string | null;
-  categoryCursor: CategoryKind;
   navigatorCursorKey: string | null;
   tabCursorId: string | null;
   focus: FocusTarget;
-  lastWorkbenchPaneId: string | null;
-  navigatorPreference: NavigatorPreference;
+  lastPaneByTab: Record<string, string>;
+  navigatorOpen: boolean;
   navigatorWidth: number;
-  expandedProjectIds: ReadonlySet<string>;
+  expandedRootIds: ReadonlySet<string>;
+  navigatorQuery: string;
 };
 
 export type ShellModel = {
@@ -42,17 +40,15 @@ export type ShellModel = {
   tabs: Snapshot["tabs"];
   activeTab: Snapshot["tabs"][number] | undefined;
   paneIds: string[];
-  sessionCursor: string | null;
   categoryIndex: number;
   navigatorActiveIndex: number;
   navigatorCursorIndex: number;
   tabActiveIndex: number;
   tabCursorIndex: number;
-  workspaceCursorIndex: number;
-  categoryCursorIndex: number;
-  sessionCursorIndex: number;
   activeCategoryTitle: string;
   cursorEntry: NavigatorEntry | undefined;
+  activeItem: Snapshot["items"][number] | undefined;
+  firstMatchId: string | undefined;
 };
 
 const FIXED_CATEGORIES: readonly { kind: CategoryKind; title: string }[] = [
@@ -67,7 +63,6 @@ const FIXED_CATEGORIES: readonly { kind: CategoryKind; title: string }[] = [
 export function deriveShellModel(input: {
   snapshot: Snapshot | null;
   state: ShellModelState;
-  sessionCursorId: string | null;
 }): ShellModel {
   const { snapshot, state } = input;
   const sessions = [...(snapshot?.sessions ?? [])].sort(
@@ -97,13 +92,21 @@ export function deriveShellModel(input: {
           snapshot,
           state.activeWorkspaceId,
           state.activeCategory,
-          state.expandedProjectIds,
+          state.expandedRootIds,
+          state.navigatorQuery,
+          process.env.HOME ?? "",
         );
-  const activeEntry = entries.find(({ key }) => key === state.activeNavigatorKey);
+  const activeItem = snapshot?.items.find(
+    (item) =>
+      `${item.parentId === null ? "root" : "item"}:${item.id}` === state.activeNavigatorKey &&
+      item.workspaceId === state.activeWorkspaceId &&
+      item.category === state.activeCategory,
+  );
+  const activeEntry = entries.find(({ id }) => id === activeItem?.id);
   const surface =
-    snapshot === null || activeEntry?.kind !== "item"
+    snapshot === null || activeItem === undefined
       ? undefined
-      : snapshot.surfaces.find(({ itemId }) => itemId === activeEntry.id);
+      : snapshot.surfaces.find(({ itemId }) => itemId === activeItem.id);
   const tabs = [...(snapshot?.tabs ?? [])]
     .filter(({ surfaceId }) => surfaceId === surface?.id)
     .sort((a, b) => a.position - b.position || a.id.localeCompare(b.id));
@@ -115,11 +118,6 @@ export function deriveShellModel(input: {
     state.activeCategory,
     state.activeNavigatorKey,
   ]);
-  const sessionCursor = sessions.some(({ id }) => id === input.sessionCursorId)
-    ? input.sessionCursorId
-    : sessions.some(({ id }) => id === state.activeSessionId)
-      ? state.activeSessionId
-      : (sessions[0]?.id ?? null);
 
   return {
     navigationKey,
@@ -130,19 +128,17 @@ export function deriveShellModel(input: {
     categories,
     entries,
     activeEntry,
+    activeItem,
+    firstMatchId: entries.find((entry) => entry.matches)?.id,
     surface,
     tabs,
     activeTab,
     paneIds: paneIds(activeTab?.layout ?? null),
-    sessionCursor,
     categoryIndex: categories.findIndex(({ kind }) => kind === state.activeCategory),
     navigatorActiveIndex: entries.findIndex(({ key }) => key === state.activeNavigatorKey),
     navigatorCursorIndex: entries.findIndex(({ key }) => key === state.navigatorCursorKey),
     tabActiveIndex: tabs.findIndex(({ id }) => id === activeTab?.id),
     tabCursorIndex: tabs.findIndex(({ id }) => id === state.tabCursorId),
-    workspaceCursorIndex: workspaces.findIndex(({ id }) => id === state.workspaceCursorId),
-    categoryCursorIndex: categories.findIndex(({ kind }) => kind === state.categoryCursor),
-    sessionCursorIndex: sessions.findIndex(({ id }) => id === sessionCursor),
     activeCategoryTitle:
       categories.find(({ kind }) => kind === state.activeCategory)?.title ?? "Work",
     cursorEntry: entries.find(({ key }) => key === state.navigatorCursorKey),
@@ -151,42 +147,58 @@ export function deriveShellModel(input: {
 
 export function resolveShellFocus(input: {
   focus: FocusTarget;
-  lastWorkbenchPaneId: string | null;
+  rememberedPaneId: string | null;
   paneIds: readonly string[];
+  runningPaneIds: readonly string[];
+  reactivatePaneIds?: readonly string[];
   undersized: boolean;
 }): { focus: FocusTarget; focusedPaneId: string | null } {
+  const focusedPaneId =
+    input.focus.region === "workbench" && input.paneIds.includes(input.focus.paneId)
+      ? input.focus.paneId
+      : input.paneIds.includes(input.rememberedPaneId ?? "")
+        ? input.rememberedPaneId
+        : (input.paneIds[0] ?? null);
   const focus =
     input.focus.region === "workbench" &&
-    (input.undersized || !input.paneIds.includes(input.focus.paneId))
+    (input.undersized ||
+      !input.paneIds.includes(input.focus.paneId) ||
+      !(
+        input.focus.control === "reactivate"
+          ? (input.reactivatePaneIds ?? [])
+          : input.runningPaneIds
+      ).includes(input.focus.paneId))
       ? { region: "tabs" as const }
       : input.focus;
-  const focusedPaneId =
-    focus.region === "workbench"
-      ? focus.paneId
-      : input.paneIds.includes(input.lastWorkbenchPaneId ?? "")
-        ? input.lastWorkbenchPaneId
-        : (input.paneIds[0] ?? null);
   return { focus, focusedPaneId };
 }
 
-export function projectIdForShellContext(
+export function genericRootIdForShellContext(
   state: ShellModelState,
   snapshot: Snapshot,
 ): string | undefined {
-  if (state.activeWorkspaceId === null) {
+  if (state.activeWorkspaceId === null || state.activeCategory === "implementation") {
     return undefined;
   }
   const entries = navigatorEntries(
     snapshot,
     state.activeWorkspaceId,
     state.activeCategory,
-    state.expandedProjectIds,
+    state.expandedRootIds,
   );
-  if (state.focus.region === "navigator") {
-    return projectIdForEntry(entries.find((entry) => entry.key === state.navigatorCursorKey));
-  }
-  const itemId = state.activeNavigatorKey?.startsWith("item:")
-    ? state.activeNavigatorKey.slice("item:".length)
+  const entry = entries.find(
+    (entry) =>
+      entry.key ===
+      (state.focus.region === "navigator" ? state.navigatorCursorKey : state.activeNavigatorKey),
+  );
+  const active = snapshot.items.find(
+    (item) => `${item.parentId === null ? "root" : "item"}:${item.id}` === state.activeNavigatorKey,
+  );
+  const rootId =
+    state.focus.region === "navigator" ? rootIdForEntry(entry) : (active?.parentId ?? active?.id);
+  return snapshot.items.some(
+    (item) => item.id === rootId && item.kind === "generic" && !item.archived,
+  )
+    ? rootId
     : undefined;
-  return snapshot.items.find(({ id }) => id === itemId)?.projectId;
 }

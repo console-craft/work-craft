@@ -1,5 +1,58 @@
 # Work Craft Architecture Design
 
+## Phase 5 Acceptance / Phase 6 Consolidation Checkpoint (2026-10-19)
+
+The approved [Phase 5 companion](./2026-10-18-tui-component-adoption-phase-5-design.md)
+is implemented without changing the single-daemon/disposable-client boundary,
+schema or public command/result shapes. The daemon samples the registered shell
+PID's live cwd before an omitted-cwd split; explicit API/CLI overrides remain valid.
+Unknown/invalid cwd rejects before mutation. Linux uses procfs; macOS uses a
+one-second/64-KiB bounded lsof probe. A successful split transaction equalizes
+direction-aware shares throughout only its tab, regardless of client dimensions.
+Native terminal renderers remain the intentional component-library exception;
+Tabs and bottom Alerts do not own daemon runtimes. Reactivate uses the existing
+exact-pane explicit restart operation, preserving pane identity/history.
+Phase 5 is accepted for progression after independent whole-session/follow-up
+review and the split, Hyper+n and explicit-restart focus repairs. The accepted
+Oct 19 restyle/status repair passed 1,398 tests, zero failures, build and compiled
+smoke on macOS. Output is transparent/undimmed; current geometry, warning colors
+and intentional focus/measurement/event bridges are recorded in the canonical
+[adoption inventory](./2026-10-13-tui-component-adoption-design.md#adopted-components-and-intentional-native-boundaries).
+Phase 6 implementation and connected review are complete, with no findings or
+production changes. Its fresh macOS full check passed 1,399 tests, zero failures,
+lint/format/types, build and compiled smoke, exit `0`. The user accepted all
+component-adoption work as complete on 2026-10-19. Its tests inject theme context, not a new runtime
+preference. No ownership/schema/API changes, Stage 2/shared navigation or additional
+Stage 3 operations are introduced. Linux live-cwd, physical-terminal contrast and
+long-running listener stability are not certified; existing warnings remain debt.
+Earlier dated checkpoints below are historical, not current progression gates.
+
+## Repository-group Follow-up Checkpoint (2026-10-17)
+
+The approved [navigation follow-up](./2026-10-17-coding-navigation-followup-design.md)
+implements workspace-scoped canonical Git-common-directory groups in schema 4:
+primary checkout parent, linked checkout children, exact requested-item/root IDs,
+and metadata-only CLI/API registration. No schema migration, independent-surface
+merge, or automatic reset is provided. The daemon still owns discovery, records
+and runtimes; disposable clients retain their existing boundaries. TUI entry,
+local tab focus and stopped-pane input/restart use the shell's guarded handoff.
+Fresh verification is recorded with the follow-up, not inferred from the older
+checkpoint below. Independent implementation review and its regression-tested
+fixes are complete; human/physical-terminal acceptance remains pending. Shared
+navigation and Phase 5 remain out of scope.
+
+## Coding Implementation Checkpoint (2026-10-16)
+
+Schema 3 uses one validated unified items collection. Roots and children own surfaces directly; directory registration/discovery/archive are daemon-owned, with one coalesced five-second refresh lifecycle. Old development schemas are rejected with an explicit-reset instruction, never silently deleted. CLI/TUI are connected disposable clients. See the Coding Navigator spec for current verification progress; human acceptance and Stage 2 remain pending. Historical first-slice records below are preserved.
+
+## Target Amendment And Delivery Status
+
+The accepted [Coding Navigator design](./2026-10-15-coding-navigator-design.md)
+updates the target item model and TUI error presentation below. These changes
+are implemented under the separately approved plan, with automated checks/review
+complete and human acceptance pending. The historical first vertical slice remains recorded later
+in this document. Shared session navigation remains architectural Stage 2.
+
 ## Goal
 
 Build a local-first terminal application shell that combines structured work organization with persistent terminal workspaces. A user navigates high-level work categories and opens items into execution surfaces containing tabs, terminal panes, and built-in data views.
@@ -15,12 +68,11 @@ server
 └── session
     └── workspace                    Personal / Work / Client A
         └── category                 one of the six fixed categories
-            └── project
-                └── item
-                    └── execution surface
-                        └── tab
-                            └── split tree
-                                └── pane
+            └── work items           roots and optional one-level children
+                └── execution surface (optional, at either item level)
+                    └── tab
+                        └── split tree
+                            └── pane
 ```
 
 ### Sessions
@@ -44,17 +96,25 @@ Every workspace has the same six fixed top-level categories:
 
 All six are real categories, but they intentionally do not share one uniform item schema.
 
-### Projects And Items
+### Work Items
 
-Projects and items share a small common envelope. Category-specific fields live in discriminated JSON payloads until a field needs indexed querying or sorting, at which point it can become a SQLite column.
+Work items share a small common envelope with an optional parent and at most one
+child level. Parent and child belong to the same workspace/category. In Coding,
+a Project is a root directory item and a worktree is its child item, not a separate
+Project entity. Other categories are not forced into artificial Projects.
+Category-specific fields live in discriminated JSON payloads until a field needs
+indexed querying or sorting, at which point it can become a SQLite column.
 
 ```ts
 type Item = {
   id: ItemId;
-  projectId: ProjectId;
+  workspaceId: WorkspaceId;
+  category: CategoryKind;
+  parentId: ItemId | null;
   kind: ItemKind;
   title: string;
   position: number;
+  archived: boolean;
   data: CategorySpecificData;
 };
 ```
@@ -69,9 +129,14 @@ An item may own one execution surface. A surface contains tabs; each tab contain
 
 Surfaces are created lazily. Captured or informational items do not need one until the user actively opens them for work.
 
-Every category supports a generic surface item in addition to its specialized item types. The `Open terminal here` action creates or reuses a generic surface item and adds a terminal pane. This permanent escape hatch allows existing CLI and TUI programs to provide functionality before Work Craft has a specialized screen for it.
+Non-Coding categories retain generic work items until their specialized experiences
+are designed. Coding uses directory/worktree items and their own terminal surfaces,
+not a second generic item kind. Opening an item's terminal creates or reuses its
+optional surface. This escape hatch allows existing CLI and TUI programs to provide
+functionality before a specialized screen exists; surface is not an item kind.
 
-Surfaces remain item-owned. Categories, projects, and other navigation nodes do not own PTYs directly.
+Surfaces remain item-owned at either hierarchy level. Categories do not own PTYs
+directly, and a Coding Project needs no synthetic terminal child to own a surface.
 
 ### Panes
 
@@ -112,7 +177,8 @@ The initial product is local-only on macOS and Linux. Work Craft does not implem
 
 The server is the sole authority for:
 
-- sessions, workspaces, categories, projects, and items;
+- sessions, workspaces, categories, and unified work items;
+- directory registration, read-only Git worktree discovery, availability, and archival metadata;
 - execution surfaces, tabs, panes, and split layouts;
 - SQLite persistence and migrations;
 - PTYs, child processes, output buffers, and process status;
@@ -124,8 +190,8 @@ The server is the sole authority for:
 
 The React/OpenTUI client:
 
-- uses native OpenTUI primitives with a small local theme foundation while Work Craft behavior remains in application code;
-- renders category-specific navigation and project/item screens;
+- composes local UI components over OpenTUI with theme contracts in `ui/`; intentional native boundaries are recorded in the adoption inventory, while Work Craft behavior remains application-owned;
+- renders category-specific navigation and root/child work-item screens;
 - renders execution surfaces and terminal output;
 - sends semantic commands rather than mutating state locally;
 - applies ordered server updates;
@@ -151,7 +217,7 @@ Bun server
 │   └── WebSocket stream
 ├── domain
 │   ├── sessions and navigation
-│   ├── projects and items
+│   ├── work items and directory discovery
 │   └── surfaces and layouts
 ├── runtime
 │   └── PTYs and output buffers
@@ -268,7 +334,16 @@ No automatic process restart loop runs after the one cold-recovery attempt. Furt
 - A failed SQLite mutation rejects the command without applying its in-memory counterpart.
 - A failed database migration stops with an actionable error and never silently resets data.
 - A slow client is disconnected and resynchronized rather than blocking runtime output.
-- A failed external integration reports its command error in the relevant view and does not retry indefinitely or crash the server.
+- A failed external integration keeps its source identity and persistent failure
+  indicator, reports its failure in the TUI status bar, and does not retry indefinitely
+  or crash the server. Repeated identical discovery failures are deduplicated.
+
+TUI failure ownership and message placement are separate: Work Craft operational
+messages use the source-labelled status bar; client/server field validation stays
+beside its field. Unavailable items and failed panes retain compact local indicators,
+not duplicate full error banners. Reporting never steals focus or unmounts unrelated
+panes. Child-program output stays in its terminal; CLI and pre-TUI fatal failures
+use stderr. See the Coding design's error policy for the approved scope.
 
 ## Verification Strategy
 
@@ -283,7 +358,12 @@ The initial suite stays small and exercises architectural boundaries:
 
 Broad mock infrastructure, exhaustive endpoint permutations, and visual snapshot tests are excluded initially.
 
-## First Vertical Slice
+## First Vertical Slice (Historical)
+
+This records the pre-unified-item implementation, not a requirement to retain
+separate Projects or the old surface item kind. The user permits discarding its
+saved development state for the Coding redesign; no normal-startup silent database
+reset or deletion of source work/project files is authorized by that exception.
 
 The first useful implementation contains:
 

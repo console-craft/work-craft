@@ -20,6 +20,34 @@ export type LayoutNode =
 
 export type ShellRestorePolicy = { type: "shell"; executable: string; args: string[] };
 
+type TargetData = {
+  path: string;
+  branch: string | null;
+  availability: "available" | "unavailable";
+  failureReason?: string;
+};
+export type DirectoryData = TargetData & {
+  isGitCheckout: boolean;
+  gitCommonDir: string | null;
+  discoveryError?: string;
+};
+export type WorktreeData = TargetData;
+type WorkItemBase = {
+  id: string;
+  workspaceId: string;
+  category: CategoryKind;
+  parentId: string | null;
+  title: string;
+  position: number;
+  archived: boolean;
+};
+export type WorkItem = WorkItemBase &
+  (
+    | { kind: "directory"; data: DirectoryData }
+    | { kind: "worktree"; data: WorktreeData }
+    | { kind: "generic"; data: Record<string, unknown> }
+  );
+
 export type Snapshot = {
   epoch: string;
   revision: number;
@@ -27,22 +55,7 @@ export type Snapshot = {
   workspaces: { id: string; name: string }[];
   sessionWorkspaces: { sessionId: string; workspaceId: string; position: number }[];
   categories: { workspaceId: string; kind: CategoryKind; title: string; position: number }[];
-  projects: {
-    id: string;
-    workspaceId: string;
-    category: CategoryKind;
-    name: string;
-    position: number;
-  }[];
-  items: {
-    id: string;
-    projectId: string;
-    kind: "generic" | "surface";
-    title: string;
-    position: number;
-    data: Record<string, unknown>;
-    provenanceItemId: string | null;
-  }[];
+  items: WorkItem[];
   surfaces: { id: string; itemId: string; activeTabId: string | null }[];
   tabs: {
     id: string;
@@ -71,6 +84,7 @@ export type CommandResult = {
   sessionId?: string;
   workspaceId?: string;
   itemId?: string;
+  rootItemId?: string;
   surfaceId?: string;
   tabId?: string;
   paneId?: string;
@@ -87,16 +101,17 @@ export type Command =
   | { type: "session.workspace.add"; sessionId: string; workspaceId: string }
   | { type: "session.workspace.remove"; sessionId: string; workspaceId: string }
   | { type: "workspace.create"; sessionId: string; name: string }
-  | { type: "project.create"; workspaceId: string; category: CategoryKind; name: string }
+  | { type: "directory.register"; workspaceId: string; path: string }
   | {
       type: "item.create";
-      projectId: string;
-      kind: "generic" | "surface";
+      workspaceId: string;
+      category: CategoryKind;
+      parentId?: string;
       title: string;
       data?: Record<string, unknown>;
     }
   | { type: "surface.ensure"; itemId: string; cwd?: string }
-  | { type: "surface.ensureHere"; projectId: string; cwd?: string }
+  | { type: "item.setArchived"; itemId: string; archived: boolean }
   | { type: "tab.create"; surfaceId: string; title: string }
   | { type: "surface.selectTab"; surfaceId: string; tabId: string }
   | { type: "pane.split"; paneId: string; direction: "horizontal" | "vertical"; cwd?: string }
@@ -113,8 +128,13 @@ export type ServerMessage =
   | { type: "terminal.output"; epoch: string; paneId: string; cursor: number; data: string }
   | { type: "process.status"; epoch: string; paneId: string; status: PaneStatus; error?: string };
 
+export type ValidationField = "name" | "title" | "path";
+
 export class ProtocolError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly field?: ValidationField,
+  ) {
     super(message);
     this.name = "ProtocolError";
   }
@@ -138,7 +158,10 @@ function objectValue(value: unknown): Record<string, unknown> {
 
 function stringValue(value: unknown, field: string, nonBlank = false): string {
   if (typeof value !== "string" || (nonBlank && value.trim() === "")) {
-    throw new ProtocolError(`${field} must be ${nonBlank ? "a non-blank" : "a"} string`);
+    throw new ProtocolError(
+      `${field} must be ${nonBlank ? "a non-blank" : "a"} string`,
+      ["name", "title", "path"].includes(field) ? (field as ValidationField) : undefined,
+    );
   }
   return value;
 }
@@ -203,22 +226,26 @@ export function parseCommand(value: unknown): Command {
         sessionId: idValue(input.sessionId, "sessionId"),
         name: stringValue(input.name, "name", true),
       };
-    case "project.create":
+    case "directory.register":
       return {
         type,
         workspaceId: idValue(input.workspaceId, "workspaceId"),
-        category: categoryValue(input.category),
-        name: stringValue(input.name, "name", true),
+        path: stringValue(input.path, "path", true),
       };
     case "item.create": {
-      if (input.kind !== "generic" && input.kind !== "surface") {
-        throw new ProtocolError("kind must be generic or surface");
+      if (input.kind !== undefined || input.projectId !== undefined) {
+        throw new ProtocolError("item.create accepts generic items only, without a supplied kind");
+      }
+      const category = categoryValue(input.category);
+      if (category === "implementation") {
+        throw new ProtocolError("Coding items must be registered directories");
       }
       const data = input.data === undefined ? undefined : objectValue(input.data);
       return {
         type,
-        projectId: idValue(input.projectId, "projectId"),
-        kind: input.kind,
+        workspaceId: idValue(input.workspaceId, "workspaceId"),
+        category,
+        ...(input.parentId === undefined ? {} : { parentId: idValue(input.parentId, "parentId") }),
         title: stringValue(input.title, "title", true),
         ...(data === undefined ? {} : { data }),
       };
@@ -229,11 +256,14 @@ export function parseCommand(value: unknown): Command {
         itemId: idValue(input.itemId, "itemId"),
         ...(input.cwd === undefined ? {} : { cwd: optionalString(input.cwd, "cwd") }),
       };
-    case "surface.ensureHere":
+    case "item.setArchived":
+      if (typeof input.archived !== "boolean") {
+        throw new ProtocolError("archived must be boolean");
+      }
       return {
         type,
-        projectId: idValue(input.projectId, "projectId"),
-        ...(input.cwd === undefined ? {} : { cwd: optionalString(input.cwd, "cwd") }),
+        itemId: idValue(input.itemId, "itemId"),
+        archived: input.archived,
       };
     case "tab.create":
       return {

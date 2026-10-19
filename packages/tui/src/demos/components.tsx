@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  type ReactNode,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 
 import { DemoPage } from "@/demos/demo-page";
 import { useDemoTheme } from "@/demos/use-demo-theme";
@@ -45,6 +52,7 @@ import {
   EmptyStateTitle,
 } from "@/ui/components/empty-state";
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/ui/components/field";
+import { HorizontalScroller } from "@/ui/components/horizontal-scroller";
 import { List, ListItem } from "@/ui/components/list";
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "@/ui/components/menu";
 import { Progress } from "@/ui/components/progress";
@@ -61,6 +69,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/ui/components/tabs";
 import { Toaster } from "@/ui/components/toast";
 import { Button } from "@/ui/controls/button";
 import { Input } from "@/ui/controls/input";
+import { Toggle, ToggleGroup, ToggleGroupContext } from "@/ui/controls/toggle";
 import { useNativeFocus } from "@/ui/focus-manager";
 import { symbols } from "@/ui/icons/symbols";
 import { createNotificationStore } from "@/ui/notifications";
@@ -80,25 +89,6 @@ export function ComponentsDemo() {
     </ThemeProvider>
   );
 }
-
-/*
-  1. Card - DONE
-  2. Badge - DONE
-  3. Alert - DONE
-  4. Spinner - DONE
-  5. Progress - DONE
-  6. Collapsible - DONE
-  7. Accordion - DONE
-  8. Tabs - DONE
-  9. Field - DONE
-  10. EmptyState - DONE
-  11. Dialog - DONE
-  12. Menu - DONE
-  13. Command - DONE
-  14. Toast - DONE
-  15. Table - DONE
-   16. List - DONE
- */
 
 function Content() {
   const theme = useTheme();
@@ -394,6 +384,24 @@ function Content() {
         </TabsContent>
         <TabsContent value="settings">
           <Text>Project settings</Text>
+        </TabsContent>
+      </Tabs>
+      <Tabs id="tabs-overflow-demo" defaultValue="overview" width={40} maxWidth="100%">
+        <TabsList id="tabs-overflow-list">
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="implementation">Implementation details</TabsTrigger>
+          <TabsTrigger id="tabs-overflow-long" value="research">
+            研究 workspace with a label longer than this viewport
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="overview">
+          <Text>Project overview</Text>
+        </TabsContent>
+        <TabsContent value="implementation">
+          <Text>Implementation details</Text>
+        </TabsContent>
+        <TabsContent value="research">
+          <Text>Research workspace</Text>
         </TabsContent>
       </Tabs>
       <Card
@@ -731,7 +739,76 @@ function Content() {
       <Text fg="primary">TABLES</Text>
       <TableDemo />
       <ListDemo />
+      <HorizontalScrollerDemo />
     </DemoPage>
+  );
+}
+
+const scrollerLabels = [
+  "Inbox",
+  "Today",
+  "Design",
+  "Implementation",
+  "Collaboration",
+  "Operations",
+  "研究 workspace with a label longer than this viewport",
+] as const;
+
+function DemoScrollerToggles(): ReactNode {
+  const group = useContext(ToggleGroupContext);
+  return (
+    <HorizontalScroller
+      id="horizontal-reveal"
+      flexGrow={1}
+      flexShrink={1}
+      minWidth={0}
+      revealId={
+        group?.focused && group.activeValue
+          ? `horizontal-demo-item:${group.activeValue}`
+          : undefined
+      }
+    >
+      {scrollerLabels.map((label) => (
+        <Toggle key={label} id={`horizontal-demo-item:${label}`} value={label} height={1}>
+          {label}
+        </Toggle>
+      ))}
+    </HorizontalScroller>
+  );
+}
+
+function HorizontalScrollerDemo(): ReactNode {
+  const [selected, setSelected] = useState<string | undefined>("Inbox");
+  return (
+    <Stack id="horizontal-scroller-demo">
+      <Text fg="primary">HORIZONTAL SCROLLER</Text>
+      <Text variant="muted">Fits: no arrows</Text>
+      <HorizontalScroller id="horizontal-fit" width={40} maxWidth="100%">
+        <Text wrapMode="none" flexShrink={0}>
+          Everything fits
+        </Text>
+      </HorizontalScroller>
+      <Text variant="muted">Overflow: wheel or arrows; focus stays put</Text>
+      <HorizontalScroller id="horizontal-text" width={40} maxWidth="100%">
+        <Text id="horizontal-text-label" wrapMode="none" flexShrink={0}>
+          研究 workspace — complete labels remain readable with arrows and wheel input
+        </Text>
+      </HorizontalScroller>
+      <Text variant="muted">Reveal: Tab here, browse with ←/→, activate with Enter/Space</Text>
+      <ToggleGroup
+        id="horizontal-reveal-group"
+        type="single"
+        value={selected}
+        onValueChange={setSelected}
+        width={40}
+        maxWidth="100%"
+        height={1}
+        gap={0}
+      >
+        <DemoScrollerToggles />
+      </ToggleGroup>
+      <Text id="horizontal-demo-selected">{`Selected: ${selected ?? "None"}`}</Text>
+    </Stack>
   );
 }
 

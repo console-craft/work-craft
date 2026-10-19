@@ -1,12 +1,18 @@
 import { closeSync, openSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import WebSocket from "ws";
 
 import { encodeBytes } from "./api/protocol.ts";
-import type { Command, CommandResponse, ServerMessage, Snapshot } from "./api/protocol.ts";
+import type {
+  Command,
+  CommandResponse,
+  ServerMessage,
+  Snapshot,
+  ValidationField,
+} from "./api/protocol.ts";
 import type { Health } from "./application/app.ts";
 import { resolvePaths } from "./daemon/paths.ts";
 
@@ -18,7 +24,36 @@ export type {
   LayoutNode,
   ServerMessage,
   Snapshot,
+  WorkItem,
+  DirectoryData,
+  WorktreeData,
+  ValidationField,
 } from "./api/protocol.ts";
+
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly field?: ValidationField,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+/** Resolve in the calling client, never in the daemon's unrelated cwd. */
+export function resolveClientPath(path: string, cwd = process.cwd()): string {
+  if (
+    path.trim() === "" ||
+    path.includes("\0") ||
+    (path.startsWith("~") && path !== "~" && !path.startsWith("~/"))
+  ) {
+    throw new ApiError("Enter a valid path.", "path");
+  }
+  return resolve(
+    cwd,
+    path === "~" ? homedir() : path.startsWith("~/") ? join(homedir(), path.slice(2)) : path,
+  );
+}
 
 export type StreamHandlers = {
   onMessage(message: ServerMessage): void;
@@ -56,7 +91,15 @@ async function requestJson(socketPath: string, path: string, init?: RequestInit)
       typeof body === "object" && body !== null && "error" in body && typeof body.error === "string"
         ? body.error
         : `Request failed with status ${response.status}`;
-    throw new Error(message);
+    const field =
+      typeof body === "object" &&
+      body !== null &&
+      "field" in body &&
+      typeof body.field === "string" &&
+      ["name", "title", "path"].includes(body.field)
+        ? (body.field as ValidationField)
+        : undefined;
+    throw field === undefined ? new Error(message) : new ApiError(message, field);
   }
   return body;
 }

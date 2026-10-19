@@ -145,6 +145,10 @@ export function DialogClose({ onPress, ...props }: DialogCloseProps) {
 
 export interface DialogContentProps extends Omit<StackProps, "focusable"> {
   initialFocusId?: string;
+  /** Vetoes queued restoration when the caller owns a deliberate focus handoff. */
+  canRestoreFocus?(): boolean;
+  /** Cell margins around the entire overlay, including its backdrop. Defaults to full-screen. */
+  overlayMargins?: { top?: number; right?: number; bottom?: number; left?: number };
 }
 
 function resolveWidth(width: number | `${number}%`, availableWidth: number): number {
@@ -157,6 +161,8 @@ export function DialogContent({
   children,
 
   initialFocusId,
+  canRestoreFocus,
+  overlayMargins = {},
 
   width = "100%",
   maxWidth = 60,
@@ -171,8 +177,12 @@ export function DialogContent({
 }: DialogContentProps) {
   const renderer = useRenderer();
   const dimensions = useTerminalDimensions();
-  const overlayPadding = 1;
-  const availableWidth = Math.max(0, dimensions.width - overlayPadding * 2);
+  const { top = 0, right = 0, bottom = 0, left = 0 } = overlayMargins;
+  const overlayWidth = Math.max(0, dimensions.width - left - right);
+  const overlayHeight = Math.max(0, dimensions.height - top - bottom);
+  const overlayPaddingX = Math.min(1, Math.floor(overlayWidth / 2));
+  const overlayPaddingY = Math.min(1, Math.floor(overlayHeight / 2));
+  const availableWidth = Math.max(0, overlayWidth - overlayPaddingX * 2);
   // Fractional containing widths can make OpenTUI's measured editors exceed their parent.
   const cellWidth = width === "auto" ? width : Math.round(resolveWidth(width, availableWidth));
   const cellMaxWidth =
@@ -201,6 +211,8 @@ export function DialogContent({
   );
 
   const contentRef = useRef<BoxRenderable | null>(null);
+  const canRestoreFocusRef = useRef(canRestoreFocus);
+  canRestoreFocusRef.current = canRestoreFocus;
 
   const setContentRef = useCallback(
     (node: BoxRenderable | null) => {
@@ -231,7 +243,11 @@ export function DialogContent({
         assignRef(ref, null);
 
         queueMicrotask(() => {
-          if (restoreTarget && isEligibleFocusTarget(restoreTarget, renderer.root)) {
+          if (
+            (canRestoreFocusRef.current?.() ?? true) &&
+            restoreTarget &&
+            isEligibleFocusTarget(restoreTarget, renderer.root)
+          ) {
             focusRenderable(renderer, restoreTarget);
           }
         });
@@ -256,15 +272,18 @@ export function DialogContent({
 
   return createPortal(
     <Box
+      // OpenTUI clamps zero-sized renderables to one cell; hide an exhausted overlay area.
+      visible={overlayWidth > 0 && overlayHeight > 0}
       position="absolute"
-      top={0}
-      left={0}
-      width="100%"
-      height="100%"
+      top={top}
+      left={left}
+      width={overlayWidth}
+      height={overlayHeight}
       alignItems="center"
       justifyContent="center"
-      paddingX={overlayPadding}
-      paddingY={overlayPadding}
+      paddingX={overlayPaddingX}
+      paddingY={overlayPaddingY}
+      overflow="hidden"
       zIndex={1000}
     >
       <Box

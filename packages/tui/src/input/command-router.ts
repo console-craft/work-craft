@@ -11,6 +11,7 @@ export type CommandId =
   | "navigator.previous"
   | "navigator.next"
   | "navigator.toggle"
+  | "navigator.dismiss"
   | "tab.previous"
   | "tab.next"
   | "tab.create"
@@ -23,7 +24,7 @@ export type CommandId =
   | "pane.restart"
   | "cursor.activate"
   | "context.create"
-  | "project.openTerminal"
+  | "item.archive"
   | "navigator.shrink"
   | "navigator.grow"
   | "dialog.cancel";
@@ -45,9 +46,12 @@ function legacyCtrlName(key: KeyLike): "h" | "j" | undefined {
 
 export type CommandContext = {
   focus: FocusTarget;
-  dialog?: "sessions" | "create";
+  dialog?: "sessions" | "create" | "archive";
   connected: boolean;
   availableCommands: ReadonlySet<CommandId>;
+  navigatorControl?: "filter" | "results";
+  drawerOpen?: boolean;
+  resizeBlocked?: boolean;
 };
 
 export type RouterState = {
@@ -87,6 +91,19 @@ type CommandDefinition = CommandHint & {
 };
 
 const COMMANDS: readonly CommandDefinition[] = [
+  {
+    id: "navigator.dismiss",
+    keys: "Escape",
+    label: "Close navigator",
+    routes: [{ kind: "plain", names: ["escape"] }],
+  },
+  {
+    id: "item.archive",
+    keys: "a",
+    label: "Archive",
+    durable: true,
+    routes: [{ kind: "plain", names: ["a"], scopes: ["navigator"] }],
+  },
   {
     id: "focus.left",
     showInHints: false,
@@ -218,17 +235,13 @@ const COMMANDS: readonly CommandDefinition[] = [
     id: "context.create",
     keys: "n",
     label: "Create",
-    routes: [
-      { kind: "plain", names: ["n"], scopes: ["session", "workspace", "navigator"] },
-      { kind: "plain", names: ["n"], dialogs: ["sessions"] },
-    ],
+    routes: [{ kind: "plain", names: ["n"], scopes: ["session", "workspace", "navigator"] }],
   },
   {
-    id: "project.openTerminal",
-    keys: "o",
-    label: "Open terminal",
-    durable: true,
-    routes: [{ kind: "plain", names: ["o"], scopes: ["navigator"] }],
+    id: "context.create",
+    keys: "leader+n",
+    label: "Create",
+    routes: [{ kind: "leader", names: ["n"], dialogs: ["sessions"] }],
   },
   {
     id: "navigator.shrink",
@@ -248,7 +261,7 @@ const COMMANDS: readonly CommandDefinition[] = [
     id: "dialog.cancel",
     keys: "Escape",
     label: "Cancel",
-    routes: [{ kind: "plain", names: ["escape"], dialogs: ["sessions", "create"] }],
+    routes: [{ kind: "plain", names: ["escape"], dialogs: ["sessions", "create", "archive"] }],
   },
 ];
 
@@ -264,6 +277,15 @@ function isPlain(key: KeyLike): boolean {
 }
 
 function routeMatches(route: Route, key: KeyLike, context: CommandContext): boolean {
+  if (
+    context.focus.region === "navigator" &&
+    (context.navigatorControl ?? context.focus.control) === "filter" &&
+    route.scopes?.includes("navigator") &&
+    route.kind !== "leader" &&
+    route.kind !== "hyper"
+  ) {
+    return false;
+  }
   const legacyCtrl = legacyCtrlName(key);
   if (!route.names.includes(legacyCtrl ?? key.name.toLowerCase())) {
     return false;
@@ -291,6 +313,18 @@ function routeMatches(route: Route, key: KeyLike, context: CommandContext): bool
 }
 
 function available(definition: CommandDefinition, context: CommandContext): boolean {
+  if (context.resizeBlocked && !allowedUnderModal(definition.id)) {
+    return false;
+  }
+  if (definition.id === "navigator.dismiss" && !context.drawerOpen) {
+    return false;
+  }
+  if (
+    context.drawerOpen &&
+    (definition.id.startsWith("tab.") || definition.id.startsWith("pane."))
+  ) {
+    return false;
+  }
   return context.availableCommands.has(definition.id) && (!definition.durable || context.connected);
 }
 
@@ -314,6 +348,9 @@ function commandFor(
   context: CommandContext,
 ): { definition: CommandDefinition; allowed: boolean } | undefined {
   for (const definition of COMMANDS) {
+    if (definition.id === "navigator.dismiss" && !context.drawerOpen) {
+      continue;
+    }
     if (
       definition.routes.some((route) => route.kind === kind && routeMatches(route, key, context))
     ) {
@@ -324,6 +361,7 @@ function commandFor(
 }
 
 function dialogCommandFor(
+  kind: "plain" | "leader",
   key: KeyLike,
   context: CommandContext,
 ): { definition: CommandDefinition; allowed: boolean } | undefined {
@@ -331,9 +369,7 @@ function dialogCommandFor(
     if (
       definition.routes.some(
         (route) =>
-          route.kind === "plain" &&
-          route.dialogs !== undefined &&
-          routeMatches(route, key, context),
+          route.kind === kind && route.dialogs !== undefined && routeMatches(route, key, context),
       )
     ) {
       return { definition, allowed: available(definition, context) };
@@ -361,6 +397,57 @@ function invalidLeader(state: RouterState, key: KeyLike, now: number): RouteResu
   );
 }
 
+function isLeaderPrefix(key: KeyLike): boolean {
+  return (
+    key.name === "space" &&
+    key.ctrl === true &&
+    !isHyperKey(key) &&
+    !key.meta &&
+    !key.option &&
+    !key.shift &&
+    !key.super
+  );
+}
+
+function routeDialogKey(
+  state: RouterState,
+  key: KeyLike,
+  context: CommandContext,
+  now: number,
+): RouteResult {
+  const cleared = { ...state, leaderStartedAt: null };
+  const dialogMatch = dialogCommandFor("plain", key, context);
+  if (dialogMatch !== undefined) {
+    return result(cleared, true, dialogMatch.allowed ? dialogMatch.definition.id : undefined);
+  }
+  const globalMatch = commandFor("hyper", key, context);
+  if (globalMatch !== undefined) {
+    const id = globalMatch.definition.id;
+    return result(cleared, true, allowedUnderModal(id) && globalMatch.allowed ? id : undefined);
+  }
+  if (
+    context.dialog !== "sessions" ||
+    (key.name === "c" &&
+      key.ctrl &&
+      !key.shift &&
+      !key.meta &&
+      !key.option &&
+      !key.super &&
+      !key.hyper)
+  ) {
+    return result(cleared, false);
+  }
+  if (state.leaderStartedAt !== null) {
+    const match = dialogCommandFor("leader", key, context);
+    return match?.allowed
+      ? result(cleared, true, match.definition.id)
+      : invalidLeader(state, key, now);
+  }
+  return isLeaderPrefix(key)
+    ? result({ ...state, leaderStartedAt: now }, true)
+    : result(state, false);
+}
+
 export function routeKey(
   currentState: RouterState,
   key: KeyLike,
@@ -368,20 +455,17 @@ export function routeKey(
   now: number,
 ): RouteResult {
   const state = clearExpiredMessage(currentState, now);
+  if (context.resizeBlocked) {
+    const match = commandFor("hyper", key, context);
+    return result(
+      { ...state, leaderStartedAt: null },
+      true,
+      match?.allowed && allowedUnderModal(match.definition.id) ? match.definition.id : undefined,
+    );
+  }
 
   if (context.dialog !== undefined) {
-    const dialogState = { ...state, leaderStartedAt: null };
-    const dialogMatch = dialogCommandFor(key, context);
-    if (dialogMatch !== undefined) {
-      return result(dialogState, true, dialogMatch.allowed ? dialogMatch.definition.id : undefined);
-    }
-    const globalMatch = commandFor("hyper", key, context);
-    if (globalMatch !== undefined) {
-      const id = globalMatch.definition.id;
-      const modalAllowed = allowedUnderModal(id);
-      return result(dialogState, true, modalAllowed && globalMatch.allowed ? id : undefined);
-    }
-    return result(dialogState, false);
+    return routeDialogKey(state, key, context, now);
   }
 
   if (state.leaderStartedAt !== null) {
@@ -411,15 +495,7 @@ export function routeKey(
     return invalidLeader(state, key, now);
   }
 
-  if (
-    key.name === "space" &&
-    key.ctrl === true &&
-    !isHyperKey(key) &&
-    !key.meta &&
-    !key.option &&
-    !key.shift &&
-    !key.super
-  ) {
+  if (isLeaderPrefix(key)) {
     return result({ ...state, leaderStartedAt: now }, true);
   }
 
@@ -449,6 +525,9 @@ export function commandHints(state: RouterState, context: CommandContext): reado
           route.dialogs?.includes(context.dialog) === true ||
           (route.kind === "hyper" && allowedUnderModal(definition.id))
         );
+      }
+      if (route.dialogs !== undefined) {
+        return false;
       }
       if (routeKind !== undefined) {
         return route.kind === routeKind;

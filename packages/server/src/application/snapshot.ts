@@ -9,6 +9,7 @@ import type {
   Snapshot,
 } from "../api/protocol.ts";
 import type { TerminalHistory } from "../terminal/history.ts";
+import { readItems, validateItemAncestry } from "./items.ts";
 
 export const CATEGORIES: readonly { kind: CategoryKind; title: string; position: number }[] = [
   { kind: "inbox", title: "Inbox", position: 0 },
@@ -114,30 +115,8 @@ export function readSnapshot(
       "SELECT session_id AS sessionId, workspace_id AS workspaceId, position FROM session_workspaces ORDER BY session_id, position, workspace_id",
     )
     .all();
-  const projects = db
-    .query<
-      { id: string; workspaceId: string; category: CategoryKind; name: string; position: number },
-      []
-    >(
-      "SELECT id, workspace_id AS workspaceId, category, name, position FROM projects ORDER BY position, id",
-    )
-    .all();
-  const itemRows = db
-    .query<
-      {
-        id: string;
-        projectId: string;
-        kind: "generic" | "surface";
-        title: string;
-        position: number;
-        dataJson: string;
-        provenanceItemId: string | null;
-      },
-      []
-    >(
-      "SELECT id, project_id AS projectId, kind, title, position, data_json AS dataJson, provenance_item_id AS provenanceItemId FROM items ORDER BY position, id",
-    )
-    .all();
+  const items = readItems(db);
+  validateItemAncestry(items);
   const surfaces = db
     .query<{ id: string; itemId: string; activeTabId: string | null }, []>(
       "SELECT id, item_id AS itemId, active_tab_id AS activeTabId FROM surfaces ORDER BY id",
@@ -198,11 +177,7 @@ export function readSnapshot(
     categories: workspaces.flatMap((workspace) =>
       CATEGORIES.map((category) => ({ workspaceId: workspace.id, ...category })),
     ),
-    projects,
-    items: itemRows.map(({ dataJson, ...item }) => ({
-      ...item,
-      data: recordValue(parseJson(dataJson, "items.data_json"), "items.data_json"),
-    })),
+    items,
     surfaces,
     tabs: tabRows.map(({ layoutJson, ...tab }) => ({
       ...tab,

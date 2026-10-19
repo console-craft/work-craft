@@ -15,7 +15,6 @@ export function snapshotCounts(snapshot: Snapshot): Counts {
     sessions: snapshot.sessions.length,
     workspaces: snapshot.workspaces.length,
     categories: snapshot.categories.length,
-    projects: snapshot.projects.length,
     items: snapshot.items.length,
     surfaces: snapshot.surfaces.length,
     tabs: snapshot.tabs.length,
@@ -58,13 +57,17 @@ export function formatSnapshot(snapshot: Snapshot): string {
         ({ workspaceId }) => workspaceId === workspace.id,
       )) {
         lines.push(`    ${category.title}`);
-        for (const project of snapshot.projects.filter(
-          ({ workspaceId, category: kind }) =>
-            workspaceId === workspace.id && kind === category.kind,
-        )) {
-          lines.push(`      ${project.name}`);
-          for (const item of snapshot.items.filter(({ projectId }) => projectId === project.id)) {
-            lines.push(`        ${item.title} [${item.id}]`);
+        for (const root of snapshot.items
+          .filter(
+            ({ workspaceId, category: kind }) =>
+              workspaceId === workspace.id && kind === category.kind,
+          )
+          .filter((item) => item.parentId === null)) {
+          const label = (item: Snapshot["items"][number]) =>
+            `${JSON.stringify(item.title)} [${item.id}]${item.archived ? " [archived]" : ""}${item.kind !== "generic" && item.data.availability === "unavailable" ? " [unavailable]" : ""}`;
+          lines.push(`      ${label(root)}`);
+          for (const item of snapshot.items.filter(({ parentId }) => parentId === root.id)) {
+            lines.push(`        ${label(item)}`);
           }
         }
       }
@@ -79,9 +82,11 @@ export function formatResult(command: CliArgs["command"], result: Result): strin
   switch (command) {
     case "session.create":
     case "workspace.create":
-    case "project.create":
     case "item.create":
+    case "item.setArchived":
       return `ID: ${result.id}\n`;
+    case "directory.register":
+      return `ID: ${result.id}\nRoot: ${result.rootItemId}\n`;
     case "session.update":
       return `Updated session: ${result.id}\n`;
     case "session.delete":
@@ -118,7 +123,6 @@ export function formatStatus(status: Status): string {
     `Sessions: ${status.counts.sessions}\n` +
     `Workspaces: ${status.counts.workspaces}\n` +
     `Categories: ${status.counts.categories}\n` +
-    `Projects: ${status.counts.projects}\n` +
     `Items: ${status.counts.items}\n` +
     `Surfaces: ${status.counts.surfaces}\n` +
     `Tabs: ${status.counts.tabs}\n` +

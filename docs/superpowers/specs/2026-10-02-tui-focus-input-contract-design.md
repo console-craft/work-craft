@@ -1,5 +1,67 @@
 # TUI Focus And Input Contract
 
+## Phase 5 Accepted Amendment / Phase 6 Checkpoint (2026-10-19)
+
+The approved [Phase 5 companion](./2026-10-18-tui-component-adoption-phase-5-design.md)
+supersedes preservation-first workbench tab behavior below: native Tabs browsing
+selects immediately, Enter/Space enters content, and mouse selection both selects
+and activates content as a library default. The workbench uses shell-owned guarded
+entry rather than generic TabsContent focus. Exited panes gain a keyboard/mouse
+Reactivate control inside their bottom Alert; action focus is distinct from PTY
+input eligibility. Existing terminal-source Hyper behavior, readiness cancellation,
+status-safe overlays and raw terminal input remain protected. This amendment is
+implemented: two-row native Tabs and shared overflow replace the old strip markers;
+selection/entry ordering and Reactivate use the shell's existing cancellable
+response-revision/native-readiness handoff, including response-first protection.
+Terminal leaves remain outside TabsContent. Native tests cover keyboard/action
+eligibility and ordering; normal-entrypoint PTYs complement them with delayed
+keyboard/mouse selection, source-aware Hyper, exact-pane Reactivate and raw input.
+Phase 5 is accepted for progression; independent whole-session and follow-up
+reviews are complete. Accepted split, Hyper+n and explicit-restart repairs enter
+only their exact running/native-ready destination; newer input/focus/context
+intent still cancels handoffs. The Oct 19 restyle/status repair passed 1,398 tests,
+zero failures, build and compiled smoke on macOS. Output is transparent/undimmed;
+the canonical [adoption inventory](./2026-10-13-tui-component-adoption-design.md#adopted-components-and-intentional-native-boundaries)
+records geometry/colors and intentional native refs, focus/measurement/event
+bridges and modal/router boundaries. Actual input still requires `20×5` terminal
+geometry; recovery requires a `20×4` pane. Phase 6 implementation and connected
+review are complete with no findings or production changes. Its fresh macOS full
+check passed 1,399 tests, zero failures, lint/format/types, build and compiled smoke,
+exit `0`. The user accepted all component-adoption work as complete on 2026-10-19. Injected theme
+tests preserve focus/hints/scroll without adding runtime theme UI/API. Linux
+live-cwd, physical contrast and long-running listener stability remain unverified;
+native/input/React and lint warnings remain debt. Stage 2 is not implemented.
+Earlier dated checkpoints retain their historical acceptance notes.
+
+## Navigation Follow-up Checkpoint (2026-10-17)
+
+The approved [navigation follow-up](./2026-10-17-coding-navigation-followup-design.md)
+supersedes the no-terminal-entry rule for **local terminal-source** Hyper tab
+switches below: enter that destination tab's remembered valid running pane, else
+its first usable running pane. Tab-strip/other-control actions and background
+snapshots still preserve scope. New/duplicate registration and generic creation
+use the same response-revision/native-readiness handoff, cancelled by newer intent.
+Stopped panes move native focus to tabs without losing the selected restart
+target; live authoritative gates block all PTY-bound input before React commits.
+Output/replay and raw running-terminal keys remain unchanged. Explicit restart
+may enter only its own ready pane. Exact reported visual flicker was not reproduced;
+independent implementation review and regression-tested fixes are complete, while
+human/physical-terminal acceptance remains pending. The older verification records
+below do not certify this follow-up.
+
+## Coding Implementation Checkpoint (2026-10-16)
+
+Navigator now has `navigator:filter` and `region:navigator` native endpoints, not per-row stops. A pending filter transfer carries query/version/origin rather than replayable keys. Shell entry waits for response revision plus a running, mounted, usable active-tab terminal, with per-tab pane memory. Covered workbench leaves retain identity but reject input; resize guard leaves only reconnect/quit. Coding acceptance/review evidence and human verification remain tracked in its primary spec; existing raw-key contracts below remain binding.
+
+## Accepted Target Amendment
+
+The [Coding Navigator design](./2026-10-15-coding-navigator-design.md) now governs
+the updated activation, filter/results focus, drawer/resize guard, and centralized
+error presentation described below. The 2026-10-16 Coding implementation and its
+verification are recorded in that design; the separately approved follow-up above
+amends local tab and terminal-entry behavior. Earlier focus/component verification
+remains historical, not evidence for the follow-up's acceptance.
+
 ## Goal And Stage Boundary
 
 Establish a coherent focus and keyboard-ownership contract for the existing
@@ -8,9 +70,10 @@ into daemon-owned session state.
 
 This is an addendum to
 [`2026-09-18-tui-stage-1-shell-input-design.md`](./2026-09-18-tui-stage-1-shell-input-design.md).
-It refines that design's focus, routing, dialogs, and hint behavior. The existing
-spatial geometry, responsive layout, daemon protocol, persistence, terminal
-identity, replay, and reconnect boundaries remain in place.
+It refines that design's focus, routing, dialogs, and hint behavior. The original
+addendum left responsive layout and the domain protocol/schema unchanged; the
+later Coding companion explicitly amends those contracts. Terminal identity,
+replay, reconnect, and capability ownership remain protected.
 
 The implementation covers current shell regions, dialogs, controls, and the
 standalone controls and component demos. Neovim cooperation is a required
@@ -60,27 +123,49 @@ Local interaction must never operate on an unfocused sibling. An unhandled key
 on a button does not become a list-navigation command because both controls
 belong to the same dialog.
 
-### Keyboard Drill-Down Versus Preview
+### Local Activation Versus Selection Updates
 
-Local keyboard activation expresses intent to enter the destination:
+Local keyboard and mouse activation express the same intent to enter a destination:
 
-- Category `Enter` focuses its visible navigator, even when the category is
-  empty. Hidden navigators remain hidden and focus stays in the category rail.
-- Item `Enter` and project `o` focus a pane of the opened item's active tab.
-  Restore the remembered pane when it belongs to that tab; otherwise use the
-  first pane. Project `Enter` stays in the navigator.
-- Workspace and tab activation retain their source-region focus.
+- Session attachment/reselection enters workspace navigation; workspace activation
+  enters categories; category activation explicitly reveals/enters navigation,
+  including empty results. It does not bypass the below-minimum resize guard.
+- Enter or matching primary-button row release opens either root or child work
+  item and enters its active tab's remembered valid terminal, otherwise its first
+  eligible terminal. A Coding Project is a root item, not a container requiring o.
+- Browsing, filtering, and expansion do not activate an item or move the workbench.
+  Space toggles project expansion; it is not row activation.
+- Workbench strip browsing switches selection without entry; explicit Enter/Space
+  and primary release request guarded content entry, as amended by Phase 5 above.
 
-Mouse activation previews in its source region. Hyper navigation changes active
-selection while preserving focus. Neither requests the keyboard drill-down.
+There is no separate mouse-preview mode. Local terminal-source Hyper tab switches
+request guarded destination entry; tab-strip/other-control Hyper tab switches and future
+remote shared-selection updates preserve local focus rather than independently
+requesting entry.
 
 An asynchronous open moves focus only after command success and a rendered
 snapshot reaches the response revision in the same epoch. Until then, the
 navigator remains focused. Failures, empty tabs, and undersized workbenches do not
-enter a pane. Further keyboard input, native focus movement (even leave-and-return
+enter a pane; a successful surface response without a usable terminal is not a
+completed entry. Pending starting panes may finish under the same cancellable
+intent. Further keyboard input, native focus movement (even leave-and-return
 without a React commit), further navigator browsing or activation, opening a
 dialog, or changing the epoch or active item cancels the handoff. A cancelled
 handoff is not revived by a later snapshot.
+
+Successful drawer activation closes the drawer and enters the destination; failure
+keeps it open and reports in the status bar. Ordinary dismissal restoration must
+not subsequently steal focus back. Per-tab remembered panes remain client-local
+until the Stage 2 selection design.
+
+### Filter And Results Focus
+
+Navigation has two native stops: a filter Input and a results List. Tab/Shift+Tab
+cycles them locally, not each result row. Ctrl+n in the filter selects/focuses the
+first actual match, skipping a contextual parent; no match leaves filter focus.
+Enter in the filter does not implicitly activate. Filter text/editing keys cannot
+execute a sibling List command or navigator-region n/o/a shortcut. Buffered handoff
+must use the latest query and rendered eligible candidate, never stale selection.
 
 ## Ownership
 
@@ -119,8 +204,8 @@ through semantic commands.
 
 `ui/` owns reusable focus traversal and control-level hint contracts without
 importing shell or application command types. Application-specific labels,
-callbacks, and scope policy remain in callers. Existing key meanings are
-preserved; this work does not introduce a configurable keybinding system.
+callbacks, and scope policy remain in callers. Accepted navigation changes are
+defined in the Coding companion; no configurable keybinding system is introduced.
 
 ### Component-Library Follow-Up
 
@@ -128,8 +213,10 @@ Reusable Accordion, Collapsible, and Tabs components keep their state and
 interaction local. Hidden content stays mounted, while focus traversal skips
 hidden descendants. Tabs use one list focus endpoint: browsing immediately
 switches the displayed panel, and Enter/Space separately enters its first
-eligible control or the focusable panel itself. This reusable Tabs behavior is
-distinct from the workbench tab strip and does not introduce shared tab selection.
+eligible control or the focusable panel itself. Primary release also enters content,
+including a reclick. TabsList owns two-row overflow/reveal. The workbench uses the
+narrow activation callback instead of generic panel focus; terminal mounting and
+readiness remain application-owned. This does not introduce shared tab selection.
 
 Text-only labels, including interpolated strings and numbers, stay inside a
 Text node; composed renderables retain their explicit colors. Uncontrolled
@@ -158,7 +245,7 @@ navigation among its internal candidates remains local.
 | Event                                               | Required behavior                                                                               |
 | --------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | Open a dialog                                       | Retain its shell return target and focus the designated initial control.                        |
-| Open the session chooser                            | Focus the list when sessions exist; otherwise focus New session.                                |
+| Open the session chooser                            | Focus the Command search input when sessions exist; otherwise focus New session.                |
 | Replace the chooser with a creation form            | Focus its name input and preserve existing cancellation rules.                                  |
 | Tab / Shift+Tab                                     | Move forward/backward among eligible controls, wrapping inside the scope.                       |
 | Focused target becomes disabled, hidden, or removed | Choose the next eligible target in the previous traversal order, wrapping as needed.            |
@@ -193,8 +280,12 @@ dialog is active. Entering or replacing a dialog clears a pending shell leader
 sequence. It does not resume after closing the dialog.
 
 Outside dialogs, Ctrl+h/j/k/l retains no-wrap spatial movement across shell
-regions and terminal panes, including last-focused-pane restoration. Tab does
-not cycle shell regions; in a focused terminal it reaches the child application.
+regions and eligible terminal panes, including last-focused-pane restoration.
+Covered workbench targets are ineligible while a navigation drawer is open; its
+header/category controls remain usable. The below-80-column guard blocks covered
+input except quit/reconnect and clears pending leader/handoff intent. Terminal and
+dialog state stay mounted. Tab does not cycle shell regions: it traverses the
+header or navigator's local controls, and reaches a focused terminal unchanged.
 
 ## Routing Rules
 
@@ -203,8 +294,9 @@ not cycle shell regions; in a focused terminal it reaches the child application.
 1. Apply the modal eligibility gate. Hyper+r reconnect and Hyper+q quit remain
    available; background navigation, session opening, tab/workbench actions,
    leader commands, and spatial shell movement are unavailable.
-2. Recognize explicit dialog shortcuts: n starts session creation in the chooser;
-   Escape cancels where valid. The creation form treats printable n as text.
+2. Recognize explicit dialog shortcuts: Ctrl+Space then n starts session creation
+   in the chooser; plain n remains search text. Escape cancels where valid,
+   including with a pending chooser prefix. The creation form keeps printable n local.
 3. Plain Tab / Shift+Tab traverses the dialog's eligible controls. Other modified
    Tab events remain local control input unless explicitly bound by policy.
 4. Remaining input reaches only the focused control in that scope.
@@ -281,14 +373,23 @@ actions are omitted. Duplicate actions are not repeated across sources.
 
 Binding definitions and any hint-visibility metadata stay beside their owning
 behavior. The shell composes hints; it does not maintain a second manual copy of
-widget keymaps. The existing HINTS, LEADER, compact-navigator INFO, and transient
-ERROR modes remain, with LEADER displaying eligible implemented continuations.
+widget keymaps. HINTS and LEADER retain their roles. ERROR also reports Work Craft
+operational failures with source attribution; compact-navigator INFO is no longer
+required. Status lifetime/priority/clearing must be explicit in the implementation
+plan rather than applying invalid-leader timing to all errors.
 
 ## Errors And Stage 2 Handoff
 
-Command failures retain existing regional error ownership and preserve form
-input and valid focus. Disconnection retains the last coherent view and keeps
-durable mutations disabled; local focus and browsing remain usable.
+Command failures retain their originating operation/item/pane and stale-result
+protections, but full Work Craft operational messages display in the status bar.
+Field-specific client/server validation stays inline; persistent unavailable/failed
+state remains marked on the relevant item/pane. Do not duplicate full messages in
+regional banners or forms, steal focus, or create an error-history feature in v1.
+Repeated identical discovery failures are deduplicated. Child-program output is
+not parsed into notifications; CLI/pre-TUI fatal failures remain stderr.
+
+Disconnection retains the last coherent view and keeps durable mutations disabled;
+local focus, filtering, and browsing remain usable.
 
 Stage 2 must distinguish shared active navigation, including selected pane,
 from client-local region/control focus, scopes, browsing cursors, and form input.
@@ -297,8 +398,8 @@ workbench input target. Valid modal/control focus must not be displaced by share
 selection updates. Invalid local targets receive a local presentation fallback,
 not a client-originated repair of daemon-owned selection.
 
-Keyboard drill-down is intent from the initiating client, not a side effect of
-shared selection. Stage 2 must preserve its local handoff while ensuring another
+Local activation drill-down is intent from the initiating client, not a side effect
+of shared selection. Stage 2 must preserve its local handoff while ensuring another
 client's navigation command cannot independently trigger it here.
 
 ## Verification
@@ -322,12 +423,16 @@ Use focused behavioral checks at the ownership boundaries:
 6. Styling and action hints follow actual focus after keyboard, mouse, and
    buffered input. Common movement hints are absent while acceptance, dismissal,
    global/leader, and contextual-action hints remain eligible and concise.
-7. Existing navigator, workspace, category, and tab browsing/activation preserve
-   their semantics as their local handlers move to composite region owners.
-8. Category `Enter` enters only a visible navigator. Item `Enter` and project `o`
-   enter a valid pane after success regardless of response/snapshot ordering;
-   failure or cancellation preserves local focus. Mouse and Hyper activation
-   preview without entering the destination.
+7. Header/category drill-down and workbench tab behavior retain their accepted
+   contracts; navigation uses filter/results focus, List browsing, and caller-owned
+   expansion. Filter typing and buffered focus transfer never activate stale results.
+8. Root/child Enter and mouse activation enter a valid terminal after successful
+   opening regardless of response/snapshot ordering. Failure/cancellation preserves
+   source focus and an open drawer; terminal-source Hyper tab switching requests
+   entry, while control-source tab switching/remote selection preserves scope.
+9. Drawer/resize-guard transitions preserve terminal identity and input ownership.
+   Status errors remain visible through dialogs/drawers; field validation and
+   persistent source indicators retain their distinct roles.
 
 Use representative native and composite controls instead of exhaustive
 per-control suites or broad visual snapshots. Real PTY acceptance proves terminal

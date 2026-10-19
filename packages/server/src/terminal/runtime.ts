@@ -1,4 +1,5 @@
 import type { PaneStatus } from "../api/protocol.ts";
+import { readProcessCwd, validateSplitCwd } from "./cwd.ts";
 import { resolveShellSpawn, type RuntimePane } from "./restore.ts";
 
 export type RuntimeCallbacks = {
@@ -162,8 +163,19 @@ export class RuntimeRegistry {
     this.liveRuntime(paneId).terminal.resize(cols, rows);
   }
 
+  /** Sample the owned process cwd without accepting a result from an exited/replaced runtime. */
+  async currentDirectory(paneId: string): Promise<string> {
+    const runtime = this.liveRuntime(paneId);
+    const path = await validateSplitCwd(await readProcessCwd(runtime.process.pid));
+    if (this.runtimes.get(paneId) !== runtime || !this.isLive(paneId)) {
+      throw new Error(`Pane runtime changed during cwd inspection: ${paneId}`);
+    }
+    return path;
+  }
+
   isLive(paneId: string): boolean {
-    return this.runtimes.get(paneId)?.process.exitCode === null;
+    const process = this.runtimes.get(paneId)?.process;
+    return process?.exitCode === null && process.signalCode === null;
   }
 
   waitForExit(paneId: string): Promise<number> {
@@ -194,7 +206,7 @@ export class RuntimeRegistry {
 
   private liveRuntime(paneId: string): LiveRuntime {
     const runtime = this.runtimes.get(paneId);
-    if (runtime === undefined || runtime.process.exitCode !== null) {
+    if (runtime === undefined || !this.isLive(paneId)) {
       throw new Error(`Pane has no live runtime: ${paneId}`);
     }
     return runtime;

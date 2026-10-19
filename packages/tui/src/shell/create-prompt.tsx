@@ -1,15 +1,12 @@
-import type { CreateKind } from "@/shell/model.ts";
-import { Input } from "@/ui/controls/input.tsx";
-import { Box } from "@/ui/primitives/box.tsx";
-import { Divider } from "@/ui/primitives/divider.tsx";
-import { Text } from "@/ui/primitives/text.tsx";
-import { useTheme } from "@/ui/theme-provider.tsx";
+import type { InputRenderable } from "@opentui/core";
+import { type ReactNode, useRef, useState } from "react";
 
-// import { Stack } from "@/ui/primitives/stack.tsx";
-// import { Button } from "@/ui/controls/button.tsx";
-// import { HStack } from "@/ui/primitives/hstack.tsx";
-// import { Textarea } from "@/ui/controls/textarea.tsx";
-// import { Select } from "@/ui/controls/select.tsx";
+import type { CreateKind } from "@/shell/model.ts";
+import { DialogClose, DialogFooter, DialogHeader, DialogTitle } from "@/ui/components/dialog";
+import { Field, FieldError, FieldLabel } from "@/ui/components/field";
+import { Button } from "@/ui/controls/button";
+import { Input } from "@/ui/controls/input";
+import { Stack } from "@/ui/primitives/stack";
 
 export type CreatePromptProps = {
   kind: CreateKind;
@@ -19,83 +16,63 @@ export type CreatePromptProps = {
   onSubmit(value: string): void;
 };
 
-export function CreatePrompt({ error, kind, value, onChange, onSubmit }: CreatePromptProps) {
-  const theme = useTheme();
+export function CreatePrompt({
+  error,
+  kind,
+  value,
+  onChange,
+  onSubmit,
+}: CreatePromptProps): ReactNode {
+  const inputRef = useRef<InputRenderable | null>(null);
+  const [missingName, setMissingName] = useState(false);
+  const label = kind === "directory" ? "Path" : kind.startsWith("generic-") ? "Title" : "Name";
+  const fieldError = missingName ? `${label} is required.` : error;
+
+  function submit(value: string): void {
+    const name = kind === "directory" ? value : value.trim();
+    if (name.trim() === "") {
+      setMissingName(true);
+      return;
+    }
+    setMissingName(false);
+    onSubmit(name);
+  }
+
   return (
-    <Box border width="100%">
-      <Box paddingLeft={1} paddingRight={1}>
-        <Text fg={theme.colors.primary}>
-          <b>{`New ${kind}`}</b>
-        </Text>
-      </Box>
-      <Divider />
-      <Box paddingLeft={1} paddingRight={1}>
+    <Stack>
+      <DialogHeader>
+        <DialogTitle>
+          {kind === "directory"
+            ? "Register directory"
+            : `New ${kind.startsWith("generic-") ? "item" : kind}`}
+        </DialogTitle>
+      </DialogHeader>
+      <Field required invalid={fieldError !== null}>
+        <FieldLabel>{label}</FieldLabel>
         <Input
-          id="create:name"
-          // The inherited native setter drops Input's constructor-only submit bindings.
-          keyBindings={[
-            { name: "return", action: "submit" },
-            { name: "kpenter", action: "submit" },
-            { name: "linefeed", action: "submit" },
-            { name: "h", ctrl: true, action: "backspace" },
-          ]}
-          placeholder={`${kind} name`}
+          id={`create:${label.toLowerCase()}`}
+          ref={inputRef}
+          keyBindings={[{ name: "h", ctrl: true, action: "backspace" }]}
+          placeholder={
+            kind === "directory" ? "Existing directory path" : `${kind} ${label.toLowerCase()}`
+          }
           value={value}
-          onInput={onChange}
-          onSubmit={(value) => {
-            if (typeof value !== "string") {
-              return;
-            }
-            const name = value.trim();
-            if (name !== "") {
-              onSubmit(name);
-            }
+          onInput={(value) => {
+            setMissingName(false);
+            onChange(value);
           }}
+          onSubmit={submit}
         />
-        {error === null ? null : <Text fg={theme.colors.error}>{error}</Text>}
-      </Box>
-      {/* <Stack marginTop={1}> */}
-      {/*   <Input placeholder="foo" /> */}
-      {/*   <Textarea placeholder="bar" height={4} */}
-      {/*     onSubmit={() => console.log('SUBMITTED')} */}
-      {/*   /> */}
-      {/*   <Select */}
-      {/*     width={30} */}
-      {/*     height={6} */}
-      {/*     options={[ */}
-      {/*       { */}
-      {/*         name: "Apple", */}
-      {/*         description: "Crisp and sweet", */}
-      {/*         value: "apple", */}
-      {/*       }, */}
-      {/*       { */}
-      {/*         name: "Banana", */}
-      {/*         description: "Soft and yellow", */}
-      {/*         value: "banana", */}
-      {/*       }, */}
-      {/*       { */}
-      {/*         name: "Orange", */}
-      {/*         description: "Citrusy and juicy", */}
-      {/*         value: "orange", */}
-      {/*       }, */}
-      {/*     ]} */}
-      {/*     onSelect={(index, option) => { */}
-      {/*       console.log("Selected fruit:", { */}
-      {/*         index, */}
-      {/*         value: option?.value, */}
-      {/*         name: option?.name, */}
-      {/*       }); */}
-      {/*     }} */}
-      {/*   /> */}
-      {/* </Stack> */}
-      {/* <HStack marginTop={1}> */}
-      {/*   <Button variant="primary">Test button</Button> */}
-      {/*   <Button variant="ghost">Test button</Button> */}
-      {/*   <Button variant="secondary">Test button</Button> */}
-      {/*   <Button variant="secondary">Test button</Button> */}
-      {/*   <Button disabled>Test button</Button> */}
-      {/*   <Button variant="destructive">Test button</Button> */}
-      {/* </HStack> */}
-    </Box>
+        <FieldError marginTop={1}>{fieldError}</FieldError>
+      </Field>
+      <DialogFooter>
+        <Button id="create:submit" onPress={() => submit(inputRef.current?.value ?? "")}>
+          {kind === "directory" ? "Register" : "Create"}
+        </Button>
+        <DialogClose id="dialog:cancel" variant="ghost">
+          Cancel
+        </DialogClose>
+      </DialogFooter>
+    </Stack>
   );
 }

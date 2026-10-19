@@ -314,6 +314,32 @@ export const icons = {
   sqlite: "\u{E7C4}",             //    nf-dev-sqlite
   redis: "\u{E76D}",              //    nf-dev-redis
   mongodb: "\u{E7A4}",            //    nf-dev-mongodb
+
+  // Numbers in circles
+  number0Circle: "\u{F0C9E}",     // 󰲞 nf-md-numeric_0_circle
+  number1Circle: "\u{F0CA0}",     // 󰲠 nf-md-numeric_1_circle
+  number2Circle: "\u{F0CA2}",     // 󰲢 nf-md-numeric_2_circle
+  number3Circle: "\u{F0CA4}",     // 󰲤 nf-md-numeric_3_circle
+  number4Circle: "\u{F0CA6}",     // 󰲦 nf-md-numeric_4_circle
+  number5Circle: "\u{F0CA8}",     // 󰲨 nf-md-numeric_5_circle
+  number6Circle: "\u{F0CAA}",     // 󰲪 nf-md-numeric_6_circle
+  number7Circle: "\u{F0CAC}",     // 󰲬 nf-md-numeric_7_circle
+  number8Circle: "\u{F0CAE}",     // 󰲮 nf-md-numeric_8_circle
+  number9Circle: "\u{F0CB0}",     // 󰲰 nf-md-numeric_9_circle
+  number10Circle: "\u{F0FEC}",    // 󰿬 nf-md-numeric_10_circle
+
+  // Numbers in outlined circles
+  number0CircleOutline: "\u{F0C9F}",  // 󰲟 nf-md-numeric_0_circle_outline
+  number1CircleOutline: "\u{F0CA1}",  // 󰲡 nf-md-numeric_1_circle_outline
+  number2CircleOutline: "\u{F0CA3}",  // 󰲣 nf-md-numeric_2_circle_outline
+  number3CircleOutline: "\u{F0CA5}",  // 󰲥 nf-md-numeric_3_circle_outline
+  number4CircleOutline: "\u{F0CA7}",  // 󰲧 nf-md-numeric_4_circle_outline
+  number5CircleOutline: "\u{F0CA9}",  // 󰲩 nf-md-numeric_5_circle_outline
+  number6CircleOutline: "\u{F0CAB}",  // 󰲫 nf-md-numeric_6_circle_outline
+  number7CircleOutline: "\u{F0CAD}",  // 󰲭 nf-md-numeric_7_circle_outline
+  number8CircleOutline: "\u{F0CAF}",  // 󰲯 nf-md-numeric_8_circle_outline
+  number9CircleOutline: "\u{F0CB1}",  // 󰲱 nf-md-numeric_9_circle_outline
+  number10CircleOutline: "\u{F0FED}", // 󰿭 nf-md-numeric_10_circle_outline
 } as const;
 
 export type IconName = keyof typeof icons;

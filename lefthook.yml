@@ -10,12 +10,18 @@ pre-commit:
     - name: typecheck
       run: bun run typecheck
     - name: test
-      run: bun run test
+      run: |
+        # Fixture Git commands must not inherit the invoking repository.
+        unset $(git rev-parse --local-env-vars)
+        bun run test
 
 pre-push:
   jobs:
     - name: check
-      run: bun run check
+      run: |
+        # The full check also creates disposable Git repositories.
+        unset $(git rev-parse --local-env-vars)
+        bun run check
 
 commit-msg:
   jobs:

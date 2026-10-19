@@ -12,8 +12,7 @@ function seedSnapshot(db: ReturnType<typeof openDatabase>): void {
     INSERT INTO sessions VALUES ('session-b', 'Second', 1), ('session-a', 'First', 1);
     INSERT INTO workspaces VALUES ('workspace-1', 'Personal');
     INSERT INTO session_workspaces VALUES ('session-a', 'workspace-1', 0);
-    INSERT INTO projects VALUES ('project-1', 'workspace-1', 'implementation', 'Work Craft', 0);
-    INSERT INTO items VALUES ('item-1', 'project-1', 'surface', 'Build', 0, '{"flag":true}', NULL);
+    INSERT INTO items VALUES ('item-1', 'workspace-1', 'design', NULL, 'generic', 'Build', 0, 0, '{"flag":true}');
     INSERT INTO surfaces VALUES ('surface-1', 'item-1', 'tab-1');
     INSERT INTO tabs VALUES (
       'tab-1',
@@ -39,7 +38,7 @@ function seedSnapshot(db: ReturnType<typeof openDatabase>): void {
 
 test("migrates an empty database and exposes six fixed categories", () => {
   const db = openDatabase(":memory:");
-  expect(db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(2);
+  expect(db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(4);
   expect(CATEGORIES.map((category) => category.kind)).toEqual([
     "inbox",
     "today",
@@ -56,7 +55,7 @@ test("migrates an empty database and exposes six fixed categories", () => {
   db.close();
 });
 
-test("migrates version 1 workspace ownership without losing descendants or history", async () => {
+test("rejects version 1 workspace ownership without losing descendants or history", async () => {
   const directory = await mkdtemp(join(tmpdir(), "work-craft-migration-"));
   const databasePath = join(directory, "work-craft.db");
   const legacy = new Database(databasePath, { create: true });
@@ -83,18 +82,19 @@ test("migrates version 1 workspace ownership without losing descendants or histo
   `);
   legacy.close();
 
-  const migrated = openDatabase(databasePath);
+  expect(() => openDatabase(databasePath)).toThrow(/Incompatible/);
+  const migrated = new Database(databasePath);
   try {
-    const snapshot = readSnapshot(migrated, "epoch", 0);
     expect(
       migrated.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version,
-    ).toBe(2);
-    expect(snapshot.workspaces).toEqual([{ id: "workspace-1", name: "Work" }]);
-    expect(snapshot.sessionWorkspaces).toEqual([
-      { sessionId: "session-1", workspaceId: "workspace-1", position: 0 },
+    ).toBe(1);
+    expect(migrated.query("SELECT id, name FROM workspaces").all()).toEqual([
+      { id: "workspace-1", name: "Work" },
     ]);
-    expect(snapshot.projects[0]?.id).toBe("project-1");
-    expect(snapshot.terminalHistories[0]?.data).toBe("b2s=");
+    expect(migrated.query("SELECT id FROM projects").all()).toEqual([{ id: "project-1" }]);
+    expect(migrated.query("SELECT hex(data) AS data FROM terminal_chunks").all()).toEqual([
+      { data: "6F6B" },
+    ]);
     expect(migrated.query("PRAGMA foreign_key_check").all()).toEqual([]);
   } finally {
     migrated.close();
@@ -102,7 +102,7 @@ test("migrates version 1 workspace ownership without losing descendants or histo
   }
 });
 
-test("rolls back version 2 migration when legacy rows violate foreign keys", async () => {
+test("rejects invalid legacy foreign keys before any schema replacement", async () => {
   const directory = await mkdtemp(join(tmpdir(), "work-craft-migration-invalid-"));
   const databasePath = join(directory, "work-craft.db");
   const legacy = new Database(databasePath, { create: true });
@@ -117,9 +117,7 @@ test("rolls back version 2 migration when legacy rows violate foreign keys", asy
   legacy.close();
 
   try {
-    expect(() => openDatabase(databasePath)).toThrow(
-      "Database migration created a foreign-key violation",
-    );
+    expect(() => openDatabase(databasePath)).toThrow("Incompatible Work Craft database schema");
     const preserved = new Database(databasePath);
     try {
       expect(
@@ -197,7 +195,8 @@ test("rejects malformed persisted JSON and invalid layout ratios", () => {
   const db = openDatabase(":memory:");
   seedSnapshot(db);
 
-  db.exec("UPDATE items SET data_json = 'not json'");
+  expect(() => db.exec("UPDATE items SET data_json = 'not json'")).toThrow();
+  db.exec("PRAGMA ignore_check_constraints = ON; UPDATE items SET data_json = 'not json'");
   expect(() => readSnapshot(db, "epoch-3", 0)).toThrow(/items\.data_json/);
 
   db.exec(`
@@ -206,4 +205,90 @@ test("rejects malformed persisted JSON and invalid layout ratios", () => {
   `);
   expect(() => readSnapshot(db, "epoch-3", 0)).toThrow(/ratio/);
   db.close();
+});
+
+test("incompatible versions and nonempty unversioned schemas preserve sentinel data and release handles", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "work-craft-schema-safety-"));
+  try {
+    for (const version of [0, 1, 2, 3, 999]) {
+      const path = join(directory, `${version}.sqlite`);
+      const old = new Database(path, { create: true });
+      old.exec(
+        `CREATE TABLE sentinel (value TEXT); INSERT INTO sentinel VALUES ('keep me'); PRAGMA user_version = ${version}`,
+      );
+      const schema = old.query("SELECT sql FROM sqlite_master ORDER BY name").all();
+      const journal = old.query("PRAGMA journal_mode").get();
+      old.close();
+      expect(() => openDatabase(path)).toThrow(/incompatible|reset/i);
+      const preserved = new Database(path);
+      try {
+        expect(preserved.query("SELECT * FROM sentinel").all()).toEqual([{ value: "keep me" }]);
+        expect(preserved.query("PRAGMA journal_mode").get()).toEqual(journal);
+        expect(preserved.query("PRAGMA user_version").get()).toEqual({ user_version: version });
+        expect(preserved.query("SELECT sql FROM sqlite_master ORDER BY name").all()).toEqual(
+          schema,
+        );
+        preserved.exec("BEGIN EXCLUSIVE; ROLLBACK;");
+      } finally {
+        preserved.close();
+      }
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("Coding paths and Git common directories are unique per workspace including archived owners", () => {
+  const db = openDatabase(":memory:");
+  try {
+    db.exec("INSERT INTO workspaces VALUES ('w', 'Work'), ('other', 'Other')");
+    const insert = db.query(
+      "INSERT INTO items VALUES (?, ?, 'implementation', ?, ?, 'root', 0, 1, ?)",
+    );
+    insert.run(
+      "root",
+      "w",
+      null,
+      "directory",
+      JSON.stringify({ path: "/root", gitCommonDir: "/root/.git" }),
+    );
+    expect(() =>
+      insert.run(
+        "duplicate-common",
+        "w",
+        null,
+        "directory",
+        JSON.stringify({ path: "/alias", gitCommonDir: "/root/.git" }),
+      ),
+    ).toThrow(/UNIQUE/);
+    insert.run("child", "w", "root", "worktree", JSON.stringify({ path: "/child" }));
+    expect(() =>
+      insert.run(
+        "duplicate-path",
+        "w",
+        null,
+        "directory",
+        JSON.stringify({ path: "/child", gitCommonDir: null }),
+      ),
+    ).toThrow(/UNIQUE/);
+    expect(() =>
+      insert.run("duplicate-root-path", "w", "root", "worktree", JSON.stringify({ path: "/root" })),
+    ).toThrow(/UNIQUE/);
+    insert.run(
+      "independent",
+      "other",
+      null,
+      "directory",
+      JSON.stringify({ path: "/root", gitCommonDir: "/root/.git" }),
+    );
+    insert.run(
+      "plain",
+      "w",
+      null,
+      "directory",
+      JSON.stringify({ path: "/plain", gitCommonDir: null }),
+    );
+  } finally {
+    db.close();
+  }
 });

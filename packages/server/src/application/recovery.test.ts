@@ -74,15 +74,16 @@ async function persistentAppFixture() {
         name: "Work",
       });
       const project = await app.execute({
-        type: "project.create",
+        type: "item.create",
         workspaceId: workspace.result.id,
-        category: "implementation",
-        name: "Work Craft",
+        category: "design",
+        title: "Work Craft",
       });
       const item = await app.execute({
         type: "item.create",
-        projectId: project.result.id,
-        kind: "surface",
+        workspaceId: workspace.result.id,
+        category: "design",
+        parentId: project.result.id,
         title: "Cold recovery",
         data: { durable: true },
       });
@@ -124,15 +125,16 @@ async function persistentAppFixture() {
         name: "Work",
       });
       const project = await this.app.execute({
-        type: "project.create",
+        type: "item.create",
         workspaceId: workspace.result.id,
-        category: "implementation",
-        name: "Work Craft",
+        category: "design",
+        title: "Work Craft",
       });
       const item = await this.app.execute({
         type: "item.create",
-        projectId: project.result.id,
-        kind: "surface",
+        workspaceId: workspace.result.id,
+        category: "design",
+        parentId: project.result.id,
         title: "Committed shell",
       });
       const opened = applyCommand(owner!.db, {
@@ -232,7 +234,7 @@ function expectDurableStatePreserved(before: Snapshot, after: Snapshot, paneId: 
   const pane = before.panes.find(({ id }) => id === paneId)!;
   expect(after.sessions).toEqual(before.sessions);
   expect(after.workspaces).toEqual(before.workspaces);
-  expect(after.projects).toEqual(before.projects);
+  expect(after.items).toEqual(before.items);
   expect(after.items).toEqual(before.items);
   expect(after.surfaces).toEqual(before.surfaces);
   expect(after.tabs).toEqual(before.tabs);
@@ -264,7 +266,7 @@ test("restores hierarchy, history, layout, and one shell after restart", async (
 
     expect(snapshot.sessions).toEqual(before.sessions);
     expect(snapshot.workspaces).toEqual(before.workspaces);
-    expect(snapshot.projects).toEqual(before.projects);
+    expect(snapshot.items).toEqual(before.items);
     expect(snapshot.items).toEqual(before.items);
     expect(snapshot.surfaces).toEqual(before.surfaces);
     expect(snapshot.tabs).toEqual(before.tabs);
@@ -317,6 +319,7 @@ test("returns the same rejected recovery promise to every caller", async () => {
     await fixture.openShellAndWrite("printf before-restart");
     await fixture.crash();
     const restarted = fixture.reopen();
+    restarted.db.exec("PRAGMA ignore_check_constraints = ON");
     restarted.db.run("UPDATE items SET data_json = 'invalid-json'");
 
     const first = restarted.app.recover();

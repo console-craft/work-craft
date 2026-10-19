@@ -1,11 +1,13 @@
 import { expect, test } from "bun:test";
 
-import {
-  focusAfterNavigatorHide,
-  type FocusNode,
-  moveFocus,
-  projectPaneFocusNodes,
-} from "@/input/focus.ts";
+import { focusAfterNavigatorHide, focusKey, type FocusNode, moveFocus } from "@/input/focus.ts";
+
+test("Reactivate has a distinct focus identity from its pane's terminal", () => {
+  expect(focusKey({ region: "workbench", paneId: "p", control: "reactivate" })).toBe(
+    "workbench:p:reactivate",
+  );
+  expect(focusKey({ region: "workbench", paneId: "p" })).toBe("workbench:p");
+});
 
 const nodes: FocusNode[] = [
   { target: { region: "category" }, rect: { x: 0, y: 3, width: 5, height: 20 } },
@@ -27,43 +29,6 @@ test("focus moves spatially across shell regions without wrapping", () => {
     paneId: "left",
   });
   expect(moveFocus({ region: "category" }, "left", nodes)).toEqual({ region: "category" });
-});
-
-test("recursive pane projection preserves vertical split geometry", () => {
-  const projected = projectPaneFocusNodes(
-    {
-      type: "split",
-      direction: "vertical",
-      ratio: 0.5,
-      first: { type: "pane", paneId: "a" },
-      second: { type: "pane", paneId: "b" },
-    },
-    { x: 40, y: 5, width: 60, height: 20 },
-  );
-  expect(projected).toEqual([
-    { target: { region: "workbench", paneId: "a" }, rect: { x: 40, y: 5, width: 30, height: 20 } },
-    { target: { region: "workbench", paneId: "b" }, rect: { x: 71, y: 5, width: 29, height: 20 } },
-  ]);
-});
-
-test("recursive pane projection preserves horizontal split geometry", () => {
-  const projected = projectPaneFocusNodes(
-    {
-      type: "split",
-      direction: "horizontal",
-      ratio: 0.4,
-      first: { type: "pane", paneId: "top" },
-      second: { type: "pane", paneId: "bottom" },
-    },
-    { x: 40, y: 5, width: 60, height: 20 },
-  );
-  expect(projected).toEqual([
-    { target: { region: "workbench", paneId: "top" }, rect: { x: 40, y: 5, width: 60, height: 8 } },
-    {
-      target: { region: "workbench", paneId: "bottom" },
-      rect: { x: 40, y: 14, width: 60, height: 11 },
-    },
-  ]);
 });
 
 test("vertical focus crosses from panes through tabs to the header", () => {

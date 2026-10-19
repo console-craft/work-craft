@@ -3,7 +3,6 @@ import { expect, test } from "bun:test";
 import {
   type BoxRenderable,
   InputRenderable,
-  type Renderable,
   ScrollBoxRenderable,
   SelectRenderable,
   TextareaRenderable,
@@ -224,36 +223,35 @@ test("full-width demo page fills the viewport even with small content", async ()
 
 test("card tabs fill the width with equal triggers and keep logs inside the card", async () => {
   const setup = await testRender(<ComponentsDemo />, { width: 100, height: 24 });
-  function findScrollArea(node: Renderable): ScrollBoxRenderable | undefined {
-    if (node instanceof ScrollBoxRenderable) {
-      return node;
-    }
-    for (const child of node.getChildren()) {
-      const area = findScrollArea(child);
-      if (area) {
-        return area;
-      }
-    }
-  }
   try {
+    await act(async () => setup.flush());
     await act(async () => setup.flush());
     const card = setup.renderer.root.findDescendantById("card-tabs-demo")!;
     const list = getFocusableRenderables(card)[0]!;
     expect(list.width).toBe(card.width);
-    const triggers = list.getChildren();
+    expect(list.width).toBe(60);
+    const scroller = list.getChildren()[0]!;
+    const strip = setup.renderer.root.findDescendantById(
+      `${scroller.id}:viewport`,
+    ) as ScrollBoxRenderable;
+    const triggers = strip.content.getChildren()[0]!.getChildren();
     expect(triggers.map((trigger) => trigger.width)).toEqual([20, 20, 20]);
     expect(triggers[0]!.screenX).toBe(card.screenX);
     expect(triggers[2]!.screenX + triggers[2]!.width).toBe(card.screenX + card.width);
+    expect(strip.scrollLeft).toBe(0);
+    expect(strip.viewport.width).toBe(60);
     act(() => list.focus());
     act(() => setup.mockInput.pressKey("ARROW_RIGHT"));
     await act(async () => setup.flush());
-    const logs = findScrollArea(card)!;
+    const logs = getFocusableRenderables(card).find(
+      (node): node is ScrollBoxRenderable => node instanceof ScrollBoxRenderable,
+    )!;
     expect(logs.height).toBe(18);
     expect(logs.screenY + logs.height).toBeLessThanOrEqual(card.screenY + card.height);
     expect(logs.scrollHeight).toBeGreaterThan(logs.height);
     act(() => setup.mockInput.pressEnter());
     await act(async () => setup.flush());
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe(logs.id);
+    expect(setup.renderer.currentFocusedRenderable).toBe(logs);
     act(() => setup.mockInput.pressKey("j"));
     await act(async () => setup.flush());
     expect(logs.scrollTop).toBeGreaterThan(0);

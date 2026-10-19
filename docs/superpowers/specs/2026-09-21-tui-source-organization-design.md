@@ -1,5 +1,66 @@
 # TUI Source Organization Design
 
+## Phase 5 Acceptance / Phase 6 Consolidation Checkpoint (2026-10-19)
+
+The approved [Phase 5 companion](./2026-10-18-tui-component-adoption-phase-5-design.md)
+is implemented within the existing capabilities. `ui/components/tabs.tsx` owns
+native selection/activation and shared overflow; HorizontalScroller honors its
+existing height prop. `workbench/tab-bar.tsx` composes actual Tabs with a narrow
+caller-owned entry callback, never hidden terminal TabsContent. `surface-view.tsx`
+projects rectangles into stable keyed sibling terminal leaves; `layout.ts` owns
+shared strip/Alert geometry and `pane-state.ts` owns unavailable presentation.
+TerminalPane retains native rendering/replay and the bottom Alert/action. The
+accepted Oct 19 styling keeps output transparent/undimmed, not the original 0.75
+opacity. Shell owns guarded entry, Reactivate and focus eligibility;
+client retains live input gates. Daemon `terminal/cwd.ts` performs bounded shell-PID
+inspection; application split preflight and transactional equalization stay server-owned.
+No source reorganization or shared-navigation framework was added. Phase 5 is
+accepted for progression after independent whole-session/follow-up review and
+split, Hyper+n and explicit-restart focus repairs. The Oct 19 restyle/status-repair
+baseline passed 1,398 tests, zero failures, build and compiled smoke on macOS.
+The canonical [adoption inventory](./2026-10-13-tui-component-adoption-design.md#adopted-components-and-intentional-native-boundaries)
+records actual owners, accepted geometry/colors and intentional native refs,
+measurement, focus/event and modal/router boundaries; these are not missing
+component adoption. Phase 6 implementation and connected review are complete,
+with no findings. Its fresh macOS full check passed 1,399 tests, zero failures,
+lint/format/types, build and compiled smoke, exit `0`. The user accepted all
+component-adoption work as complete on 2026-10-19. No production/source-organization
+change or runtime theme UI/API is part of that consolidation. Linux live-cwd,
+physical-terminal contrast and long-running listener stability remain unverified;
+existing native/input/React and lint warnings are retained debt.
+
+## Navigation Follow-up Checkpoint (2026-10-17)
+
+The [repository-group/terminal-entry follow-up](./2026-10-17-coding-navigation-followup-design.md)
+keeps capability boundaries and keyed terminal ancestry unchanged. Shell owns
+new/duplicate/generic creation completion, source-aware local tab entry and
+explicit-restart handoffs through its existing cancellable readiness coordinator.
+Client owns the live epoch/process/active-layout/item-archive input gate; workbench leaves
+combine it with shell visibility/geometry eligibility, show compact stopped labels
+and preserve replay/history independently of input. Dialog's optional restoration
+veto keeps its default behavior; the application still reserves the status row.
+No source reorganization, shared navigation or Phase 5 adoption was added.
+Independent implementation review and its regression-tested fixes are complete;
+human/physical-terminal acceptance remains pending in the follow-up. Earlier
+records below are historical.
+
+## Coding Implementation Checkpoint (2026-10-16)
+
+Capability boundaries remain unchanged. New concrete owners are `navigation/path-label.ts`, `shell/errors.ts`, `shell/archive-prompt.tsx`, and `shell/resize-guard.tsx`. Navigator composes Input/List; shell coordinates filtering, source-labelled status, Archive, per-tab memory and docked/drawer/guard eligibility. Workbench retains native terminal identity and independently gates input/resize. Final review and human acceptance are tracked in the Coding Navigator spec; the original refactor record below remains historical.
+
+## Accepted Target Amendment
+
+The [Coding Navigator design](./2026-10-15-coding-navigator-design.md) preserves
+this capability/dependency structure while replacing separate Project/Item
+projection and compact navigation with unified items and docked/drawer navigation.
+The current ownership descriptions below reflect that approved target; the original
+tree, decomposition, migration, and verification records remain historical until
+implementation updates actual file/API details. No new shared-navigation stage,
+category framework, or speculative folder structure is introduced. The original
+refactor-only constraints/exclusions about preserving IDs and protocol are
+historical where the Coding design explicitly replaces them; the capability
+dependency boundaries and terminal-lifecycle protections remain binding.
+
 ## Goal
 
 Reorganize `packages/tui/src` so its directory and file structure exposes the
@@ -148,10 +209,10 @@ The former root `ui-demo.tsx` is now `demos/controls.tsx`. Shared demo layout,
 background-focus policy, and theme/width cycling remain in `demos/`, while
 reusable Container/ScrollArea primitives and named composites remain in `ui/`.
 
-The implemented composites are Card, Badge, Alert, Spinner, Progress,
-Collapsible, Accordion, and Tabs. Further components are follow-up work, not
-part of the current delivered inventory. Application-specific shell and
-workbench components retain their capability owners.
+The original library groundwork delivered Card, Badge, Alert, Spinner, Progress,
+Collapsible, Accordion and Tabs. Later adopted composites and their concrete
+application owners are recorded in the canonical inventory linked above.
+Application-specific shell and workbench components retain their capability owners.
 
 ### Client
 
@@ -181,8 +242,9 @@ send server commands.
 
 `shell/` owns persistent-shell coordination and local presentation state:
 
-- local state, reconciliation, dialogs, prompts, and regional errors;
-- responsive shell geometry and cross-region focus-node geometry;
+- local state, reconciliation, dialogs, prompts, and source-associated failures;
+- status-bar operational-error presentation, separate from inline field validation;
+- docked/drawer/resize-guard shell geometry and cross-region focus eligibility;
 - derivation of the visible shell context;
 - command availability and execution coordination;
 - top-level composition and input wiring;
@@ -195,14 +257,15 @@ not import from the shell.
 
 `navigation/` owns the common organizational navigator:
 
-- projection of snapshots into ordered workspaces, categories, projects, and
-  visible item rows;
+- projection of snapshots into ordered workspaces, categories, and unified
+  root/child work-item rows;
 - the invariant category rail;
-- expanded and compact project/item navigator rendering.
+- filtered List composition, row details/icons, and caller-owned expansion;
+- local filter/results focus and presentation within shell-owned responsive geometry.
 
 It does not own durable navigation state. Stage 2 will move active navigation
-to the daemon while local cursors, expansion, and viewport state remain in the
-TUI.
+to the daemon while local filters, cursors, expansion, and viewport state remain
+in the TUI. Filesystem/Git discovery belongs in the daemon, not this capability.
 
 ### Workbench
 
@@ -210,8 +273,8 @@ TUI.
 
 - tabs and tab activation presentation;
 - split-tree projection and pane traversal;
-- workbench frame, regional errors, and empty or undersized states;
-- recursive surface rendering;
+- workbench frame, persistent pane failure indicators, and empty or undersized states;
+- stable keyed sibling terminal rendering from split-tree rectangles;
 - terminal rendering, replay, input, resize, and stable identity.
 
 It renders daemon-owned layouts and sends semantic actions upward. It does not
@@ -238,18 +301,19 @@ The source tree must expose the persistent shell's visible structure directly:
 
 These files own meaningful regions rather than acting as one-line wrappers:
 
-- `header.tsx` owns top-row geometry and composition.
+- `header.tsx` owns three-row header geometry and composition.
 - `workspace-bar.tsx` owns workspace viewport rendering and mouse activation.
 - `session-switcher.tsx` owns session identity and connection treatment.
 - `category-rail.tsx` owns the fixed category region.
-- `navigator.tsx` owns expanded and compact hierarchy rendering.
-- `workbench.tsx` owns its frame, errors, empty states, undersized state, tab
+- `navigator.tsx` owns filtered List/Input composition and root/child row rendering;
+  shell layout owns docking, drawer geometry, resize masking, and focus arbitration.
+- `workbench.tsx` owns its borderless padded composition, source-state indicators, empty states, undersized state, tab
   bar, and active surface content.
 - `tab-bar.tsx` owns tab rendering and activation.
-- `status-bar.tsx` owns mode and contextual hint presentation.
+- `status-bar.tsx` owns mode, contextual hints, and source-labelled operational-error text.
 - `dialog-overlay.tsx` owns overlay behavior and selects the concrete dialog
   body.
-- `surface-view.tsx` owns recursive layout rendering.
+- `surface-view.tsx` owns split-tree rectangle projection into stable sibling leaves.
 - `terminal-pane.tsx` remains the lifecycle-sensitive terminal leaf.
 
 The former generic `shell-regions.tsx` was removed. Application components do
@@ -341,8 +405,11 @@ lifecycle and do not mutate durable business state locally.
 The refactor preserves current failure ownership:
 
 - connection state stays in `client/`;
-- command failures remain associated with the initiating shell region;
-- failed or interrupted processes remain visible inside their pane;
+- command failures retain their initiating operation/item/pane identity while
+  full messages display centrally in the status bar;
+- field-specific client/server validation stays beside its field;
+- failed/interrupted panes and unavailable items retain compact local indicators,
+  not duplicate full error text;
 - the last coherent snapshot stays visible while reconnecting;
 - durable mutations remain disabled while disconnected;
 - a failure in one pane does not unmount unrelated panes.
@@ -365,7 +432,8 @@ Tests move with the behavior they verify:
 
 The former broad root `shell.test.tsx` was split by these behavioral owners.
 Only cross-capability composition, routing, terminal mount preservation, and
-regional failure behavior remain in `shell/shell.test.tsx`.
+failure ownership, central reporting, and cross-region behavior remain in
+`shell/shell.test.tsx`.
 
 File movement alone does not require new behavioral tests. Newly extracted
 non-trivial pure logic receives focused tests when existing coverage cannot be

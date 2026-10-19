@@ -394,6 +394,7 @@ export async function runDaemon(
         }
       }
 
+      const directoryCleanup = attempt(async () => app?.closeDirectoryRefresh());
       await attempt(async () => {
         if (server === undefined) {
           return;
@@ -410,13 +411,20 @@ export async function runDaemon(
         await server.stop(true);
         await stopped;
       });
+      const directoriesClosed = await directoryCleanup;
       await attempt(async () => app?.history.flush());
       const runtimesStopped = await attempt(async () =>
         app?.runtime.stopAll({ preserveStatus: true }),
       );
       const historyClosed = await attempt(async () => app?.history.close());
       const databaseClosed = await attempt(() => db?.close());
-      if (destroyRequested && runtimesStopped && historyClosed && databaseClosed) {
+      if (
+        destroyRequested &&
+        directoriesClosed &&
+        runtimesStopped &&
+        historyClosed &&
+        databaseClosed
+      ) {
         await attempt(() => removeDatabase(paths.databasePath));
       }
       await attempt(() => removeOwned(paths.socketPath, socketIdentity));
@@ -486,6 +494,7 @@ export async function runDaemon(
     });
     if (options.recover !== false) {
       await app.recover();
+      app.startDirectoryRefresh();
     }
     if (await stopStartupIfRequested()) {
       return;
