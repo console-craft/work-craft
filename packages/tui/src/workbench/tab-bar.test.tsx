@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 
-import { testRender } from "@opentui/react/test-utils";
 import { act, useState } from "react";
 
+import { testRender } from "@/test-render";
 import { getControlHints } from "@/ui/control-hints";
 import { Box } from "@/ui/primitives/box";
 import { ThemeProvider } from "@/ui/theme-provider";

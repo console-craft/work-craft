@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 
 import { type BoxRenderable, parseColor, TextAttributes, type TextRenderable } from "@opentui/core";
-import { testRender } from "@opentui/react/test-utils";
 import { act, type Dispatch, type SetStateAction, useState } from "react";
 
+import { testRender } from "@/test-render";
 import { Box } from "@/ui/primitives/box";
 import { Text, type TextVariant } from "@/ui/primitives/text";
 import type { ColorToken, Theme } from "@/ui/theme";

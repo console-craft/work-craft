@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 
-import { testRender } from "@opentui/react/test-utils";
 import { act } from "react";
 
+import { testRender } from "@/test-render";
 import { Text } from "@/ui/primitives/text.tsx";
 import { ThemeProvider, useTheme } from "@/ui/theme-provider.tsx";
 import { defaultTheme } from "@/ui/themes/default.ts";

@@ -8,12 +8,12 @@ import {
   TextareaRenderable,
   TextRenderable,
 } from "@opentui/core";
-import { testRender } from "@opentui/react/test-utils";
 import { act } from "react";
 
 import { ComponentsDemo } from "@/demos/components";
 import { ControlsDemo } from "@/demos/controls";
 import { DemoPage } from "@/demos/demo-page";
+import { testRender } from "@/test-render";
 import { getFocusableRenderables } from "@/ui/focus-utils";
 import { Text } from "@/ui/primitives/text";
 import { ThemeProvider } from "@/ui/theme-provider";

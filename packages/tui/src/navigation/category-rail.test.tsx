@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
 
 import { parseColor, type TextRenderable } from "@opentui/core";
-import { testRender } from "@opentui/react/test-utils";
 import { act } from "react";
 
 import { CategoryRail } from "@/navigation/category-rail";
 import { snapshotFixture } from "@/test-fixtures";
+import { testRender } from "@/test-render";
 import { getFocusableRenderables } from "@/ui/focus-utils";
 import { icons } from "@/ui/icons/nerd";
 import { Box } from "@/ui/primitives/box";

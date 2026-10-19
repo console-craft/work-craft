@@ -2,11 +2,11 @@ import { expect, test } from "bun:test";
 
 import { EmbeddedTerminalRenderable } from "@opentui/core";
 import { extend } from "@opentui/react";
-import { testRender as renderWithoutTheme } from "@opentui/react/test-utils";
 import type { LayoutNode, Snapshot } from "@work-craft/server/client";
 import { act, type ReactNode, useState } from "react";
 
 import { snapshotFixture } from "@/test-fixtures.ts";
+import { testRender as renderWithoutTheme } from "@/test-render";
 import { Box } from "@/ui/primitives/box.tsx";
 import { ThemeProvider } from "@/ui/theme-provider.tsx";
 import { defaultTheme } from "@/ui/themes/default.ts";
@@ -101,6 +101,86 @@ test("terminal renderer identity includes the daemon epoch and replay cursor", (
     "pane-1:epoch-2:42",
   );
 });
+
+for (const source of ["history", "chunks"] as const) {
+  for (const { width, height, row } of [
+    { width: 120, height: 30, row: 0 },
+    { width: 80, height: 25, row: 0 },
+    { width: 120, height: 45, row: 29 },
+  ]) {
+    test(`${source}: tab switching preserves prompt coordinates in a ${width}x${height} host`, async () => {
+      const snapshot = surfaceSnapshot();
+      snapshot.tabs.push({
+        ...snapshot.tabs[0]!,
+        id: "tab-2",
+        position: 1,
+        layout: { type: "pane", paneId: "pane-2" },
+      });
+      snapshot.panes.push({ ...snapshot.panes[0]!, id: "pane-2" });
+      const output = new TextEncoder().encode(
+        `\x1b[2J\x1b[${row + 1};1HLEFT\x1b[${width - 10}GRIGHT\r\n$ `,
+      );
+      let activate!: (id: string) => void;
+      let deliver!: () => void;
+      function Fixture() {
+        const [tabId, setTabId] = useState("tab-1");
+        const [delivered, setDelivered] = useState(source === "history");
+        activate = setTabId;
+        deliver = () => setDelivered(true);
+        return (
+          <SurfaceView
+            {...recoveryProps}
+            snapshot={snapshot}
+            surface={{ ...snapshot.surfaces[0]!, activeTabId: tabId }}
+            stream={null}
+            terminals={
+              new Map([
+                [
+                  "pane-1",
+                  {
+                    epoch: snapshot.epoch,
+                    history: source === "history" ? output : new Uint8Array(),
+                    historyCursor: source === "history" ? output.byteLength : 0,
+                    chunks:
+                      source === "chunks" && delivered
+                        ? [{ cursor: output.byteLength, data: output }]
+                        : [],
+                  },
+                ],
+              ])
+            }
+            focusedPaneId={tabId === "tab-1" ? "pane-1" : "pane-2"}
+            workbenchFocused
+            undersized={false}
+            onFocusPane={() => {}}
+            onTerminalReady={() => {}}
+          />
+        );
+      }
+      const setup = await testRender(<Fixture />, { width, height });
+      function screen() {
+        return (
+          setup.renderer.root.findDescendantById("terminal:pane-1") as EmbeddedTerminalRenderable
+        ).screen();
+      }
+      try {
+        await setup.flush();
+        act(deliver);
+        await setup.flush();
+        expect((screen().lines[row] ?? "").indexOf("RIGHT")).toBe(width - 11);
+        expect(screen().cursor).toMatchObject({ x: 2, y: row + 1 });
+        act(() => activate("tab-2"));
+        await setup.flush();
+        act(() => activate("tab-1"));
+        await setup.flush();
+        expect((screen().lines[row] ?? "").indexOf("RIGHT")).toBe(width - 11);
+        expect(screen().cursor).toMatchObject({ x: 2, y: row + 1 });
+      } finally {
+        act(() => setup.renderer.destroy());
+      }
+    });
+  }
+}
 
 for (const direction of ["horizontal", "vertical"] as const) {
   test(`${direction}: inserting and equalizing splits retains every existing terminal object`, async () => {

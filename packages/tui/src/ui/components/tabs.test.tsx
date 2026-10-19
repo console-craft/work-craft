@@ -8,9 +8,9 @@ import {
   type ScrollBoxRenderable,
   type TextRenderable,
 } from "@opentui/core";
-import { testRender } from "@opentui/react/test-utils";
 import { act, createRef, type Dispatch, type SetStateAction, useState } from "react";
 
+import { testRender } from "@/test-render";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/ui/components/tabs";
 import { getControlHints } from "@/ui/control-hints";
 import { Button } from "@/ui/controls/button";

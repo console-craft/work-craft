@@ -6,9 +6,9 @@ import {
   parseColor,
   type ScrollBoxRenderable,
 } from "@opentui/core";
-import { testRender } from "@opentui/react/test-utils";
 import { act, createRef, type Dispatch, type SetStateAction, useState } from "react";
 
+import { testRender } from "@/test-render";
 import { getControlHints } from "@/ui/control-hints";
 import { Button } from "@/ui/controls/button";
 import { Input } from "@/ui/controls/input";

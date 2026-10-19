@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test";
 
 import { BoxRenderable, parseColor, type ScrollBoxRenderable } from "@opentui/core";
-import { testRender } from "@opentui/react/test-utils";
 import { act, useState } from "react";
 
 import { navigatorEntries } from "@/navigation/model.ts";
 import { Navigator } from "@/navigation/navigator.tsx";
 import { snapshotFixture } from "@/test-fixtures.ts";
+import { testRender } from "@/test-render";
 import { ThemeProvider } from "@/ui/theme-provider";
 import { defaultTheme } from "@/ui/themes/default";
 
@@ -46,7 +46,7 @@ async function fixture() {
     );
   }
   const setup = await testRender(<Fixture />, { width: 50, height: 18 });
-  await setup.flush();
+  await act(async () => setup.flush());
   return { ...setup, opened, candidates };
 }
 

@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
 
 import { parseColor, type ScrollBoxRenderable, type TextRenderable } from "@opentui/core";
-import { testRender } from "@opentui/react/test-utils";
 import { act } from "react";
 
 import { ComponentsDemo } from "@/demos/components";
+import { testRender } from "@/test-render";
 import { getFocusableRenderables } from "@/ui/focus-utils";
 import { catppuccinTheme } from "@/ui/themes/catppuccin";
 

@@ -6,9 +6,9 @@ import {
   RGBA,
   type ScrollBoxRenderable,
 } from "@opentui/core";
-import { testRender } from "@opentui/react/test-utils";
 import { act, type Dispatch, type ReactNode, type SetStateAction, useState } from "react";
 
+import { testRender } from "@/test-render";
 import {
   Command,
   CommandEmpty,

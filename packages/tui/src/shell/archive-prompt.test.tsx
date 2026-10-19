@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 
-import { testRender } from "@opentui/react/test-utils";
 import { act } from "react";
 
 import { ArchivePrompt } from "@/shell/archive-prompt.tsx";
+import { testRender } from "@/test-render";
 import { Dialog, DialogContent } from "@/ui/components/dialog";
 import { ThemeProvider } from "@/ui/theme-provider";
 import { defaultTheme } from "@/ui/themes/default";

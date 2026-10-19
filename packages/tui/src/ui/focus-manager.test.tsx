@@ -2,9 +2,9 @@ import { expect, test } from "bun:test";
 
 import { CliRenderEvents, type Renderable } from "@opentui/core";
 import { useRenderer } from "@opentui/react";
-import { testRender } from "@opentui/react/test-utils";
 import { act, type Dispatch, type SetStateAction, useLayoutEffect, useState } from "react";
 
+import { testRender } from "@/test-render";
 import { getControlHints } from "@/ui/control-hints";
 import { Button } from "@/ui/controls/button";
 import { Radio, RadioGroup } from "@/ui/controls/radio";

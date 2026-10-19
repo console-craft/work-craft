@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
 
 import type { InputRenderable } from "@opentui/core";
-import { testRender } from "@opentui/react/test-utils";
 import type { Snapshot } from "@work-craft/server/client";
 import { act } from "react";
 
 import { SessionChooser } from "@/shell/session-chooser";
+import { testRender } from "@/test-render";
 import { Dialog, DialogContent } from "@/ui/components/dialog";
 import { ThemeProvider } from "@/ui/theme-provider";
 import { defaultTheme } from "@/ui/themes/default";

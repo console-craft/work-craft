@@ -12,7 +12,6 @@ import {
   TextRenderable,
 } from "@opentui/core";
 import { extend } from "@opentui/react";
-import { testRender as renderWithoutTheme } from "@opentui/react/test-utils";
 import {
   ApiError,
   type Command,
@@ -33,6 +32,7 @@ import type { DialogState } from "@/shell/state";
 import { StatusBar } from "@/shell/status-bar.tsx";
 import { WorkspaceBar } from "@/shell/workspace-bar.tsx";
 import { snapshotFixture } from "@/test-fixtures.ts";
+import { testRender as renderWithoutTheme } from "@/test-render";
 import { Dialog } from "@/ui/components/dialog";
 import { getControlHints } from "@/ui/control-hints";
 import { isEligibleFocusTarget } from "@/ui/focus-utils";
@@ -2847,6 +2847,25 @@ async function localTabFixture(rememberDestination = true, count = 2, creating =
     previous: () => act(async () => setup.mockInput.pressKey("[", { hyper: true })),
   };
 }
+
+test("tab entry waits across a frame before the new terminal has native layout", async () => {
+  const setup = await localTabFixture(false);
+  try {
+    await setup.next();
+    await setup.respond();
+    setup.publish(twoTabSnapshot("tab-2", 5));
+    const terminal = setup.renderer.root.findDescendantById("terminal:pane-2a")!;
+    expect(terminal.width).toBe(0);
+    act(() => setup.renderer.emit(CliRenderEvents.FRAME, { frameId: 100 }));
+    expect(statusText(setup)).not.toContain("too small");
+    await setup.flush();
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("terminal:pane-2a");
+    await act(async () => setup.mockInput.pressKey("x"));
+    expect(setup.received).toEqual([{ paneId: "pane-2a", bytes: [120] }]);
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
 
 test("explicit tab entry focuses the selected exited action without pressing; action-source Hyper and leader never become terminal input", async () => {
   const setup = await localTabFixture(false);

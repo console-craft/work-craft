@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 
 import type { InputRenderable } from "@opentui/core";
-import { testRender } from "@opentui/react/test-utils";
 import { act, type Dispatch, type SetStateAction, useState } from "react";
 
+import { testRender } from "@/test-render";
 import { NumberInput } from "@/ui/controls/number";
 import { ThemeProvider } from "@/ui/theme-provider";
 import { defaultTheme } from "@/ui/themes/default";

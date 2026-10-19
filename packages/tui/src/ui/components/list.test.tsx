@@ -9,7 +9,6 @@ import {
   type ScrollBoxRenderable,
   type TextRenderable,
 } from "@opentui/core";
-import { testRender } from "@opentui/react/test-utils";
 import {
   act,
   createRef,
@@ -19,6 +18,7 @@ import {
   useState,
 } from "react";
 
+import { testRender } from "@/test-render";
 import { List, type ListCursorHandle, ListItem, type ListProps } from "@/ui/components/list";
 import { type ControlHintSource, getControlHints } from "@/ui/control-hints";
 import { Button } from "@/ui/controls/button";

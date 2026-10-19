@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
 
 import type { InputRenderable } from "@opentui/core";
-import { testRender } from "@opentui/react/test-utils";
 import { act } from "react";
 
 import { CreatePrompt } from "@/shell/create-prompt";
 import type { CreateKind } from "@/shell/model";
+import { testRender } from "@/test-render";
 import { Dialog, DialogContent } from "@/ui/components/dialog";
 import { FocusManager } from "@/ui/focus-manager";
 import { Box } from "@/ui/primitives/box";

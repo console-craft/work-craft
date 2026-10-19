@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 
-import { testRender } from "@opentui/react/test-utils";
 import { act, type Dispatch, type ReactNode, type SetStateAction, useState } from "react";
 
+import { testRender } from "@/test-render";
 import { Dialog, DialogContent } from "@/ui/components/dialog";
 import {
   Menu,

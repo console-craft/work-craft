@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 
 import { type BoxRenderable, TextRenderable } from "@opentui/core";
-import { testRender } from "@opentui/react/test-utils";
 import { act, useState } from "react";
 
+import { testRender } from "@/test-render";
 import { Badge } from "@/ui/components/badge";
 import {
   Table,

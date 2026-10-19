@@ -8,10 +8,10 @@ import {
   TextRenderable,
 } from "@opentui/core";
 import { setRendererCapabilities } from "@opentui/core/testing";
-import { testRender } from "@opentui/react/test-utils";
 import { act } from "react";
 
 import { ComponentsDemo } from "@/demos/components";
+import { testRender } from "@/test-render";
 import { getFocusableRenderables } from "@/ui/focus-utils";
 import * as notifications from "@/ui/notifications";
 import { defaultTheme } from "@/ui/themes/default";
