@@ -4,30 +4,44 @@ import {
   type Renderable,
   type TextareaRenderable,
 } from "@opentui/core";
-import { Edge, Unit } from "@opentui/core/yoga";
+import { Edge, PositionType, Unit } from "@opentui/core/yoga";
 import { Children, type ReactNode, type Ref } from "react";
 
-/** OpenTUI exposes requested padding; Yoga resolves percentages against the parent's content width. */
+function horizontalBorderWidth(node: Renderable): number {
+  const border = node instanceof BoxRenderable ? node.border : false;
+  return Array.isArray(border)
+    ? Number(border.includes("left")) + Number(border.includes("right"))
+    : border
+      ? 2
+      : 0;
+}
+
+/** Resolve requested Yoga padding when allocating columns inside the laid-out content area. */
 export function getContentWidth(node: Renderable): number {
   let padding = 0;
+  let referenceWidth: number | undefined;
   for (const edge of [Edge.Left, Edge.Right]) {
     const value = [edge, Edge.Horizontal, Edge.All]
       .map((candidate) => node.getPadding(candidate))
       .find((value) => Number.isFinite(value.value));
     if (value) {
-      padding +=
-        value.unit === Unit.Percent
-          ? (value.value * (node.parent ? getContentWidth(node.parent) : 0)) / 100
-          : value.value;
+      if (value.unit === Unit.Percent) {
+        if (referenceWidth === undefined) {
+          const parent = node.parent;
+          if (node.getPositionType() === PositionType.Absolute) {
+            // Absolute percentages use the containing block's padding box, not its content box.
+            referenceWidth = parent ? parent.getLayout().width - horizontalBorderWidth(parent) : 0;
+          } else {
+            referenceWidth = parent ? getContentWidth(parent) : 0;
+          }
+        }
+        padding += (value.value * referenceWidth) / 100;
+      } else {
+        padding += value.value;
+      }
     }
   }
-  const border = node instanceof BoxRenderable ? node.border : false;
-  const borderWidth = Array.isArray(border)
-    ? Number(border.includes("left")) + Number(border.includes("right"))
-    : border
-      ? 2
-      : 0;
-  return Math.max(0, node.getLayout().width - padding - borderWidth);
+  return Math.max(0, node.getLayout().width - padding - horizontalBorderWidth(node));
 }
 
 // Focus
