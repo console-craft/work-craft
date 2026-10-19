@@ -53,6 +53,7 @@ export function TerminalPane({
   const notice = paneNotice(pane.processStatus, connected);
   const viewport = terminalRect(bounds, notice !== null);
   const terminal = useRef<EmbeddedTerminalRenderable>(null);
+  const resizePending = useRef(false);
   const rendered = useRef({ paneId: "", epoch: "", cursor: 0 });
   const running = pane.processStatus === "running";
   function acceptsInput(): boolean {
@@ -74,6 +75,21 @@ export function TerminalPane({
       canReactivate(pane.id)
     );
   }
+
+  function resizeTerminal(cols: number, rows: number): void {
+    resizePending.current = true;
+    if (acceptsInput() && resizeEnabled && canResize() && stream && cols >= 20 && rows >= 5) {
+      stream.resize(pane.id, cols, rows);
+      resizePending.current = false;
+    }
+  }
+
+  useLayoutEffect(() => {
+    // Uncovering a retained terminal does not emit another native resize event.
+    if (resizePending.current && terminal.current) {
+      resizeTerminal(terminal.current.width, terminal.current.height);
+    }
+  });
 
   useEffect(() => {
     const target = terminal.current;
@@ -150,11 +166,7 @@ export function TerminalPane({
             terminal.current?.focus();
           }
         }}
-        onTerminalResize={(cols, rows) => {
-          if (acceptsInput() && resizeEnabled && canResize() && cols >= 20 && rows >= 5) {
-            stream?.resize(pane.id, cols, rows);
-          }
-        }}
+        onTerminalResize={resizeTerminal}
       />
       {notice !== null ? (
         <Alert

@@ -1705,6 +1705,56 @@ test("same-batch split resize checks the bordered interior rather than stale nat
   }
 });
 
+for (const coverage of ["none", "dialog", "drawer"] as const) {
+  test(`${coverage} overlay restoration synchronizes the latest measured PTY size`, async () => {
+    const initial = splitSurfaceSnapshot();
+    initial.tabs[0]!.layout = { type: "pane", paneId: "pane-1" };
+    const setup = await liveInputFixture(initial);
+    try {
+      const terminal = setup.renderer.currentFocusedRenderable as EmbeddedTerminalRenderable;
+      const capturedInput = terminal.onData!;
+      if (coverage === "dialog") {
+        await act(async () => setup.mockInput.pressKey("s", { hyper: true }));
+      } else if (coverage === "drawer") {
+        act(() => setup.resize(100, 40));
+        await setup.flush();
+        await act(async () => setup.mockInput.pressKeys(["\x00b"]));
+      }
+      await setup.flush();
+      setup.resized.length = 0;
+      for (const [width, height] of coverage === "drawer"
+        ? [
+            [105, 42],
+            [110, 45],
+          ]
+        : [
+            [140, 42],
+            [150, 45],
+          ]) {
+        act(() => setup.resize(width!, height!));
+        await setup.flush();
+      }
+      if (coverage !== "none") {
+        capturedInput(Uint8Array.of(65), "input");
+        expect(setup.sent).toEqual([]);
+        expect(setup.resized).toEqual([]);
+        await act(async () => setup.mockInput.pressEscape());
+        await setup.flush();
+      }
+      const cols = coverage === "drawer" ? 103 : 98;
+      expect([terminal.width, terminal.height]).toEqual([cols, 38]);
+      expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBe(terminal);
+      expect(setup.resized).toContainEqual({ paneId: "pane-1", cols, rows: 38 });
+      setup.resized.length = 0;
+      await setup.flush();
+      expect(setup.resized).toEqual([]);
+    } finally {
+      act(() => setup.renderer.destroy());
+      setup.store.stop();
+    }
+  });
+}
+
 for (const coverage of ["dialog", "drawer", "guard", "height"] as const) {
   test(`${coverage} restoration cannot refocus a terminal that stopped while covered`, async () => {
     const setup = await liveInputFixture();
