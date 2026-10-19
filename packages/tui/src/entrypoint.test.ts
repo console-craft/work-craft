@@ -605,12 +605,24 @@ test("normal entrypoint Hyper tab switching and creation send sentinels only to 
           !accepted.panes.some(({ id }) => id === pane.id) && !createdPanes.includes(pane.id),
       )!.id;
       expect(tab.layout).toEqual({ type: "pane", paneId });
-      await waitForTerminalInput(tui, `Hyper+n from ${origin} native readiness`, createOutput);
+      await waitFor(
+        () => tui.output().slice(createOutput).includes(tab.title),
+        `Hyper+n from ${origin} created tab rendered`,
+        () => tui.output().slice(createOutput),
+      );
+      const renderedOutput = tui.output().lastIndexOf(tab.title) + tab.title.length;
+      await waitForTerminalInput(tui, `Hyper+n from ${origin} native readiness`, renderedOutput);
       tui.terminal.write(input.encode(`printf 'CREATE-${index}-%s\\n' sentinel\r`));
       const delivered = await waitForSnapshot(
         client,
         (snapshot) => terminalText(snapshot, paneId).includes(`CREATE-${index}-sentinel`),
         `Hyper+n from ${origin} sentinel without refocus`,
+        (snapshot) => {
+          const panes = snapshot.panes.map(
+            ({ id, processStatus }) => `${id} (${processStatus}): ${terminalText(snapshot, id)}`,
+          );
+          return `\nTarget: ${paneId}\n${panes.join("\n")}\nTUI: ${tui.output().slice(createOutput)}`;
+        },
       );
       for (const other of delivered.panes.filter((pane) => pane.id !== paneId)) {
         expect(terminalText(delivered, other.id)).not.toContain(`CREATE-${index}-sentinel`);
