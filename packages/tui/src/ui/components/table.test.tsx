@@ -366,6 +366,34 @@ test("collapsed columns cannot draw separators outside a narrow table", async ()
   }
 });
 
+test("percentage row padding uses the padded parent's content width", async () => {
+  const setup = await testRender(
+    <ThemeProvider theme={defaultTheme}>
+      <Stack paddingX={9} border>
+        <Table border="none" columns={[50, 50]} wrap={false}>
+          <TableBody>
+            <TableRow id="percent-row" paddingX="10%">
+              <TableCell>A</TableCell>
+              <TableCell>B</TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+      </Stack>
+    </ThemeProvider>,
+    { width: 100, height: 8 },
+  );
+  try {
+    await act(async () => setup.flush());
+    await act(async () => setup.flush());
+    const row = setup.renderer.root.findDescendantById("percent-row")!;
+    expect(row.width).toBe(80);
+    expect(row.getChildren().map((cell) => cell.width)).toEqual([32, 32]);
+    expect(row.getChildren()[0]!.screenX - row.screenX).toBe(8);
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
 test("row padding changes reallocate columns without an outer resize", async () => {
   function Content() {
     const [padding, setPadding] = useState(0);

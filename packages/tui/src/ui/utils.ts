@@ -1,5 +1,34 @@
-import type { KeyEvent, Renderable, TextareaRenderable } from "@opentui/core";
+import {
+  BoxRenderable,
+  type KeyEvent,
+  type Renderable,
+  type TextareaRenderable,
+} from "@opentui/core";
+import { Edge, Unit } from "@opentui/core/yoga";
 import { Children, type ReactNode, type Ref } from "react";
+
+/** OpenTUI exposes requested padding; Yoga resolves percentages against the parent's content width. */
+export function getContentWidth(node: Renderable): number {
+  let padding = 0;
+  for (const edge of [Edge.Left, Edge.Right]) {
+    const value = [edge, Edge.Horizontal, Edge.All]
+      .map((candidate) => node.getPadding(candidate))
+      .find((value) => Number.isFinite(value.value));
+    if (value) {
+      padding +=
+        value.unit === Unit.Percent
+          ? (value.value * (node.parent ? getContentWidth(node.parent) : 0)) / 100
+          : value.value;
+    }
+  }
+  const border = node instanceof BoxRenderable ? node.border : false;
+  const borderWidth = Array.isArray(border)
+    ? Number(border.includes("left")) + Number(border.includes("right"))
+    : border
+      ? 2
+      : 0;
+  return Math.max(0, node.getLayout().width - padding - borderWidth);
+}
 
 // Focus
 

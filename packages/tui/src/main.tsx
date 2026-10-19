@@ -52,3 +52,5 @@ if (process.env.CONTROLS_DEMO === "true" || process.env.COMPONENTS_DEMO === "tru
   });
 }
 createRoot(renderer).render(component);
+// Teardown is asynchronous in OpenTUI 0.6; propagate output failures to the entrypoint.
+await renderer.closed;

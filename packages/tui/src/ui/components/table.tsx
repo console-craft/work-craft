@@ -4,7 +4,6 @@ import {
   type OptimizedBuffer,
   type Renderable,
 } from "@opentui/core";
-import { Edge } from "@opentui/core/yoga";
 import {
   Children,
   createContext,
@@ -18,7 +17,7 @@ import {
 import { Box, type BoxProps } from "@/ui/primitives/box";
 import { Text, type TextProps } from "@/ui/primitives/text";
 import type { ThemeColor } from "@/ui/theme";
-import { isTextContent } from "@/ui/utils";
+import { getContentWidth, isTextContent } from "@/ui/utils";
 
 export type TableBorder = "none" | "minimal" | "full";
 export type TableColumnWidth = number | null;
@@ -348,9 +347,7 @@ export function TableRow({
       borderStyle={table.borderStyle}
       renderBefore={function (buffer, deltaTime) {
         // Padding can change the usable width without emitting a native size-change event.
-        const node = this.getLayoutNode();
-        const padding = node.getComputedPadding(Edge.Left) + node.getComputedPadding(Edge.Right);
-        const availableWidth = Math.max(0, Math.round(this.width - padding));
+        const availableWidth = Math.round(getContentWidth(this));
         if (availableWidth !== width) {
           setWidth(availableWidth);
         }

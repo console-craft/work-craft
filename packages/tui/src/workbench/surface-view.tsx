@@ -62,7 +62,7 @@ export function SurfaceView({
   const [size, setSize] = useState({ width: 0, height: 0 });
   function measure(this: BoxRenderable): void {
     // Native renderables clamp zero to one; project the actual available Yoga area.
-    const { width, height } = this.getLayoutNode().getComputedLayout();
+    const { width, height } = this.getLayout();
     setSize((previous) =>
       previous.width === width && previous.height === height ? previous : { width, height },
     );

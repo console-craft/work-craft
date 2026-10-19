@@ -100,13 +100,10 @@ for (const direction of ["single", "horizontal", "vertical"] as const) {
         const header = root.findDescendantById("shell-header")!;
         const status = root.findDescendantById("status")!;
         expect([status.screenY, status.height]).toEqual([height - 1, 1]);
-        expect([header.screenY, header.getLayoutNode().getComputedLayout().height]).toEqual([
-          0,
-          Math.min(3, height - 1),
-        ]);
+        expect([header.screenY, header.getLayout().height]).toEqual([0, Math.min(3, height - 1)]);
         expect(header.visible).toBe(height > 1);
         const body = root.findDescendantById("region:category")!.parent!;
-        expect(body.getLayoutNode().getComputedLayout().height).toBe(Math.max(0, height - 4));
+        expect(body.getLayout().height).toBe(Math.max(0, height - 4));
         if (height > 4) {
           expect(body.screenY).toBe(3);
         }

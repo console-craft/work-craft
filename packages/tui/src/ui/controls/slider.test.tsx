@@ -119,6 +119,8 @@ for (const orientation of ["horizontal", "vertical"] as const) {
         ),
       );
       expect(changes.at(-1)).toBe(20);
+      // Native capture excludes the dragged node from hits until the release frame.
+      await act(async () => setup.flush());
       await act(async () =>
         setup.mockMouse.click(
           slider.screenX,

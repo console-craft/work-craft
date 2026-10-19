@@ -8,7 +8,7 @@ import {
   RenderableEvents,
   TextBufferRenderable,
 } from "@opentui/core";
-import { Edge, Gutter, Unit } from "@opentui/core/yoga";
+import { Gutter, Unit } from "@opentui/core/yoga";
 import { useRenderer } from "@opentui/react";
 import {
   createContext,
@@ -34,7 +34,7 @@ import type { StackProps } from "@/ui/primitives/stack";
 import { Stack } from "@/ui/primitives/stack";
 import { Text } from "@/ui/primitives/text";
 import type { ThemeColor } from "@/ui/theme";
-import { assignRef, isTextContent } from "@/ui/utils";
+import { assignRef, getContentWidth, isTextContent } from "@/ui/utils";
 
 interface TabsTriggerRecord {
   disabled: boolean;
@@ -100,7 +100,7 @@ function hasFocusableTarget(node: Renderable): boolean {
 }
 
 function getRowGap(node: Renderable): number {
-  const gap = node.getLayoutNode().getGap(Gutter.Column);
+  const gap = node.getGap(Gutter.Column);
   return Number.isFinite(gap.value)
     ? gap.value * (gap.unit === Unit.Percent ? node.width / 100 : 1)
     : 0;
@@ -684,7 +684,6 @@ export function TabsTrigger({
         return;
       }
       const children = label.getChildren().filter((child) => child.visible);
-      const layout = label.getLayoutNode();
       const width =
         children.reduce(
           (total, child) =>
@@ -692,18 +691,14 @@ export function TabsTrigger({
           0,
         ) +
         Math.max(0, children.length - 1) * getRowGap(label) +
-        layout.getComputedPadding(Edge.Left) +
-        layout.getComputedPadding(Edge.Right);
+        label.getLayout().width -
+        getContentWidth(label);
       const row = triggerRef.current?.parent;
       const siblings = row?.getChildren() ?? [];
       const expanded = siblings.filter(
-        (node) =>
-          node.getLayoutNode().getFlexBasis().value === 0 && node.getLayoutNode().getFlexGrow() > 0,
+        (node) => node.getFlexBasis().value === 0 && node.getFlexGrow() > 0,
       );
-      const weight = expanded.reduce(
-        (total, node) => total + node.getLayoutNode().getFlexGrow(),
-        0,
-      );
+      const weight = expanded.reduce((total, node) => total + node.getFlexGrow(), 0);
       const fixedWidth = siblings
         .filter((node) => !expanded.includes(node))
         .reduce((total, node) => total + node.width, 0);

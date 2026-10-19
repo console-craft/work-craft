@@ -958,6 +958,33 @@ async function startDaemon(
   }
 }
 
+test("TUI reports asynchronous output failure with a nonzero exit", async () => {
+  const script = `
+    setTimeout(() => process.stdout.emit("error", new Error("test-output-failed")), 500);
+    await import(${JSON.stringify(join(ROOT, "packages/tui/src/main.tsx"))});
+  `;
+  const child = Bun.spawn([process.execPath, "--eval", script], {
+    cwd: ROOT,
+    detached: true,
+    env: { ...process.env, CONTROLS_DEMO: "true", COMPONENTS_DEMO: "false" },
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  try {
+    const [output, errors, code] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ]);
+    expect(output).toContain("BUTTONS");
+    expect(code).not.toBe(0);
+    expect(errors).toContain("test-output-failed");
+  } finally {
+    await stopProcessGroup(child);
+  }
+});
+
 for (const { kind, tabs, placeholder } of [
   { kind: "input", tabs: 4, placeholder: "Name" },
   { kind: "textarea", tabs: 6, placeholder: "Bio" },
