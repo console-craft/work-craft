@@ -140,17 +140,18 @@ for (const position of ["top-left", "top-right", "bottom-left", "bottom-right"] 
         expect(node.screenX).toBeGreaterThanOrEqual(0);
         expect(node.screenX + node.width).toBeLessThanOrEqual(20);
       }
-      const stack = newest.parent!;
-      expect(stack.screenY).toBeGreaterThanOrEqual(0);
-      expect(stack.screenY + stack.height).toBeLessThanOrEqual(12);
-      expect(stack.overflow).toBe("hidden");
+      const clip = newest.parent!;
+      expect(clip.parent).toBe(setup.renderer.root);
+      expect(clip.screenY).toBeGreaterThanOrEqual(0);
+      expect(clip.screenY + clip.height).toBeLessThanOrEqual(12);
+      expect(clip.overflow).toBe("hidden");
       for (const size of [2, 1]) {
         act(() => setup.resize(size, size));
         await act(async () => setup.flush());
-        expect(stack.screenX).toBe(0);
-        expect(stack.width).toBe(size);
-        expect(stack.screenY).toBe(0);
-        expect(stack.height).toBeLessThanOrEqual(size);
+        expect(clip.screenX).toBe(0);
+        expect(clip.width).toBe(size);
+        expect(clip.screenY).toBe(0);
+        expect(clip.height).toBeLessThanOrEqual(size);
       }
     } finally {
       act(() => setup.renderer.destroy());
@@ -402,20 +403,21 @@ test("root portal escapes scrolling parents, preserves gap hits and isolates toa
     const newer = setup.renderer.root.findDescendantById(`toast-${second}`)!;
     expect(newer.parent!.parent).toBe(setup.renderer.root);
     expect(newer.parent!.zIndex).toBeGreaterThan(1000);
+    expect(newer.parent).not.toBe(older.parent);
     expect(newer.screenX + newer.width).toBe(79);
     expect(newer.screenY + newer.height).toBe(23);
-    // Exercise stack transparency with a real gap even though the default is gapless.
+    // A shorter toast must leave background hits beside it, without a stack-wide hit area.
     act(() => {
-      (newer.parent as BoxRenderable).gap = 1;
+      older.parent!.width = 24;
     });
     await act(async () => setup.flush());
-    const gapY = older.screenY + older.height;
-    const gapHit = Renderable.renderablesByNumber.get(setup.renderer.hitTest(newer.screenX, gapY));
+    const gapX = newer.screenX;
+    const gapY = older.screenY;
+    const gapHit = Renderable.renderablesByNumber.get(setup.renderer.hitTest(gapX, gapY));
     expect(gapHit).toBeDefined();
-    expect(gapHit).not.toBe(newer.parent);
     expect(gapHit).not.toBe(older);
     expect(gapHit).not.toBe(newer);
-    await act(async () => setup.mockMouse.click(newer.screenX, gapY));
+    await act(async () => setup.mockMouse.click(gapX, gapY));
     await act(async () => setup.mockMouse.click(0, 12));
     expect(clicks).toBe(2);
     act(() => background.focus());

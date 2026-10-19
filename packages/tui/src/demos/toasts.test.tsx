@@ -110,7 +110,7 @@ test("demo variants use isolated history and burst overflow leaves scrolling lay
     expect(findText(root, "History: 5 · Viewed: 0")).toBeDefined();
     const newest = root.findDescendantById(`toast-${records[0]!.id}`)!;
     expect(newest.parent!.parent).toBe(root);
-    expect(root.getChildren()).toHaveLength(2);
+    expect(root.getChildren()).toHaveLength(4);
     expect(newest.screenX + newest.width).toBe(99);
     expect(newest.screenY + newest.height).toBe(23);
     expect({

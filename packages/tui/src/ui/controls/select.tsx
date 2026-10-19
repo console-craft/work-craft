@@ -221,18 +221,19 @@ class ItemSelectRenderable extends SelectRenderable {
     }
     const { rowHeight, visible, offset, markerRow } = this.getItemLayout();
     const markerCell = markerRow * this.width + this.width - 1;
-    const foreground = this.frameBuffer.buffers.fg;
-    for (let row = 0; row < visible; row++) {
-      if (this.options[offset + row]?.disabled && (row + 1) * rowHeight <= this.height) {
-        const start = row * rowHeight * this.width;
-        const end = ((row + 1) * rowHeight - this.optionSpacing) * this.width;
-        for (let cell = start; cell < end; cell++) {
-          if (cell !== markerCell) {
-            foreground.set(this.mutedColor.buffer, cell * 4);
+    this.frameBuffer.withBuffers(({ fg }) => {
+      for (let row = 0; row < visible; row++) {
+        if (this.options[offset + row]?.disabled && (row + 1) * rowHeight <= this.height) {
+          const start = row * rowHeight * this.width;
+          const end = ((row + 1) * rowHeight - this.optionSpacing) * this.width;
+          for (let cell = start; cell < end; cell++) {
+            if (cell !== markerCell) {
+              fg.set(this.mutedColor.buffer, cell * 4);
+            }
           }
         }
       }
-    }
+    });
   }
 }
 

@@ -1,5 +1,5 @@
 import { BoxRenderable, MouseButton, type MouseEvent } from "@opentui/core";
-import { createPortal, extend, useRenderer, useTerminalDimensions } from "@opentui/react";
+import { createPortal, useRenderer, useTerminalDimensions } from "@opentui/react";
 import { type ReactNode, useLayoutEffect, useRef, useSyncExternalStore } from "react";
 
 import { symbols } from "@/ui/icons/symbols";
@@ -14,21 +14,6 @@ import { Box } from "@/ui/primitives/box";
 import { HStack } from "@/ui/primitives/hstack";
 import { Stack } from "@/ui/primitives/stack";
 import { Text } from "@/ui/primitives/text";
-
-// Native transparent boxes still claim the hit grid. Only children should claim this stack.
-class ToastStackRenderable extends BoxRenderable {
-  override render(): void {
-    this.markClean();
-  }
-}
-
-declare module "@opentui/react" {
-  interface OpenTUIComponents {
-    "toast-stack": typeof ToastStackRenderable;
-  }
-}
-
-extend({ "toast-stack": ToastStackRenderable });
 
 export type ToasterPosition = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 
@@ -48,6 +33,7 @@ export function Toaster({
   const dimensions = useTerminalDimensions();
   const records = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
   const control = getNotificationStoreController(store);
+  const clips = useRef(new Map<string, BoxRenderable>());
   const limitRef = useRef(maxVisible);
   limitRef.current = maxVisible;
 
@@ -57,36 +43,63 @@ export function Toaster({
   const active = records.filter(
     (record) => record.channel === "toast" && record.dismissedAt === null,
   );
-  if (active.length === 0) {
-    return null;
-  }
   const atTop = position.startsWith("top");
   const atLeft = position.endsWith("left");
   const insetX = dimensions.width >= 3 ? 1 : 0;
   const insetY = dimensions.height >= 3 ? 1 : 0;
   const width = Math.max(0, Math.min(48, dimensions.width - insetX * 2));
-  const ordered = atTop ? active : [...active].reverse();
+  const availableHeight = Math.max(0, dimensions.height - insetY * 2);
+
+  function placeToasts(): void {
+    let offset = 0;
+    for (const record of active) {
+      const clip = clips.current.get(record.id);
+      if (!clip) {
+        continue;
+      }
+      if (atTop) {
+        clip.top = insetY + offset;
+      } else {
+        clip.bottom = insetY + offset;
+      }
+      clip.maxHeight = Math.max(0, availableHeight - offset);
+      offset += clip.getChildren()[0]?.getLayout().height ?? 0;
+    }
+  }
+
+  useLayoutEffect(placeToasts);
 
   return createPortal(
-    <toast-stack
-      position="absolute"
-      top={atTop ? insetY : undefined}
-      bottom={atTop ? undefined : insetY}
-      left={atLeft ? insetX : undefined}
-      right={atLeft ? undefined : insetX}
-      width={width}
-      maxHeight={Math.max(0, dimensions.height - insetY * 2)}
-      flexDirection="column"
-      justifyContent={atTop ? "flex-start" : "flex-end"}
-      gap={0}
-      overflow="hidden"
-      zIndex={1100}
-      focusable={false}
-    >
-      {ordered.map((record) => (
-        <ToastItem key={record.id} record={record} store={store} />
-      ))}
-    </toast-stack>,
+    active.map((record) => {
+      // Native containers claim mouse hits, so clip each toast without a stack-wide overlay.
+      return (
+        <Box
+          key={record.id}
+          ref={(node) => {
+            if (node) {
+              clips.current.set(record.id, node);
+            }
+            return () => {
+              clips.current.delete(record.id);
+            };
+          }}
+          position="absolute"
+          top={atTop ? insetY : undefined}
+          bottom={atTop ? undefined : insetY}
+          left={atLeft ? insetX : undefined}
+          right={atLeft ? undefined : insetX}
+          width={width}
+          maxHeight={availableHeight}
+          flexDirection="column"
+          justifyContent={atTop ? "flex-start" : "flex-end"}
+          overflow="hidden"
+          zIndex={1100}
+          focusable={false}
+        >
+          <ToastItem record={record} store={store} onSizeChange={placeToasts} />
+        </Box>
+      );
+    }),
     renderer.root,
     null,
   );
@@ -117,9 +130,11 @@ function stopPointer(event: MouseEvent): void {
 function ToastItem({
   record,
   store,
+  onSizeChange,
 }: {
   record: NotificationRecord;
   store: NotificationStore;
+  onSizeChange(): void;
 }): ReactNode {
   const control = getNotificationStoreController(store);
   const action = control.getAction(record.id);
@@ -147,6 +162,7 @@ function ToastItem({
       border
       borderColor={record.variant === "default" ? "foreground" : record.variant}
       paddingX={1}
+      onSizeChange={onSizeChange}
       onMouseOver={() => control.setHovered(record.id, true)}
       onMouseOut={function (event) {
         // Native out events also bubble when moving between descendants.
