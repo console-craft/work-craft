@@ -1,9 +1,15 @@
+import { Database } from "bun:sqlite";
 import { expect, spyOn, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { chmod, mkdir, mkdtemp, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { createConnection, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import * as appModule from "../application/app.ts";
+import { applyCommand } from "../application/commands.ts";
+import { inspectDirectory } from "../application/directories.ts";
+import { registerDirectory } from "../application/items.ts";
 import { createClient } from "../client.ts";
 import { openDatabase } from "../persistence/database.ts";
 import { runDaemon } from "./lifecycle.ts";
@@ -11,6 +17,140 @@ import { resolvePaths } from "./paths.ts";
 
 const ROOT = join(import.meta.dir, "../../../..");
 const MAIN_PATH = join(import.meta.dir, "../main.ts");
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+async function within<T>(promise: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("Timed out waiting for directory lifecycle")),
+          3000,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function git(path: string, ...args: string[]): void {
+  const result = Bun.spawnSync(["git", "-C", path, ...args], {
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: "Test",
+      GIT_AUTHOR_EMAIL: "t@example.com",
+      GIT_COMMITTER_NAME: "Test",
+      GIT_COMMITTER_EMAIL: "t@example.com",
+    },
+  });
+  if (!result.success) {
+    throw new Error(result.stderr.toString());
+  }
+}
+
+async function seedDirectory(home: string, repository = false, linked = false) {
+  const paths = resolvePaths({ WORK_CRAFT_HOME: home });
+  const path = join(home, "target");
+  await mkdir(path);
+  const canonical = await realpath(path);
+  if (repository) {
+    git(canonical, "init", "--initial-branch=before");
+    git(canonical, "commit", "--allow-empty", "-m", "initial");
+    if (linked) {
+      git(canonical, "worktree", "add", "-b", "feature", join(await realpath(home), "linked"));
+    }
+  }
+  const db = openDatabase(paths.databasePath);
+  try {
+    const sessionId = applyCommand(db, { type: "session.create", name: "Main" }).result.id;
+    const workspaceId = applyCommand(db, { type: "workspace.create", sessionId, name: "Work" })
+      .result.id;
+    const rootId = registerDirectory(db, workspaceId, await inspectDirectory(canonical)).itemId;
+    return { paths, path: canonical, rootId };
+  } finally {
+    db.close();
+  }
+}
+
+function holdDirectoryInspection(unavailableRoot?: string) {
+  const entered = deferred<AbortSignal | undefined>();
+  const release = deferred<void>();
+  const createApp = appModule.createApp;
+  const restores: (() => void)[] = [];
+  let app: appModule.WorkCraftApp | undefined;
+  let inspected = false;
+  let cleaned = false;
+  let closedTooEarly = false;
+  let databaseClosed = false;
+  let historyClosed = false;
+  const create = spyOn(appModule, "createApp").mockImplementation((options) => {
+    app = createApp({
+      ...options,
+      inspectDirectory: async (path, signal) => {
+        if (path === unavailableRoot) {
+          return { path, available: false, reason: "Primary unreachable", git: null };
+        }
+        inspected = true;
+        entered.resolve(signal);
+        await release.promise;
+        cleaned = true;
+        return { path, available: true, git: null };
+      },
+    });
+    const closeDatabase = options.db.close.bind(options.db);
+    const dbSpy = spyOn(options.db, "close").mockImplementation(() => {
+      closedTooEarly ||= !cleaned;
+      databaseClosed = true;
+      return closeDatabase();
+    });
+    const closeHistory = app.history.close.bind(app.history);
+    const historySpy = spyOn(app.history, "close").mockImplementation(() => {
+      closedTooEarly ||= !cleaned;
+      historyClosed = true;
+      return closeHistory();
+    });
+    restores.push(
+      () => dbSpy.mockRestore(),
+      () => historySpy.mockRestore(),
+    );
+    return app;
+  });
+  return {
+    entered,
+    release,
+    get app() {
+      return app;
+    },
+    get inspected() {
+      return inspected;
+    },
+    get closedTooEarly() {
+      return closedTooEarly;
+    },
+    get databaseClosed() {
+      return databaseClosed;
+    },
+    get historyClosed() {
+      return historyClosed;
+    },
+    restore() {
+      create.mockRestore();
+      for (const restore of restores) {
+        restore();
+      }
+    },
+  };
+}
 
 function isAlive(pid: number): boolean {
   try {
@@ -660,6 +800,136 @@ test("bounds graceful shutdown when an unrelated request is hung", async () => {
   }
 });
 
+for (const type of ["daemon.stop", "daemon.destroy"] as const) {
+  for (const fallback of [false, true]) {
+    test(`${type} awaits ${fallback ? "fallback" : "directory"} scan cleanup before history and SQLite close`, async () => {
+      const home = await mkdtemp(join(tmpdir(), "work-craft-discovery-stop-"));
+      const { paths, path } = await seedDirectory(home, fallback, fallback);
+      const held = holdDirectoryInspection(fallback ? path : undefined);
+      let settled = false;
+      const stopped = runDaemon(paths).then(
+        () => {
+          settled = true;
+          return null;
+        },
+        (error: unknown) => {
+          settled = true;
+          return error;
+        },
+      );
+      try {
+        await waitForHealth(paths.socketPath, []);
+        expect(held.inspected).toBe(true);
+        const signal = await within(held.entered.promise);
+        const revision = held.app!.health().revision;
+        expect(
+          await createClient({ socketPath: paths.socketPath }).command({ type }),
+        ).toMatchObject({
+          ok: true,
+        });
+        expect(signal?.aborted).toBe(true);
+        expect(settled).toBe(false);
+        expect(held.databaseClosed).toBe(false);
+        expect(held.historyClosed).toBe(false);
+        held.release.resolve();
+        expect(await within(stopped)).toBeNull();
+        expect(held.closedTooEarly).toBe(false);
+        expect(held.databaseClosed).toBe(true);
+        expect(held.historyClosed).toBe(true);
+        expect(held.app!.health().revision).toBe(revision);
+        expect(await Bun.file(paths.databasePath).exists()).toBe(type !== "daemon.destroy");
+        expect(await Bun.file(paths.lockPath).exists()).toBe(false);
+        await expect(stat(paths.socketPath)).rejects.toThrow();
+      } finally {
+        held.release.resolve();
+        await held.app?.closeDirectoryRefresh();
+        if (existsSync(paths.socketPath)) {
+          await createClient({ socketPath: paths.socketPath }).command({ type: "daemon.stop" });
+        }
+        await within(stopped);
+        held.restore();
+        await rm(home, { recursive: true, force: true });
+      }
+    });
+  }
+}
+
+test("HTTP startup failure cancels and drains directory discovery before closing SQLite", async () => {
+  const home = await mkdtemp(join(tmpdir(), "work-craft-discovery-startup-"));
+  const { paths } = await seedDirectory(home);
+  const held = holdDirectoryInspection();
+  const serve = spyOn(Bun, "serve").mockImplementationOnce(() => {
+    throw new Error("discovery test listen failure");
+  });
+  const stopped = runDaemon(paths).then(
+    () => null,
+    (error: unknown) => error,
+  );
+  try {
+    const signal = await within(held.entered.promise);
+    expect(signal?.aborted).toBe(true);
+    expect(held.databaseClosed).toBe(false);
+    held.release.resolve();
+    const error = await within(stopped);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("discovery test listen failure");
+    expect(held.closedTooEarly).toBe(false);
+    expect(held.databaseClosed).toBe(true);
+    expect(await Bun.file(paths.lockPath).exists()).toBe(false);
+    await expect(stat(paths.socketPath)).rejects.toThrow();
+  } finally {
+    held.release.resolve();
+    await held.app?.closeDirectoryRefresh();
+    await stopped;
+    serve.mockRestore();
+    held.restore();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("a real daemon discovers external worktrees on its timer without a connected TUI", async () => {
+  const home = await mkdtemp(join(tmpdir(), "work-craft-discovery-daemon-"));
+  const { paths, path, rootId } = await seedDirectory(home, true);
+  git(path, "checkout", "-b", "trunk");
+  const child = spawnDaemon(home, { SHELL: "/bin/sh" });
+  let observer: Database | undefined;
+  try {
+    await waitForHealth(paths.socketPath, [child]);
+    const client = createClient({ socketPath: paths.socketPath });
+    observer = new Database(paths.databasePath, { readonly: true });
+    const rootBranch = observer.query<{ branch: string }, [string]>(
+      "SELECT json_extract(data_json, '$.branch') AS branch FROM items WHERE id = ?",
+    );
+    let deadline = Date.now() + 3000;
+    while (rootBranch.get(rootId)?.branch !== "trunk" && Date.now() < deadline) {
+      await Bun.sleep(20);
+    }
+    expect(rootBranch.get(rootId)?.branch).toBe("trunk");
+    const external = join(await realpath(home), "external");
+    git(path, "worktree", "add", "-b", "feature", external);
+    const discovered = observer.query<{ id: string }, [string, string]>(
+      "SELECT id FROM items WHERE parent_id = ? AND json_extract(data_json, '$.path') = ?",
+    );
+    deadline = Date.now() + 7000;
+    while (discovered.get(rootId, external) === null && Date.now() < deadline) {
+      await Bun.sleep(25);
+    }
+    const item = discovered.get(rootId, external);
+    expect(item).not.toBeNull();
+    const snapshot = await client.snapshot();
+    expect(snapshot.items.find((candidate) => candidate.id === item?.id)).toMatchObject({
+      kind: "worktree",
+      data: { path: external, branch: "feature", availability: "available" },
+    });
+    expect(snapshot.surfaces).toEqual([]);
+    await client.command({ type: "daemon.stop" });
+    expect(await waitForExit(child)).toBe(0);
+  } finally {
+    observer?.close();
+    await cleanup(home, [child]);
+  }
+}, 15000);
+
 test("SIGTERM escalates an in-progress graceful drain", async () => {
   const home = await mkdtemp(join(tmpdir(), "work-craft-lifecycle-"));
   const paths = resolvePaths({ WORK_CRAFT_HOME: home });
@@ -784,15 +1054,16 @@ test("daemon.stop flushes final PTY output and releases every owned resource", a
       name: "Work",
     });
     const project = await client.command({
-      type: "project.create",
+      type: "item.create",
       workspaceId: workspace.result.id,
-      category: "implementation",
-      name: "Lifecycle",
+      category: "design",
+      title: "Lifecycle",
     });
     const item = await client.command({
       type: "item.create",
-      projectId: project.result.id,
-      kind: "surface",
+      workspaceId: workspace.result.id,
+      category: "design",
+      parentId: project.result.id,
       title: "Shutdown",
     });
     const opened = await client.command({
@@ -864,15 +1135,16 @@ test("daemon.destroy stops runtimes and removes persisted state", async () => {
       name: "Work",
     });
     const project = await client.command({
-      type: "project.create",
+      type: "item.create",
       workspaceId: workspace.result.id,
-      category: "implementation",
-      name: "Lifecycle",
+      category: "design",
+      title: "Lifecycle",
     });
     const item = await client.command({
       type: "item.create",
-      projectId: project.result.id,
-      kind: "surface",
+      workspaceId: workspace.result.id,
+      category: "design",
+      parentId: project.result.id,
       title: "Destroy",
     });
     await client.command({ type: "surface.ensure", itemId: item.result.id, cwd: home });

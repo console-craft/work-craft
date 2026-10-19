@@ -12,8 +12,7 @@ function databaseWithPane() {
     INSERT INTO sessions VALUES ('session-1', 'Main', 0);
     INSERT INTO workspaces VALUES ('workspace-1', 'Work');
     INSERT INTO session_workspaces VALUES ('session-1', 'workspace-1', 0);
-    INSERT INTO projects VALUES ('project-1', 'workspace-1', 'implementation', 'Work Craft', 0);
-    INSERT INTO items VALUES ('item-1', 'project-1', 'surface', 'Build', 0, '{}', NULL);
+    INSERT INTO items VALUES ('item-1', 'workspace-1', 'design', NULL, 'generic', 'Build', 0, 0, '{}');
     INSERT INTO surfaces VALUES ('surface-1', 'item-1', NULL);
     INSERT INTO panes VALUES (
       'pane-1', 'surface-1', 'terminal', 'Shell', '/tmp',
@@ -118,8 +117,7 @@ test("flushes queued output on its timer and on close", async () => {
     INSERT INTO sessions VALUES ('session-1', 'Main', 0);
     INSERT INTO workspaces VALUES ('workspace-1', 'Work');
     INSERT INTO session_workspaces VALUES ('session-1', 'workspace-1', 0);
-    INSERT INTO projects VALUES ('project-1', 'workspace-1', 'implementation', 'Work Craft', 0);
-    INSERT INTO items VALUES ('item-1', 'project-1', 'surface', 'Build', 0, '{}', NULL);
+    INSERT INTO items VALUES ('item-1', 'workspace-1', 'design', NULL, 'generic', 'Build', 0, 0, '{}');
     INSERT INTO surfaces VALUES ('surface-1', 'item-1', NULL);
     INSERT INTO panes VALUES ('pane-1', 'surface-1', 'terminal', 'Shell', '/tmp', '{"type":"shell","executable":"/bin/sh","args":[]}', 'running', NULL, NULL, NULL);
   `);

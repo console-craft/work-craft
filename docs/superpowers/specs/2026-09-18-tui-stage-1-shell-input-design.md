@@ -1,5 +1,32 @@
 # TUI Stage 1 Shell And Input Design
 
+## Coding Implementation Checkpoint (2026-10-16)
+
+The Coding slice adds actual filter/results endpoints, native List browsing and caller expansion, Archive, guarded terminal entry, docked/drawer geometry, and a blocking resize presentation. Global/leader priority, header Tab, terminal passthrough and the one-row status ownership remain. See the Coding spec for current verification/review and pending human acceptance; Stage 2 is not implemented by this amendment.
+
+## Historical Baseline And Accepted Amendments
+
+This document records the delivered Stage 1 foundation, not an instruction to
+recreate every original interaction. Accepted component-adoption follow-ups are
+recorded in the [adoption roadmap](./2026-10-13-tui-component-adoption-design.md).
+The accepted [Coding Navigator design](./2026-10-15-coding-navigator-design.md)
+now supersedes these sections' navigator-specific target requirements:
+
+- Separate Project/Item entities, bounded local movement, project-only o, and
+  mouse preview become unified root/child items, List browsing, caller expansion,
+  and uniform Enter/mouse terminal entry.
+- Compact navigation becomes docked/hidden/drawer presentation at 120+ / 80–119
+  columns, with a blocking below-80 resize presentation reserving the status row.
+- Navigation gains filter/results Tab stops and Ctrl+n first-actual-match entry;
+  terminal input and existing global/leader priority remain protected.
+- Work Craft operational failure messages move from regional banners/forms to
+  the source-labelled status bar. Field validation stays beside its field;
+  persistent unavailable/failed indicators remain on affected items/panes.
+
+Those changes are approved target behavior, not yet implemented or verified.
+The remaining Stage 1 descriptions and test/checkpoint criteria below are historical
+where they conflict with those amendments. Stage 2 still needs its own design.
+
 ## Goal
 
 Deliver the persistent Work Craft shell and its keyboard-first input foundation
@@ -357,6 +384,10 @@ session focus.
 
 ## Navigator States
 
+Historical expanded/compact/hidden behavior follows. Its current replacement is
+the Coding design's Responsive Navigation And Resize Guard contract; do not keep
+compact mode or its INFO requirement merely to satisfy this older section.
+
 The navigator has three client-local states.
 
 ### Expanded
@@ -441,6 +472,12 @@ needed.
 
 ## Status Bar
 
+The operational-error extension is now specified in the Coding design's Error
+Ownership And Presentation policy. ERROR is no longer limited to invalid leader
+input in the approved target. The one-second invalid-leader behavior below must
+not become an implicit timeout for all operation failures. Compact INFO is a
+historical presentation requirement, not a requirement for the new navigator.
+
 The always-visible status bar is the shell's primary contextual feedback
 surface. Its left segment displays an explicit mode; the remainder displays
 mode content.
@@ -495,9 +532,10 @@ The connection dot beside the session switcher is:
   still visible;
 - red when disconnected.
 
-Durable mutations are disabled while disconnected. Command failures render in
-the region that initiated them and do not replace the shell or unrelated pane
-content.
+Durable mutations are disabled while disconnected. In the accepted target, command
+failures keep their source identity but display in the status bar, not a regional
+message row. Field validation stays inline and persistent failures keep local
+indicators. Do not replace the shell, steal focus, or discard unrelated pane content.
 
 Changing focus, scrolling, resizing, compacting, hiding, opening dialogs, or
 updating status content must not remount unaffected terminal renderers. Pane

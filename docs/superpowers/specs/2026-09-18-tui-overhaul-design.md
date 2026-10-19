@@ -1,10 +1,47 @@
 # TUI Overhaul Design
 
+## Component Adoption Complete And Accepted (2026-10-19)
+
+The approved [workbench companion](./2026-10-18-tui-component-adoption-phase-5-design.md)
+implements actual two-row library Tabs, shared tab overflow, bottom bordered
+three-row unavailable Alerts and exited-pane Reactivate. The accepted Oct 19
+restyle replaces the original dimming with transparent, undimmed output.
+Native terminal leaves intentionally remain outside generic tab-panel mounting.
+Both pulled-forward Stage 3 behaviors are implemented with real macOS daemon,
+normal-entrypoint and CLI acceptance: live shell-cwd inheritance on both split
+directions and full-tab direction-aware equalization, preserving shell PIDs/output
+and allowing undersized creation. Phase 5 is accepted for progression after
+independent whole-session/follow-up review and split, Hyper+n and explicit-restart
+focus repairs. Its Oct 19 restyle/status-repair baseline passed 1,398 tests, zero
+failures, build and compiled smoke on macOS. Phase 6 implementation and connected
+review are complete with no findings or production changes. Its fresh macOS full
+check passed 1,399 tests, zero failures, lint/format/types, build and compiled smoke,
+exit `0`. The user accepted all component-adoption work as complete on 2026-10-19;
+this does not certify unexecuted physical/Linux checks.
+The canonical [adoption inventory](./2026-10-13-tui-component-adoption-design.md#adopted-components-and-intentional-native-boundaries)
+records current component owners, geometry/colors and intentional native boundaries.
+Linux live-cwd, physical contrast and long-running listener stability remain
+unverified; existing native/input/React and lint warnings are retained debt.
+Earlier checkpoints below are historical. Stage 2/shared navigation and other
+Stage 3 operations remain separate, unimplemented work.
+
+## Coding Implementation Checkpoint (2026-10-16)
+
+The approved Coding slice replaces compact/preview navigation with filtered unified items, docked/drawer presentation, and a below-80-column input guard. Operational errors are source-labelled status messages; validation remains inline. Automated checkpoints and final review are recorded in the Coding Navigator spec. Stage 2 shared navigation, other category experiences, and human acceptance remain pending; historical accepted stages below are unchanged.
+
+## Accepted Target Amendment
+
+The [Coding Navigator design](./2026-10-15-coding-navigator-design.md), accepted
+between Stages 1 and 2, governs the unified item model, docked/drawer navigation,
+minimum-width guard, activation, and error presentation. Target sections below
+include future architectural work; the Coding slice itself is delivered. This
+focused Coding slice does not complete the other category experiences or Stage 2.
+
 ## Goal
 
 Replace the current screen-swapping TUI with a persistent, keyboard-first
 application shell that keeps organization and execution visible together.
-Users navigate sessions, workspaces, categories, projects, and items while
+Users navigate sessions, workspaces, categories, and root/child work items while
 working in durable tabs containing mixed terminal and built-in panes.
 
 The redesign must preserve the local-first, single-daemon architecture. The
@@ -36,12 +73,15 @@ The shell has four durable regions:
 - **Session switcher:** attaches the current client to another durable session
   and shows daemon connection state.
 - **Navigation sidebar:** combines an always-visible category icon rail with a
-  project and item navigator for the active workspace and category.
+  work-item navigator for the active workspace and category. The below-minimum
+  resize presentation is an explicit exception to normal category-rail visibility.
 - **Workbench:** shows the active item's tabs and renders the active tab's
   split pane tree.
 
-The navigator and workbench remain visible together during normal use. Opening
-an item no longer replaces navigation with a separate surface screen.
+The navigator and workbench remain visible together in normal wide-terminal use.
+Narrow terminals may cover the workbench with an explicitly opened navigation
+drawer; successful activation closes it and enters the item's terminal. This is
+one persistent shell, not a second surface screen or parallel entry point.
 
 ### Reference Sketches
 
@@ -53,19 +93,18 @@ architecture and region relationships, not pixel-perfect rendering contracts:
 
 ## Product Hierarchy
 
-The existing product hierarchy remains the foundation:
+The accepted target uses unified work items:
 
 ```text
 server
 └── session
     └── workspace
         └── category
-            └── project
-                └── item
-                    └── execution surface
-                        └── tab
-                            └── split tree
-                                └── pane
+            └── work items (roots and optional one-level children)
+                └── execution surface (optional, at either level)
+                    └── tab
+                        └── split tree
+                            └── pane
 ```
 
 ### Sessions
@@ -85,23 +124,24 @@ context without stopping hidden runtimes.
 ### Categories
 
 Every workspace retains the six fixed categories: Inbox, Today, Design,
-Implementation, Collaboration, and Operations. The category rail always shows
-all six as icons and never disappears because of terminal width.
+Implementation, Collaboration, and Operations. The category rail normally shows
+all six as icons; only the explicit below-80-column resize presentation may cover it.
 
-All categories preserve the same project-to-item navigator shape. Categories
-may specialize item data, row labels, actions, and workbench views, but do not
-replace the navigation hierarchy.
+Categories share navigation interaction primitives and an optional parent/child
+item envelope, not one mandatory Project-to-Item meaning. Concrete categories
+define their own item data, row labels, actions, and workbench views as designed.
 
-### Projects And Items
+### Work Items And Coding Projects
 
-Projects organize items within a workspace and category. Items remain the
-smallest selectable work unit and the owner of an optional execution surface.
-Selecting an item activates its surface or an appropriate empty state if the
-item does not yet have one.
+Work items are selectable units at either level and may own an optional execution
+surface. A Coding Project is a root directory item; its worktrees are child items.
+Opening either enters its persistent terminal environment, distinct from browsing
+or expansion. The Coding companion defines lazy creation, unavailable entries,
+archival, and focus-success safeguards.
 
-Projects and categories do not own terminals directly. `Open terminal here`
-continues to create or reuse an item-owned surface as the permanent escape
-hatch for workflows without a specialized built-in view.
+Categories do not own terminals directly. Root and child surfaces are both
+item-owned, without a synthetic project-terminal item. Generic work-item surfaces
+remain the escape hatch for workflows without a specialized built-in view.
 
 ## Workbench Model
 
@@ -128,7 +168,7 @@ The daemon stores one durable navigation cursor for each session:
 ```text
 active workspace
   → active category
-    → active project/item
+    → active work item (root or child)
       → active tab
         → active pane
 ```
@@ -145,7 +185,7 @@ client command
 ```
 
 Clients attached to the same session therefore mirror workspace, category,
-project or item, tab, and pane selection. Structural actions such as creating
+work item, tab, and pane selection. Structural actions such as creating
 tabs, splitting panes, moving panes, and resizing splits are also shared.
 
 If a mutation invalidates part of the cursor, the daemon atomically chooses the
@@ -156,7 +196,7 @@ fallbacks.
 Viewport-dependent presentation remains client-local:
 
 - terminal and viewport dimensions;
-- expanded or compact project navigator state;
+- navigator visibility, drawer state, filtering, browsing, and expansion;
 - command palette and leader-sequence state;
 - prompt input, hover state, and other ephemeral interaction details.
 
@@ -193,21 +233,27 @@ Shell And Input Foundation companion design.
 
 ## Responsive Layout
 
-The category rail is always visible and remains narrow because it contains
-icons rather than full labels.
+The category rail normally remains visible and narrow. Navigation no longer has
+a compact initials/dots rail:
 
-The project and item navigator has two responsive forms:
+- At 120+ columns, open navigation is a docked sidebar beside the workbench.
+- At 80–119 columns, navigation is hidden until explicitly opened as a drawer
+  covering the main body, leaving header/category/status visible.
+- Below 80 columns, a blocking resize presentation covers the working UI while
+  reserving the one-row status bar. Runtimes and terminal renderers stay mounted;
+  covered content receives no input. Quit/reconnect remain available.
 
-- **Expanded:** names and hierarchy are visible.
-- **Compact:** it becomes a secondary narrow rail rather than disappearing.
+Crossing wide to narrow hides navigation; an already hidden navigator stays hidden
+on resizing, including widening. An explicitly opened drawer becomes docked when
+widened. Small resizes inside the narrow band do not repeatedly dismiss it.
 
-Expanding the navigator in a narrow terminal participates in normal layout and
-shrinks the workbench. It never overlays the workbench. The workbench absorbs
-the remaining width and is the shell's primary flexible region.
+The drawer does not consume workbench layout space or change its keyed ancestry.
+Successful terminal entry closes the drawer; failures report in the status bar
+and leave it open. The resize guard does not reopen navigation on recovery.
 
-Exact widths, breakpoints, overflow behavior, and minimum viable pane sizes
-belong to the Persistent Shell And Input Foundation companion design because
-they require rendered prototypes and terminal-size testing.
+See the Coding companion for full transition/focus rules. These accepted target
+thresholds still require rendered/PTY verification; retain per-layout and height
+undersizing protections without adding an unrelated global height threshold.
 
 ## Client And Server Ownership
 
@@ -215,7 +261,7 @@ they require rendered prototypes and terminal-size testing.
 
 The daemon remains authoritative for:
 
-- sessions, workspace membership, categories, projects, and items;
+- sessions, workspace membership, categories, and unified work items;
 - shared per-session navigation;
 - surfaces, tabs, pane kinds, and split layouts;
 - PTYs, child processes, output buffers, and process status;
@@ -249,19 +295,26 @@ recoverable failures.
 
 - A daemon disconnect keeps the last coherent snapshot visible, clearly marks
   it stale, and disables mutations until reconnection succeeds.
-- A command failure appears in the region that initiated it instead of
-  replacing the whole application.
+- A Work Craft operational failure appears in the source-labelled status bar
+  instead of replacing the application. Field-specific validation stays inline,
+  whether detected by client or server.
 - A failed terminal pane preserves its layout, history, and recovery metadata
   and exposes an actionable retry.
-- A failed built-in integration renders its error inside the pane with an
-  actionable retry or configuration message.
+- Persistent unavailable/failed state stays marked on the affected item/pane;
+  detailed failure text is not duplicated in regional banners. A retry/configuration
+  action may remain associated with that source.
 - A deleted or concurrently invalidated navigation target is normalized by the
   daemon to the nearest valid fallback in the same transaction.
-- A terminal that is too small for useful rendering reports the constraint
-  without hiding the category rail or overlaying navigation on the workbench.
+- A terminal below 80 columns uses the blocking resize presentation; other
+  undersized layouts retain their own protections. Narrow navigation uses the
+  explicitly approved drawer rather than the historical compact/no-overlay rule.
 
 Failures in one pane must not unmount unrelated panes or discard their local
 terminal-emulator state.
+
+Child-program stderr/output stays in its terminal, and CLI/pre-TUI fatal errors
+stay on stderr. Repeated background failures are deduplicated. Error history is
+not v1; status lifetime/priority/clearing must be explicit in the approved plan.
 
 ## Incremental Delivery
 
@@ -280,6 +333,24 @@ Stage 1's persistent shell and input foundation is implemented, including the
 subsequent [focus and input contract refinements](./2026-10-02-tui-focus-input-contract-design.md).
 Stage 2, Shared Session Navigation, is next and still requires its companion
 design before implementation.
+
+Before that stage, the Coding Navigator/unified-item slice, repository-group
+follow-up and component-adoption Phases 1–5 (including styling/demos) are delivered
+and accepted for progression. Phase 5's independent whole-session/follow-up reviews,
+split/tab/restart focus repairs and the Oct 19 restyle/status-repair baseline are
+complete (1,398 tests, zero failures, build and compiled smoke on macOS).
+
+Phase 6's bounded consolidation is implemented and verified: no displaced code
+remains to delete in its named audit, intentional native boundaries are inventoried,
+and composed-shell injected-theme/scroll coverage is added without production
+features. Connected review passed with no findings; the fresh macOS full check
+passed 1,399 tests, zero failures, lint/format/types, build and compiled smoke,
+exit `0`. The user accepted component adoption as complete on 2026-10-19; the next
+step is a separately authorized architectural design. No Stage 2 design,
+shared-selection implementation or multi-client PTY-sizing policy is supplied by
+this phase. Client-local focus, filters/cursors, dialogs, expansion and viewport
+state remain distinct from daemon-owned durable state/runtimes. Linux live-cwd and
+physical-terminal checks are not claimed from the macOS automation.
 
 The `ui-components` branch delivers component-library groundwork between those
 stages:
@@ -311,7 +382,7 @@ overflow behavior, and minimum terminal dimensions.
 
 ### Stage 2: Shared Session Navigation
 
-Move active workspace, category, project or item, tab, and pane selection into
+Move active workspace, category, work item, tab, and pane selection into
 daemon-owned session state and mirror it across attached clients.
 
 **Required companion design:** define persistence, initial selection,
@@ -322,6 +393,18 @@ behavior, and multi-client PTY sizing.
 
 Complete keyboard-first tab and pane management, including creation, closing,
 movement, reordering, split resizing, process status, and recovery actions.
+
+**Pulled forward to component-adoption Phase 5 (2026-10-17):** current-directory
+inheritance on split (manual finding #5) and automatic pane equalization after
+splitting (#8) must already be implemented when Stage 3 begins. A new split
+inherits the source terminal's live cwd, including `cd` changes, rather than
+only its startup/item directory; panes are automatically equalized after a split.
+These two behaviors are now implemented and accepted for progression under the
+approved Phase 5 companion, with automated macOS acceptance; Linux live-cwd remains unverified.
+Their detailed design, implementation, and initial acceptance belong to
+[component-adoption Phase 5](./2026-10-13-tui-component-adoption-design.md#phase-5-workbench-presentation).
+Stage 3 preserves and regression-tests those behaviors while adding its remaining
+operations; do not defer or reimplement them as new Stage 3 work.
 
 **Required companion design:** define exact command semantics, destructive
 action safeguards, focus after mutations, and split-tree transformations.
@@ -339,7 +422,7 @@ between server-provided structured data and client rendering.
 ### Stage 5: Category Experiences
 
 Add category-specific item data, actions, and first-party views while
-preserving the common project/item navigator. Each category or coherent
+preserving the common work-item navigation contract. Each category or coherent
 integration receives a focused design when selected for implementation.
 
 ### Stage 6: Consolidation And Polish
@@ -359,8 +442,8 @@ focuses on behavioral boundaries:
 
 1. Keyboard-routing tests prove recognized Work Craft commands are intercepted
    while unrelated terminal input passes through unchanged.
-2. Shell tests cover expanded and compact navigation, focus transitions, and
-   representative narrow and wide terminal sizes.
+2. Shell tests cover docked, drawer, hidden, and resize-guard navigation, focus
+   transitions, source-labelled status errors, and representative terminal sizes.
 3. Multi-client tests attach two real TUI clients to one session and verify
    mirrored navigation, concurrent changes, disconnects, and reattachment.
 4. Workbench tests cover tab and pane mutations without restarting unaffected
@@ -379,15 +462,16 @@ The overhaul is complete when:
 
 - organization and active work remain visible together in the persistent
   shell;
-- the category rail never disappears, and the project navigator responds as
-  specified without overlaying the workbench;
+- the category rail remains visible outside the explicit resize guard, and the
+  work-item navigator follows the docked/drawer/hidden rules without remounting terminals;
 - all functionality is keyboard-accessible and terminal applications retain
   unrelated input;
 - clients attached to one session mirror navigation and workbench selection;
 - tabs can contain mixed terminal and first-party built-in panes;
 - disconnecting the TUI never stops daemon-owned runtimes;
-- existing user data, terminal history, and recovery behavior survive the
-  migration;
+- durable user data, terminal history, and recovery survive normal operation;
+  the expressly permitted Coding development-state reset is a bounded exception,
+  not a production silent-reset policy;
 - displaced old presentation paths are removed rather than retained as a
   second interface.
 

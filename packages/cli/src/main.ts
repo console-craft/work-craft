@@ -1,6 +1,11 @@
 #!/usr/bin/env bun
 
-import { type Command, createClient, resolvePaths } from "@work-craft/server/client";
+import {
+  type Command,
+  createClient,
+  resolveClientPath,
+  resolvePaths,
+} from "@work-craft/server/client";
 
 import { type CliArgs, parseArgs, USAGE, UsageError } from "./args.ts";
 import { formatResult, formatSnapshot, formatStatus, readStatus } from "./format.ts";
@@ -49,33 +54,29 @@ function serverCommand(args: CliArgs): Command | undefined {
       return { type: args.command, sessionId: args.sessionId, workspaceId: args.workspaceId };
     case "workspace.create":
       return { type: "workspace.create", sessionId: args.sessionId, name: args.name };
-    case "project.create":
+    case "directory.register":
       return {
-        type: "project.create",
+        type: "directory.register",
         workspaceId: args.workspaceId,
-        category: args.category,
-        name: args.name,
+        path: resolveClientPath(args.path),
       };
     case "item.create":
       return {
         type: "item.create",
-        projectId: args.projectId,
-        kind: args.kind,
+        workspaceId: args.workspaceId,
+        category: args.category,
+        ...(args.parentId === undefined ? {} : { parentId: args.parentId }),
         title: args.title,
         ...(args.data === undefined ? {} : { data: args.data }),
       };
     case "surface.ensure":
-      return args.itemId === undefined
-        ? {
-            type: "surface.ensureHere",
-            projectId: args.projectId,
-            ...(args.cwd === undefined ? {} : { cwd: args.cwd }),
-          }
-        : {
-            type: "surface.ensure",
-            itemId: args.itemId,
-            ...(args.cwd === undefined ? {} : { cwd: args.cwd }),
-          };
+      return {
+        type: "surface.ensure",
+        itemId: args.itemId,
+        ...(args.cwd === undefined ? {} : { cwd: resolveClientPath(args.cwd) }),
+      };
+    case "item.setArchived":
+      return { type: "item.setArchived", itemId: args.itemId, archived: args.archived };
     case "surface.selectTab":
       return {
         type: "surface.selectTab",
@@ -89,7 +90,7 @@ function serverCommand(args: CliArgs): Command | undefined {
         type: "pane.split",
         paneId: args.paneId,
         direction: args.direction,
-        ...(args.cwd === undefined ? {} : { cwd: args.cwd }),
+        ...(args.cwd === undefined ? {} : { cwd: resolveClientPath(args.cwd) }),
       };
     case "process.restart":
       return { type: "process.restart", paneId: args.paneId };

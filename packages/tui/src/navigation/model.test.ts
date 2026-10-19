@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import {
   categoriesForWorkspace,
   navigatorEntries,
-  projectIdForEntry,
+  rootIdForEntry,
   workspacesForSession,
 } from "@/navigation/model.ts";
 import { snapshotFixture } from "@/test-fixtures.ts";
@@ -13,14 +13,14 @@ test("projects and visible items are projected only for one workspace category",
     snapshotFixture(),
     "workspace-shared",
     "implementation",
-    new Set(["project-1"]),
+    new Set(["root-1"]),
   );
 
   expect(entries.map(({ kind, id, depth }) => [kind, id, depth])).toEqual([
-    ["project", "project-1", 0],
+    ["root", "root-1", 0],
     ["item", "item-1", 1],
   ]);
-  expect(projectIdForEntry(entries[1]!)).toBe("project-1");
+  expect(rootIdForEntry(entries[1]!)).toBe("root-1");
 });
 
 test("collapsed projects omit item rows without changing project identity", () => {
@@ -31,7 +31,7 @@ test("collapsed projects omit item rows without changing project identity", () =
     new Set(),
   );
 
-  expect(entries.map(({ key }) => key)).toEqual(["project:project-1"]);
+  expect(entries.map(({ key }) => key)).toEqual(["root:root-1"]);
 });
 
 test("workspace and category regions keep server ordering", () => {
@@ -48,4 +48,46 @@ test("workspace and category regions keep server ordering", () => {
     "collaboration",
     "operations",
   ]);
+});
+
+test("matching child retains only its contextual ancestor and searches collapsed raw paths", () => {
+  const snapshot = snapshotFixture();
+  snapshot.items.push({ ...snapshot.items[1]!, id: "sibling", title: "Other" });
+  const entries = navigatorEntries(
+    snapshot,
+    "workspace-shared",
+    "implementation",
+    new Set(),
+    "FEATURE",
+    "/work",
+  );
+  expect(entries.map((entry) => [entry.id, entry.matches])).toEqual([
+    ["root-1", false],
+    ["item-1", true],
+    ["sibling", true],
+  ]);
+  expect(
+    navigatorEntries(
+      snapshot,
+      "workspace-shared",
+      "implementation",
+      new Set(),
+      "~/Ship",
+      "/work",
+    ).map((entry) => entry.id),
+  ).toEqual(["root-1", "item-1", "sibling"]);
+  expect(
+    navigatorEntries(
+      snapshot,
+      "workspace-shared",
+      "implementation",
+      new Set(["root-1"]),
+      "Work Craft",
+      "/work",
+    ).map((entry) => entry.id),
+  ).toEqual(["root-1"]);
+  snapshot.items[0]!.archived = true;
+  expect(
+    navigatorEntries(snapshot, "workspace-shared", "implementation", new Set(), "feature", "/work"),
+  ).toEqual([]);
 });

@@ -2,6 +2,8 @@ import type { Database } from "bun:sqlite";
 
 import { ProtocolError } from "../api/protocol.ts";
 import type { Command, CommandResult, LayoutNode } from "../api/protocol.ts";
+import type { DirectoryScan } from "./directories.ts";
+import { createGenericItem, itemTargetCwd, registerDirectory, setItemArchived } from "./items.ts";
 import { splitLayout } from "./layout.ts";
 
 export type DomainEffect =
@@ -9,7 +11,7 @@ export type DomainEffect =
   | { type: "stop-daemon" }
   | { type: "destroy-daemon" };
 
-type CommandOutcome = { result: CommandResult; effects: DomainEffect[] };
+export type CommandOutcome = { result: CommandResult; effects: DomainEffect[]; changed: boolean };
 
 function createShellPane(
   db: Database,
@@ -39,11 +41,15 @@ function ensureSurface(db: Database, itemId: string, cwd?: string): CommandOutco
     )
     .get(itemId);
   if (existing !== null) {
+    itemTargetCwd(db, itemId, cwd, false);
     return {
+      changed: false,
       result: { id: existing.surfaceId, itemId, surfaceId: existing.surfaceId },
       effects: [],
     };
   }
+
+  const targetCwd = itemTargetCwd(db, itemId, cwd);
 
   const surfaceId = crypto.randomUUID();
   const tabId = crypto.randomUUID();
@@ -51,12 +57,13 @@ function ensureSurface(db: Database, itemId: string, cwd?: string): CommandOutco
     surfaceId,
     itemId,
   );
-  const paneId = createShellPane(db, surfaceId, cwd ?? process.cwd());
+  const paneId = createShellPane(db, surfaceId, targetCwd);
   db.query(
     "INSERT INTO tabs (id, surface_id, title, position, layout_json) VALUES (?, ?, 'Main', 0, ?)",
   ).run(tabId, surfaceId, JSON.stringify({ type: "pane", paneId }));
   db.query("UPDATE surfaces SET active_tab_id = ? WHERE id = ?").run(tabId, surfaceId);
   return {
+    changed: true,
     result: { id: surfaceId, itemId, surfaceId, tabId, paneId },
     effects: [{ type: "spawn-pane", paneId }],
   };
@@ -67,10 +74,12 @@ function writeSessionOrder(db: Database, ids: string[]): void {
   ids.forEach((id, position) => update.run(position, id));
 }
 
+/** Apply synchronous mutations; pane.split requires an already resolved and validated cwd. */
 export function applyCommand(
   db: Database,
   command: Command,
-): { result: CommandResult; effects: DomainEffect[] } {
+  registration?: DirectoryScan,
+): CommandOutcome {
   switch (command.type) {
     case "session.create":
       return db.transaction(() => {
@@ -78,10 +87,13 @@ export function applyCommand(
         db.query(
           "INSERT INTO sessions (id, name, position) VALUES (?, ?, (SELECT COALESCE(MAX(position), -1) + 1 FROM sessions))",
         ).run(id, command.name);
-        return { result: { id }, effects: [] };
+        return { result: { id }, effects: [], changed: true };
       })();
     case "session.update":
       return db.transaction(() => {
+        const oldName = db
+          .query<{ name: string }, [string]>("SELECT name FROM sessions WHERE id = ?")
+          .get(command.sessionId)?.name;
         const ids = db
           .query<{ id: string }, []>("SELECT id FROM sessions ORDER BY position, id")
           .all()
@@ -104,7 +116,13 @@ export function applyCommand(
           );
         }
         writeSessionOrder(db, ids);
-        return { result: { id: command.sessionId }, effects: [] };
+        return {
+          result: { id: command.sessionId },
+          effects: [],
+          changed:
+            targetPosition !== currentPosition ||
+            (command.name !== undefined && command.name !== oldName),
+        };
       })();
     case "session.delete":
       return db.transaction(() => {
@@ -120,7 +138,7 @@ export function applyCommand(
         ids.splice(position, 1);
         db.query("DELETE FROM sessions WHERE id = ?").run(command.sessionId);
         writeSessionOrder(db, ids);
-        return { result: { id: command.sessionId }, effects: [] };
+        return { result: { id: command.sessionId }, effects: [], changed: true };
       })();
     case "session.workspace.add":
       return db.transaction(() => {
@@ -130,14 +148,17 @@ export function applyCommand(
         if (db.query("SELECT 1 FROM workspaces WHERE id = ?").get(command.workspaceId) === null) {
           throw new ProtocolError("workspace not found");
         }
-        db.query(
-          `INSERT OR IGNORE INTO session_workspaces (session_id, workspace_id, position)
+        const inserted = db
+          .query(
+            `INSERT OR IGNORE INTO session_workspaces (session_id, workspace_id, position)
            VALUES (?, ?, (
              SELECT COALESCE(MAX(position), -1) + 1
              FROM session_workspaces WHERE session_id = ?
            ))`,
-        ).run(command.sessionId, command.workspaceId, command.sessionId);
+          )
+          .run(command.sessionId, command.workspaceId, command.sessionId);
         return {
+          changed: inserted.changes > 0,
           result: {
             id: command.workspaceId,
             sessionId: command.sessionId,
@@ -154,11 +175,11 @@ export function applyCommand(
         if (db.query("SELECT 1 FROM workspaces WHERE id = ?").get(command.workspaceId) === null) {
           throw new ProtocolError("workspace not found");
         }
-        db.query("DELETE FROM session_workspaces WHERE session_id = ? AND workspace_id = ?").run(
-          command.sessionId,
-          command.workspaceId,
-        );
+        const removed = db
+          .query("DELETE FROM session_workspaces WHERE session_id = ? AND workspace_id = ?")
+          .run(command.sessionId, command.workspaceId);
         return {
+          changed: removed.changes > 0,
           result: {
             id: command.workspaceId,
             sessionId: command.sessionId,
@@ -181,86 +202,53 @@ export function applyCommand(
              FROM session_workspaces WHERE session_id = ?
            ))`,
         ).run(command.sessionId, id, command.sessionId);
-        return { result: { id }, effects: [] };
+        return { result: { id }, effects: [], changed: true };
       })();
-    case "project.create":
-      return db.transaction(() => {
-        if (db.query("SELECT 1 FROM workspaces WHERE id = ?").get(command.workspaceId) === null) {
-          throw new ProtocolError("workspace not found");
-        }
-        const id = crypto.randomUUID();
-        db.query(
-          "INSERT INTO projects (id, workspace_id, category, name, position) VALUES (?, ?, ?, ?, (SELECT COALESCE(MAX(position), -1) + 1 FROM projects WHERE workspace_id = ? AND category = ?))",
-        ).run(
-          id,
-          command.workspaceId,
-          command.category,
-          command.name,
-          command.workspaceId,
-          command.category,
-        );
-        return { result: { id }, effects: [] };
-      })();
-    case "item.create":
-      return db.transaction(() => {
-        if (db.query("SELECT 1 FROM projects WHERE id = ?").get(command.projectId) === null) {
-          throw new ProtocolError("project not found");
-        }
-        const id = crypto.randomUUID();
-        db.query(
-          "INSERT INTO items (id, project_id, kind, title, position, data_json) VALUES (?, ?, ?, ?, (SELECT COALESCE(MAX(position), -1) + 1 FROM items WHERE project_id = ?), ?)",
-        ).run(
-          id,
-          command.projectId,
-          command.kind,
-          command.title,
-          command.projectId,
-          JSON.stringify(command.data ?? {}),
-        );
-        return { result: { id }, effects: [] };
-      })();
+    case "directory.register": {
+      if (registration === undefined) {
+        throw new ProtocolError("Directory registration requires prepared inspection");
+      }
+      const { itemId, rootItemId, changed } = registerDirectory(
+        db,
+        command.workspaceId,
+        registration,
+      );
+      return { result: { id: itemId, itemId, rootItemId }, effects: [], changed };
+    }
+    case "item.create": {
+      const { itemId, changed } = createGenericItem(db, command);
+      return { result: { id: itemId, itemId }, effects: [], changed };
+    }
+    case "item.setArchived": {
+      const { itemId, changed } = setItemArchived(db, command.itemId, command.archived);
+      return { result: { id: itemId, itemId }, effects: [], changed };
+    }
     case "daemon.stop":
       return {
+        changed: false,
         result: { id: "daemon", stopping: true },
         effects: [{ type: "stop-daemon" }],
       };
     case "daemon.destroy":
       return {
+        changed: false,
         result: { id: "daemon", destroying: true },
         effects: [{ type: "destroy-daemon" }],
       };
     case "surface.ensure":
       return db.transaction(() => ensureSurface(db, command.itemId, command.cwd))();
-    case "surface.ensureHere":
-      return db.transaction(() => {
-        if (db.query("SELECT 1 FROM projects WHERE id = ?").get(command.projectId) === null) {
-          throw new ProtocolError("project not found");
-        }
-        let item = db
-          .query<{ id: string }, [string]>(
-            "SELECT id FROM items WHERE project_id = ? AND kind = 'surface' AND json_extract(data_json, '$.scope') = 'project-terminal' ORDER BY position, id LIMIT 1",
-          )
-          .get(command.projectId);
-        if (item === null) {
-          item = { id: crypto.randomUUID() };
-          db.query(
-            "INSERT INTO items (id, project_id, kind, title, position, data_json) VALUES (?, ?, 'surface', 'Terminal', (SELECT COALESCE(MAX(position), -1) + 1 FROM items WHERE project_id = ?), ?)",
-          ).run(
-            item.id,
-            command.projectId,
-            command.projectId,
-            JSON.stringify({ scope: "project-terminal" }),
-          );
-        }
-        return ensureSurface(db, item.id, command.cwd);
-      })();
     case "tab.create":
       return db.transaction(() => {
-        if (db.query("SELECT 1 FROM surfaces WHERE id = ?").get(command.surfaceId) === null) {
+        const owner = db
+          .query<{ itemId: string }, [string]>(
+            "SELECT item_id AS itemId FROM surfaces WHERE id = ?",
+          )
+          .get(command.surfaceId);
+        if (owner === null) {
           throw new ProtocolError("surface not found");
         }
         const tabId = crypto.randomUUID();
-        const paneId = createShellPane(db, command.surfaceId, process.cwd());
+        const paneId = createShellPane(db, command.surfaceId, itemTargetCwd(db, owner.itemId));
         db.query(
           "INSERT INTO tabs (id, surface_id, title, position, layout_json) VALUES (?, ?, ?, (SELECT COALESCE(MAX(position), -1) + 1 FROM tabs WHERE surface_id = ?), ?)",
         ).run(
@@ -275,6 +263,7 @@ export function applyCommand(
           command.surfaceId,
         );
         return {
+          changed: true,
           result: { id: tabId, surfaceId: command.surfaceId, tabId, paneId },
           effects: [{ type: "spawn-pane" as const, paneId }],
         };
@@ -288,40 +277,61 @@ export function applyCommand(
         ) {
           throw new ProtocolError("tab not found for surface");
         }
+        const previous = db
+          .query<{ activeTabId: string | null }, [string]>(
+            "SELECT active_tab_id AS activeTabId FROM surfaces WHERE id = ?",
+          )
+          .get(command.surfaceId);
         db.query("UPDATE surfaces SET active_tab_id = ? WHERE id = ?").run(
           command.tabId,
           command.surfaceId,
         );
         return {
+          changed: previous?.activeTabId !== command.tabId,
           result: { id: command.tabId, surfaceId: command.surfaceId, tabId: command.tabId },
           effects: [],
         };
       })();
     case "pane.split":
       return db.transaction(() => {
+        if (command.cwd === undefined || command.cwd.length === 0) {
+          throw new ProtocolError("Split requires a resolved working directory");
+        }
         const pane = db
-          .query<{ surfaceId: string; cwd: string; restorePolicyJson: string }, [string]>(
-            "SELECT surface_id AS surfaceId, cwd, restore_policy_json AS restorePolicyJson FROM panes WHERE id = ?",
+          .query<
+            {
+              surfaceId: string;
+              restorePolicyJson: string;
+              archived: number;
+              parentArchived: number | null;
+            },
+            [string]
+          >(
+            `SELECT panes.surface_id AS surfaceId, panes.restore_policy_json AS restorePolicyJson,
+              items.archived, parent.archived AS parentArchived
+             FROM panes
+             JOIN surfaces ON surfaces.id = panes.surface_id
+             JOIN items ON items.id = surfaces.item_id
+             LEFT JOIN items AS parent ON parent.id = items.parent_id
+             WHERE panes.id = ?`,
           )
           .get(command.paneId);
         if (pane === null) {
           throw new ProtocolError("pane not found");
         }
+        if (pane.archived || pane.parentArchived) {
+          throw new ProtocolError("item or parent is archived");
+        }
         const tabs = db
-          .query<{ id: string; layoutJson: string }, [string, string]>(
-            "SELECT id, layout_json AS layoutJson FROM tabs WHERE surface_id = ? AND EXISTS (SELECT 1 FROM json_tree(tabs.layout_json) WHERE key = 'paneId' AND value = ?)",
+          .query<{ id: string; surfaceId: string; layoutJson: string }, [string]>(
+            "SELECT id, surface_id AS surfaceId, layout_json AS layoutJson FROM tabs WHERE EXISTS (SELECT 1 FROM json_tree(tabs.layout_json) WHERE key = 'paneId' AND value = ?)",
           )
-          .all(pane.surfaceId, command.paneId);
-        if (tabs.length !== 1) {
+          .all(command.paneId);
+        if (tabs.length !== 1 || tabs[0]!.surfaceId !== pane.surfaceId) {
           throw new ProtocolError("pane not found in exactly one tab");
         }
 
-        const paneId = createShellPane(
-          db,
-          pane.surfaceId,
-          command.cwd ?? pane.cwd,
-          pane.restorePolicyJson,
-        );
+        const paneId = createShellPane(db, pane.surfaceId, command.cwd, pane.restorePolicyJson);
         const layout = splitLayout(
           JSON.parse(tabs[0]!.layoutJson) as LayoutNode,
           command.paneId,
@@ -333,6 +343,7 @@ export function applyCommand(
           tabs[0]!.id,
         );
         return {
+          changed: true,
           result: { id: paneId, surfaceId: pane.surfaceId, tabId: tabs[0]!.id, paneId },
           effects: [{ type: "spawn-pane" as const, paneId }],
         };
@@ -343,6 +354,7 @@ export function applyCommand(
           throw new ProtocolError("pane not found");
         }
         return {
+          changed: false,
           result: { id: command.paneId, paneId: command.paneId },
           effects: [{ type: "spawn-pane" as const, paneId: command.paneId }],
         };

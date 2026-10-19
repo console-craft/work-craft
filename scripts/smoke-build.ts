@@ -1,11 +1,29 @@
+import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { chmod, copyFile, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { defaultTheme } from "@/ui/themes/default.ts";
 
-import { createClient } from "../packages/server/src/client.ts";
+import { createClient, decodeBytes } from "../packages/server/src/client.ts";
+
+if (process.argv.includes("--self-test")) {
+  assert.equal(
+    shellPid("printf 'COMPILED-PID-%s\\n' \"$$\"\r\nCOMPILED-PID-123\r\n", "COMPILED"),
+    "123",
+  );
+  assert.equal(shellPid("COMPILED-PID-nope\r\n", "COMPILED"), undefined);
+  assert.equal(shellPid("echo COMPILED-PID-123\r\n", "COMPILED"), undefined);
+  assert.equal(shellPid("RETAINED-PID-456\n", "RETAINED"), "456");
+  assert.equal(shellPid("COMPILED-PID-123\n", "RETAINED"), undefined);
+  console.log("compiled smoke PID self-checks passed (5 assertions)");
+  process.exit(0);
+}
+
+function shellPid(output: string, marker: "COMPILED" | "RETAINED"): string | undefined {
+  return output.match(new RegExp(`(?:^|\\n)${marker}-PID-([1-9]\\d*)\\r?\\n`))?.[1];
+}
 
 const root = resolve(import.meta.dir, "..");
 const executable = join(root, "dist", "work-craft");
@@ -21,9 +39,7 @@ function colorChannels(color: string): number[] {
 }
 
 const dimmedConnectedColor = `38;2;${colorChannels(defaultTheme.colors.success)
-  .map((channel, index) =>
-    Math.floor(channel * 0.5 + colorChannels(defaultTheme.colors.background)[index]! * 0.5),
-  )
+  .map((channel) => Math.round(channel * 0.35))
   .join(";")}m`;
 
 await mkdir(installDirectory);
@@ -31,9 +47,10 @@ await copyFile(executable, installedExecutable);
 await chmod(installedExecutable, 0o755);
 
 async function run(args: string[]): Promise<string> {
+  console.log("compiled smoke command:", args.join(" "));
   const child = Bun.spawn([installedExecutable, ...args], {
     cwd: installDirectory,
-    env: { ...process.env, WORK_CRAFT_HOME: home },
+    env: { ...process.env, WORK_CRAFT_HOME: home, SHELL: "/bin/sh" },
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
@@ -121,6 +138,7 @@ try {
   if (status.running !== true) {
     throw new Error("compiled status did not report a running daemon");
   }
+  await smokeCoding();
   await smokeTui();
   await run(["daemon", "stop", "--json"]);
   await waitForSocketRemoval();
@@ -134,4 +152,155 @@ try {
     }
   }
   await rm(temporaryDirectory, { recursive: true, force: true });
+}
+
+async function smokeCoding(): Promise<void> {
+  const expectedCwd = await realpath(installDirectory);
+  const session = JSON.parse(await run(["session", "create", "--name", "Compiled", "--json"])) as {
+    id: string;
+  };
+  const workspace = JSON.parse(
+    await run(["workspace", "create", "--session", session.id, "--name", "Smoke", "--json"]),
+  ) as { id: string };
+  const registered = JSON.parse(
+    await run([
+      "directory",
+      "register",
+      "--workspace",
+      workspace.id,
+      "--path",
+      installDirectory,
+      "--json",
+    ]),
+  ) as { id: string; itemId: string; rootItemId: string };
+  const duplicate = JSON.parse(
+    await run([
+      "directory",
+      "register",
+      "--workspace",
+      workspace.id,
+      "--path",
+      installDirectory,
+      "--json",
+    ]),
+  ) as { id: string; itemId: string; rootItemId: string };
+  const client = createClient({ socketPath });
+  const metadata = await client.snapshot();
+  if (
+    registered.itemId !== registered.id ||
+    registered.rootItemId !== registered.id ||
+    duplicate.id !== registered.id ||
+    duplicate.itemId !== registered.id ||
+    duplicate.rootItemId !== registered.id ||
+    metadata.items.length !== 1 ||
+    metadata.items[0]?.id !== registered.id ||
+    metadata.items[0]?.parentId !== null ||
+    metadata.surfaces.length !== 0 ||
+    metadata.tabs.length !== 0 ||
+    metadata.panes.length !== 0
+  ) {
+    throw new Error("compiled duplicate registration lost root identity or opened a surface");
+  }
+  const opened = JSON.parse(
+    await run(["surface", "ensure", "--item", registered.id, "--json"]),
+  ) as { surfaceId: string; paneId: string };
+  const stream = await client.stream({ onMessage() {} });
+  try {
+    stream.sendInput(
+      opened.paneId,
+      new TextEncoder().encode('printf \'COMPILED-CWD-%s\\nCOMPILED-PID-%s\\n\' "$(pwd)" "$$"\r'),
+    );
+    const deadline = Date.now() + 3000;
+    let snapshot = await client.snapshot();
+    function output(paneId = opened.paneId): string {
+      return new TextDecoder().decode(
+        decodeBytes(
+          snapshot.terminalHistories.find((history) => history.paneId === paneId)?.data ?? "",
+        ),
+      );
+    }
+    while (
+      (!output().includes(`COMPILED-CWD-${expectedCwd}`) || !shellPid(output(), "COMPILED")) &&
+      Date.now() < deadline
+    ) {
+      await Bun.sleep(20);
+      snapshot = await client.snapshot();
+    }
+    if (!output().includes(`COMPILED-CWD-${expectedCwd}`) || !shellPid(output(), "COMPILED")) {
+      throw new Error("compiled Coding terminal did not start in the registered directory");
+    }
+    const originalPid = shellPid(output(), "COMPILED")!;
+    console.log("compiled smoke source PID:", originalPid);
+    const liveCwd = join(expectedCwd, "live cwd 雪");
+    await mkdir(liveCwd);
+    stream.sendInput(
+      opened.paneId,
+      new TextEncoder().encode(`cd '${liveCwd}'; printf 'LIVE-%s\\n' ready\r`),
+    );
+    await waitForOutput(opened.paneId, (text) => text.includes("LIVE-ready"), "source shell cd");
+    console.log("compiled smoke live cwd:", liveCwd);
+    const split = JSON.parse(
+      await run(["pane", "split", opened.paneId, "--direction", "vertical", "--json"]),
+    ) as { paneId: string };
+    stream.sendInput(
+      split.paneId,
+      new TextEncoder().encode("printf 'SPLIT-CWD-%s\\n' \"$(pwd)\"\r"),
+    );
+    await waitForOutput(
+      split.paneId,
+      (text) => text.includes(`SPLIT-CWD-${liveCwd}`),
+      "new shell live cwd",
+    );
+    stream.sendInput(
+      opened.paneId,
+      new TextEncoder().encode("printf 'RETAINED-PID-%s\\n' \"$$\"\r"),
+    );
+    await waitForOutput(
+      opened.paneId,
+      (text) => shellPid(text, "RETAINED") !== undefined,
+      "retained source PID",
+    );
+    assert.equal(
+      shellPid(output(), "RETAINED"),
+      originalPid,
+      "compiled split restarted the source shell",
+    );
+    assert.ok(
+      output().includes(`COMPILED-CWD-${expectedCwd}`),
+      "compiled split lost source output",
+    );
+
+    async function waitForOutput(
+      paneId: string,
+      ready: (text: string) => boolean,
+      description: string,
+    ): Promise<void> {
+      const deadline = Date.now() + 3_000;
+      snapshot = await client.snapshot();
+      while (!ready(output(paneId)) && Date.now() < deadline) {
+        await Bun.sleep(20);
+        snapshot = await client.snapshot();
+      }
+      assert.ok(ready(output(paneId)), `compiled smoke timed out waiting for ${description}`);
+    }
+    await run(["item", "archive", registered.id]);
+    await run(["item", "restore", registered.id]);
+    const reopened = JSON.parse(
+      await run(["surface", "ensure", "--item", registered.id, "--json"]),
+    ) as { surfaceId: string; paneId: string };
+    const retained = await client.snapshot();
+    const originalPane = snapshot.panes.find((pane) => pane.id === opened.paneId);
+    const retainedPane = retained.panes.find((pane) => pane.id === opened.paneId);
+    if (
+      reopened.surfaceId !== opened.surfaceId ||
+      !retainedPane ||
+      retainedPane.startedAt !== originalPane?.startedAt ||
+      retainedPane.processStatus !== "running"
+    ) {
+      throw new Error("compiled Coding open did not retain its runtime");
+    }
+    await run(["session", "delete", session.id]);
+  } finally {
+    stream.close();
+  }
 }

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import type { Command, CommandResponse } from "@work-craft/server/client";
+import { ApiError, type Command, type CommandResponse } from "@work-craft/server/client";
 
 import {
   availableCommands,
@@ -32,7 +32,43 @@ function deferred<T>(): {
   return { promise, resolve };
 }
 
-function activeItemFixture(): {
+for (const succeeds of [false, true]) {
+  test(`workspace creation drills down only after success (${succeeds})`, async () => {
+    const fixture = activeItemFixture();
+    const actions: ShellAction[] = [];
+    await submitCreate({
+      value: "New workspace",
+      model: fixture.model,
+      state: {
+        ...fixture.state,
+        dialog: {
+          kind: "create",
+          createKind: "workspace",
+          returnFocus: { region: "workspace" },
+        },
+      },
+      snapshot: fixture.snapshot,
+      getSubmittingDialog: () => null,
+      setSubmittingDialog: () => {},
+      dispatch: (action) => actions.push(action),
+      onItemCreated: async () => {
+        throw new Error("Workspace must not enter a terminal");
+      },
+      run: async () => (succeeds ? { id: "new-workspace", revision: 5 } : undefined),
+    });
+    expect(actions).toEqual(
+      succeeds
+        ? [
+            { type: "dialog.close" },
+            { type: "workspace.activate", id: "new-workspace" },
+            { type: "focus.set", focus: { region: "category" } },
+          ]
+        : [],
+    );
+  });
+}
+
+function activeItemFixture(generic = false): {
   snapshot: ReturnType<typeof snapshotFixture>;
   state: ShellState;
   model: ReturnType<typeof deriveShellModel>;
@@ -63,24 +99,30 @@ function activeItemFixture(): {
       },
     ],
   });
+  if (generic) {
+    snapshot.items = snapshot.items.map((item) => ({
+      ...item,
+      category: "design",
+      kind: "generic",
+      data: {},
+    }));
+  }
   const state: ShellState = {
     ...createInitialShellState(),
     activeSessionId: "session-work",
     activeWorkspaceId: "workspace-shared",
-    activeCategory: "implementation",
+    activeCategory: generic ? "design" : "implementation",
     activeNavigatorKey: "item:item-1",
-    workspaceCursorId: "workspace-shared",
-    categoryCursor: "implementation",
     navigatorCursorKey: "item:item-1",
     tabCursorId: "tab-1",
     focus: { region: "workbench", paneId: "pane-1" },
-    lastWorkbenchPaneId: "pane-1",
-    expandedProjectIds: new Set(["project-1"]),
+    lastPaneByTab: { "tab-1": "pane-1" },
+    expandedRootIds: new Set(["root-1"]),
   };
   return {
     snapshot,
     state,
-    model: deriveShellModel({ snapshot, state, sessionCursorId: null }),
+    model: deriveShellModel({ snapshot, state }),
   };
 }
 
@@ -106,7 +148,6 @@ function executionInput(
     setFocus(target) {
       actions.push({ type: "focus.set", focus: target });
     },
-    setSessionCursorId() {},
     run,
     async reload() {},
     quit() {},
@@ -124,18 +165,93 @@ test("constructs hierarchy commands", () => {
     sessionId: "session-1",
     name: "Client",
   });
-  expect(durableCommands.createProject("workspace-1", "implementation", "Shell")).toEqual({
-    type: "project.create",
+  expect(durableCommands.registerDirectory("workspace-1", "/work/Shell")).toEqual({
+    type: "directory.register",
     workspaceId: "workspace-1",
-    category: "implementation",
-    name: "Shell",
+    path: "/work/Shell",
   });
-  expect(durableCommands.createItem("project-1", "Extract commands")).toEqual({
-    type: "item.create",
-    projectId: "project-1",
-    kind: "generic",
-    title: "Extract commands",
-  });
+  expect(durableCommands.createItem("workspace-1", "design", "Extract commands", "root-1")).toEqual(
+    {
+      type: "item.create",
+      workspaceId: "workspace-1",
+      category: "design",
+      parentId: "root-1",
+      title: "Extract commands",
+    },
+  );
+});
+
+test("Archive pins the unavailable candidate without opening or mutating it", async () => {
+  const f = activeItemFixture();
+  const candidate = f.snapshot.items.find((item) => item.id === "item-1")!;
+  if (candidate.kind !== "generic") {
+    candidate.data.availability = "unavailable";
+  }
+  const actions: ShellAction[] = [];
+  let sent = false;
+  await executeCommand(
+    executionInput(
+      "item.archive",
+      f,
+      actions,
+      async () => {
+        sent = true;
+        return undefined;
+      },
+      { focus: { region: "navigator" } },
+    ),
+  );
+  expect(actions).toEqual([
+    expect.objectContaining({
+      type: "dialog.open",
+      dialog: expect.objectContaining({
+        kind: "archive",
+        itemId: "item-1",
+        title: f.snapshot.items.find((item) => item.id === "item-1")!.title,
+      }),
+    }),
+  ]);
+  expect(sent).toBe(false);
+});
+
+test("server field validation is inline while operational failures keep source identity and epoch", async () => {
+  const expected: CompletionContext = {
+    navigationKey: "current",
+    dialog: { kind: "create", createKind: "directory", returnFocus: { region: "navigator" } },
+  };
+  for (const cause of [new ApiError("Bad path", "path"), new Error("Permission denied")]) {
+    const actions: ShellAction[] = [];
+    await runDurableCommand({
+      command: { type: "directory.register", workspaceId: "w", path: "/path" },
+      region: "navigator",
+      expected,
+      current: () => expected,
+      send: async () => {
+        throw cause;
+      },
+      dispatch: (action) => actions.push(action),
+      source: {
+        key: "form:register",
+        label: "Register",
+        epoch: "epoch",
+        requestId: 1,
+        isCurrent: () => true,
+      },
+    });
+    expect(actions).toEqual([
+      cause instanceof ApiError
+        ? { type: "field.error", message: "Bad path" }
+        : expect.objectContaining({
+            type: "source.report",
+            error: expect.objectContaining({
+              epoch: "epoch",
+              sourceKey: "form:register",
+              message: "Permission denied",
+              origin: "direct",
+            }),
+          }),
+    ]);
+  }
 });
 
 test("constructs surface and tab commands", () => {
@@ -143,9 +259,9 @@ test("constructs surface and tab commands", () => {
     type: "surface.ensure",
     itemId: "item-1",
   });
-  expect(durableCommands.openProject("project-1")).toEqual({
-    type: "surface.ensureHere",
-    projectId: "project-1",
+  expect(durableCommands.openItem("root-1")).toEqual({
+    type: "surface.ensure",
+    itemId: "root-1",
   });
   expect(durableCommands.createTab("surface-1")).toEqual({
     type: "tab.create",
@@ -174,6 +290,172 @@ test("constructs semantic pane commands", () => {
     type: "process.restart",
     paneId: "pane-1",
   });
+});
+
+for (const focus of [
+  { region: "workbench", paneId: "pane-1" },
+  { region: "tabs" },
+  { region: "navigator" },
+] as const) {
+  for (const succeeds of [true, false]) {
+    test(`local tab intent starts before selection only from ${focus.region} (success=${succeeds})`, async () => {
+      const f = activeItemFixture();
+      f.snapshot.tabs.push({ ...f.snapshot.tabs[0]!, id: "tab-2", position: 1 });
+      f.model = deriveShellModel(f);
+      const events: unknown[] = [];
+      await executeCommand(
+        executionInput(
+          "tab.next",
+          f,
+          [],
+          async (command) => {
+            events.push(command);
+            return succeeds ? { id: "tab-2", revision: 7 } : undefined;
+          },
+          {
+            focus,
+            onTabSelectionStarted: (tabId: string) => {
+              events.push(["start", tabId]);
+              return (revision: number) => {
+                events.push(["complete", revision]);
+              };
+            },
+          },
+        ),
+      );
+      expect(events).toEqual([
+        ...(focus.region === "workbench" ? [["start", "tab-2"]] : []),
+        { type: "surface.selectTab", surfaceId: "surface-1", tabId: "tab-2" },
+        ...(focus.region === "workbench" && succeeds ? [["complete", 7]] : []),
+      ]);
+    });
+  }
+}
+
+for (const result of [
+  undefined,
+  { id: "created", revision: 7, tabId: "created" },
+  { id: "created", revision: 7, tabId: "created", paneId: "created-pane" },
+]) {
+  test(`tab creation captures before one RPC and completes only exact returned IDs (pane=${result?.paneId})`, async () => {
+    const f = activeItemFixture();
+    const events: unknown[] = [];
+    await executeCommand(
+      executionInput(
+        "tab.create",
+        f,
+        [],
+        async (command, region, expected) => {
+          events.push(command);
+          expect(region).toBe("tabs");
+          expect(expected).toEqual({ navigationKey: f.model.navigationKey, dialog: null });
+          return result;
+        },
+        {
+          onTabCreateStarted: () => {
+            events.push("start");
+            return (tabId, paneId, revision) => events.push([tabId, paneId, revision]);
+          },
+          setFocus: () => {
+            throw new Error("Creation must wait for native readiness");
+          },
+        },
+      ),
+    );
+    expect(events).toEqual([
+      "start",
+      { type: "tab.create", surfaceId: "surface-1", title: "Shell" },
+      ...(result?.paneId ? [["created", "created-pane", 7]] : []),
+    ]);
+  });
+}
+
+test("tab boundary does not start an entry or send a command", async () => {
+  const f = activeItemFixture();
+  const events: unknown[] = [];
+  await executeCommand(
+    executionInput(
+      "tab.previous",
+      f,
+      [],
+      async (command) => {
+        events.push(command);
+        return undefined;
+      },
+      {
+        onTabSelectionStarted: () => {
+          events.push("start");
+          return () => {};
+        },
+      },
+    ),
+  );
+  expect(events).toEqual([]);
+});
+
+for (const succeeds of [true, false]) {
+  test(`explicit restart reports exact pane and revision only on success (${succeeds})`, async () => {
+    const f = activeItemFixture();
+    const events: unknown[] = [];
+    await executeCommand(
+      executionInput(
+        "pane.restart",
+        f,
+        [],
+        async (command) => {
+          events.push(command);
+          return succeeds ? { id: "pane-1", revision: 7 } : undefined;
+        },
+        { onPaneRestarted: (paneId: string, revision: number) => events.push([paneId, revision]) },
+      ),
+    );
+    expect(events).toEqual([
+      { type: "process.restart", paneId: "pane-1" },
+      ...(succeeds ? [["pane-1", 7]] : []),
+    ]);
+  });
+}
+
+test("work-item submission delegates exact identity, parent and revision without owning entry", async () => {
+  for (const createKind of ["directory", "generic-root", "generic-child"] as const) {
+    const fixture = activeItemFixture(createKind !== "directory");
+    fixture.state = {
+      ...fixture.state,
+      dialog: { kind: "create", createKind, returnFocus: { region: "navigator" } },
+    };
+    const sent: Command[] = [];
+    const actions: ShellAction[] = [];
+    const created: unknown[] = [];
+    await submitCreate({
+      ...fixture,
+      value: createKind === "directory" ? "." : "New root",
+      getSubmittingDialog: () => null,
+      setSubmittingDialog() {},
+      onItemCreated: async (...args) => {
+        created.push(args);
+      },
+      dispatch: (action) => {
+        actions.push(action);
+      },
+      run: async (command) => {
+        sent.push(command);
+        return { id: "requested", itemId: "requested", rootItemId: "root-1", revision: 7 };
+      },
+    });
+    expect(sent).toEqual([
+      createKind === "directory"
+        ? { type: "directory.register", workspaceId: "workspace-shared", path: process.cwd() }
+        : {
+            type: "item.create",
+            workspaceId: "workspace-shared",
+            category: "design",
+            title: "New root",
+            ...(createKind === "generic-child" ? { parentId: "root-1" } : {}),
+          },
+    ]);
+    expect(actions).toEqual([]);
+    expect(created).toEqual([["requested", createKind === "generic-root" ? null : "root-1", 7]]);
+  }
 });
 
 test("builds completion keys from durable navigation and surface context", () => {
@@ -211,6 +493,7 @@ test("reports structural commands without applying connection policy", () => {
       "focus.up",
       "focus.right",
       "navigator.toggle",
+      "navigator.dismiss",
       "session.open",
       "client.reload",
       "client.quit",
@@ -221,13 +504,13 @@ test("reports structural commands without applying connection policy", () => {
       "pane.splitHorizontal",
       "pane.splitVertical",
       "pane.restart",
-      "item.create",
     ]),
   );
 });
 
-test("splitting focuses the new pane returned by the server", async () => {
+test("splitting completes its captured entry intent with the returned pane and revision", async () => {
   const fixture = activeItemFixture();
+  let captured = false;
   const actions: ShellAction[] = [];
   const sent: Command[] = [];
   const current = completionContextFor(fixture.model, fixture.state.dialog);
@@ -238,6 +521,7 @@ test("splitting focuses the new pane returned by the server", async () => {
       expected,
       current: () => current,
       send: async (next) => {
+        expect(captured).toBe(true);
         sent.push(next);
         return {
           ok: true,
@@ -255,25 +539,21 @@ test("splitting focuses the new pane returned by the server", async () => {
       },
     });
 
-  const focusRequests: {
-    target: ExecuteCommandInput["focus"];
-    pending: { epoch: string; revision: number } | undefined;
-  }[] = [];
+  const entries: { paneId: string; revision: number }[] = [];
   await executeCommand(
     executionInput("pane.splitHorizontal", fixture, actions, run, {
-      setFocus(target, pending) {
-        focusRequests.push({ target, pending });
+      onPaneSplitStarted: () => {
+        captured = true;
+        return (paneId, revision) => entries.push({ paneId, revision });
+      },
+      setFocus: () => {
+        throw new Error("Split must wait for native readiness");
       },
     }),
   );
 
   expect(sent).toEqual([{ type: "pane.split", paneId: "pane-1", direction: "horizontal" }]);
-  expect(focusRequests).toEqual([
-    {
-      target: { region: "workbench", paneId: "pane-2" },
-      pending: { epoch: "epoch-a", revision: 5 },
-    },
-  ]);
+  expect(entries).toEqual([{ paneId: "pane-2", revision: 5 }]);
 });
 
 test("spatial movement synchronously requests the next native target", async () => {
@@ -299,17 +579,68 @@ test("spatial movement synchronously requests the next native target", async () 
   expect(actions).toEqual([]);
 });
 
+for (const entry of ["origin", "remembered", "destination"] as const) {
+  test(`spatial ${entry} navigation excludes unusable destinations without losing the origin`, async () => {
+    const fixture = activeItemFixture();
+    fixture.snapshot.panes[0]!.processStatus = "running";
+    fixture.snapshot.panes.push({ ...fixture.snapshot.panes[0]!, id: "pane-2" });
+    fixture.snapshot.tabs[0]!.layout = {
+      type: "split",
+      direction: "vertical",
+      ratio: 0.25,
+      first: { type: "pane", paneId: "pane-1" },
+      second: { type: "pane", paneId: "pane-2" },
+    };
+    fixture.model = deriveShellModel(fixture);
+    const actions: ShellAction[] = [];
+    await executeCommand(
+      executionInput(
+        entry === "origin" ? "focus.right" : entry === "remembered" ? "focus.down" : "focus.left",
+        fixture,
+        actions,
+        async () => undefined,
+        {
+          focus:
+            entry === "remembered"
+              ? { region: "tabs" }
+              : { region: "workbench", paneId: entry === "origin" ? "pane-1" : "pane-2" },
+          focusNodes: [
+            { target: { region: "category" }, rect: { x: 0, y: 1, width: 5, height: 38 } },
+            { target: { region: "tabs" }, rect: { x: 5, y: 1, width: 75, height: 1 } },
+            {
+              target: { region: "workbench", paneId: "pane-1" },
+              rect: { x: 6, y: 3, width: 18, height: 35 },
+            },
+            {
+              target: { region: "workbench", paneId: "pane-2" },
+              rect: { x: 25, y: 3, width: 54, height: 35 },
+            },
+          ],
+        },
+      ),
+    );
+    expect(actions).toEqual([
+      {
+        type: "focus.set",
+        focus:
+          entry === "destination"
+            ? { region: "category" }
+            : { region: "workbench", paneId: "pane-2" },
+      },
+    ]);
+  });
+}
+
 test("item creation availability uses the supplied native focus instead of stale state focus", () => {
-  const fixture = activeItemFixture();
+  const fixture = activeItemFixture(true);
   fixture.state = {
     ...fixture.state,
-    activeNavigatorKey: "project:project-1",
-    navigatorCursorKey: "project:project-1",
+    activeNavigatorKey: "root:root-1",
+    navigatorCursorKey: "root:root-1",
   };
   fixture.model = deriveShellModel({
     snapshot: fixture.snapshot,
     state: fixture.state,
-    sessionCursorId: null,
   });
   expect(
     availableCommands({ ...fixture, focus: { region: "navigator" }, focusedPaneId: null }).has(
@@ -319,12 +650,12 @@ test("item creation availability uses the supplied native focus instead of stale
 });
 
 test("item submission uses the captured native launch context when semantic focus was stale", async () => {
-  const fixture = activeItemFixture();
+  const fixture = activeItemFixture(true);
   fixture.state = {
     ...fixture.state,
-    activeNavigatorKey: "project:project-1",
-    navigatorCursorKey: "project:project-1",
-    dialog: { kind: "create", createKind: "item", returnFocus: { region: "navigator" } },
+    activeNavigatorKey: "root:root-1",
+    navigatorCursorKey: "root:root-1",
+    dialog: { kind: "create", createKind: "generic-child", returnFocus: { region: "navigator" } },
   };
   const sent: Command[] = [];
   await submitCreate({
@@ -333,13 +664,20 @@ test("item submission uses the captured native launch context when semantic focu
     getSubmittingDialog: () => null,
     setSubmittingDialog() {},
     dispatch() {},
+    onItemCreated: async () => {},
     run: async (command) => {
       sent.push(command);
-      return { id: "item-2" };
+      return { id: "item-2", revision: 5 };
     },
   });
   expect(sent).toEqual([
-    { type: "item.create", projectId: "project-1", kind: "generic", title: "Native context item" },
+    {
+      type: "item.create",
+      workspaceId: "workspace-shared",
+      category: "design",
+      parentId: "root-1",
+      title: "Native context item",
+    },
   ]);
 });
 
@@ -386,15 +724,14 @@ test("opening a collapsed project terminal expands and activates its item", asyn
   const fixture = activeItemFixture();
   fixture.state = {
     ...fixture.state,
-    activeNavigatorKey: "project:project-1",
-    navigatorCursorKey: "project:project-1",
+    activeNavigatorKey: "root:root-1",
+    navigatorCursorKey: "root:root-1",
     focus: { region: "navigator" },
-    expandedProjectIds: new Set(),
+    expandedRootIds: new Set(),
   };
   fixture.model = deriveShellModel({
     snapshot: fixture.snapshot,
     state: fixture.state,
-    sessionCursorId: null,
   });
   const actions: ShellAction[] = [];
   const sent: Command[] = [];
@@ -404,36 +741,28 @@ test("opening a collapsed project terminal expands and activates its item", asyn
   };
 
   await executeCommand(
-    executionInput("project.openTerminal", fixture, actions, run, {
+    executionInput("cursor.activate", fixture, actions, run, {
       focus: { region: "navigator" },
       focusedPaneId: null,
     }),
   );
 
-  expect(sent).toEqual([{ type: "surface.ensureHere", projectId: "project-1" }]);
-  expect(actions).toEqual([
-    { type: "project.toggle", projectId: "project-1" },
-    {
-      type: "navigator.activate",
-      key: "item:item-1",
-      pending: { epoch: fixture.snapshot.epoch, revision: 1 },
-    },
-  ]);
+  expect(sent).toEqual([{ type: "surface.ensure", itemId: "root-1" }]);
+  expect(actions).toEqual([{ type: "navigator.activate", key: "root:root-1" }]);
 });
 
-test("a late project-open response cannot activate an item behind a dialog", async () => {
+test("a late root-open response cannot activate an item behind a dialog", async () => {
   const fixture = activeItemFixture();
   fixture.state = {
     ...fixture.state,
-    activeNavigatorKey: "project:project-1",
-    navigatorCursorKey: "project:project-1",
+    activeNavigatorKey: "root:root-1",
+    navigatorCursorKey: "root:root-1",
     focus: { region: "navigator" },
-    expandedProjectIds: new Set(),
+    expandedRootIds: new Set(),
   };
   fixture.model = deriveShellModel({
     snapshot: fixture.snapshot,
     state: fixture.state,
-    sessionCursorId: null,
   });
   const open = deferred<CommandResponse>();
   const actions: ShellAction[] = [];
@@ -455,7 +784,7 @@ test("a late project-open response cannot activate an item behind a dialog", asy
     });
 
   const pending = executeCommand(
-    executionInput("project.openTerminal", fixture, actions, run, {
+    executionInput("cursor.activate", fixture, actions, run, {
       focus: { region: "navigator" },
       focusedPaneId: null,
     }),
@@ -471,15 +800,15 @@ test("a late project-open response cannot activate an item behind a dialog", asy
   });
   await pending;
 
-  expect(sent).toEqual([{ type: "surface.ensureHere", projectId: "project-1" }]);
-  expect(actions).toEqual([]);
+  expect(sent).toEqual([{ type: "surface.ensure", itemId: "root-1" }]);
+  expect(actions).toEqual([{ type: "navigator.activate", key: "root:root-1" }]);
 });
 
 test("a late create response cannot activate an item after cancelling its dialog", async () => {
-  const fixture = activeItemFixture();
+  const fixture = activeItemFixture(true);
   const dialog = {
     kind: "create" as const,
-    createKind: "item" as const,
+    createKind: "generic-child" as const,
     returnFocus: { region: "navigator" as const },
   };
   fixture.state = {
@@ -491,7 +820,6 @@ test("a late create response cannot activate an item after cancelling its dialog
   fixture.model = deriveShellModel({
     snapshot: fixture.snapshot,
     state: fixture.state,
-    sessionCursorId: null,
   });
   const create = deferred<CommandResponse>();
   const actions: ShellAction[] = [];
@@ -526,23 +854,32 @@ test("a late create response cannot activate an item after cancelling its dialog
       actions.push(action);
     },
     run,
+    onItemCreated: async () => {
+      throw new Error("Cancelled creation must not enter");
+    },
   });
   current = { ...current, dialog: null };
   create.resolve({ ok: true, revision: 5, result: { id: "item-2" } });
   await pending;
 
   expect(sent).toEqual([
-    { type: "item.create", projectId: "project-1", kind: "generic", title: "Late item" },
+    {
+      type: "item.create",
+      workspaceId: "workspace-shared",
+      category: "design",
+      parentId: "root-1",
+      title: "Late item",
+    },
   ]);
   expect(actions).toEqual([]);
   expect(submitting).toBeNull();
 });
 
 test("a create prompt submits only once while its command is pending", async () => {
-  const fixture = activeItemFixture();
+  const fixture = activeItemFixture(true);
   const dialog = {
     kind: "create" as const,
-    createKind: "item" as const,
+    createKind: "generic-child" as const,
     returnFocus: { region: "navigator" as const },
   };
   fixture.state = {
@@ -553,7 +890,6 @@ test("a create prompt submits only once while its command is pending", async () 
   fixture.model = deriveShellModel({
     snapshot: fixture.snapshot,
     state: fixture.state,
-    sessionCursorId: null,
   });
   const create = deferred<CommandResponse>();
   const sent: Command[] = [];
@@ -568,44 +904,52 @@ test("a create prompt submits only once while its command is pending", async () 
       submitting = dialogState;
     },
     dispatch() {},
+    onItemCreated: async () => {},
     run: async (command: Command) => {
       sent.push(command);
-      return (await create.promise).result;
+      const response = await create.promise;
+      return { ...response.result, revision: response.revision };
     },
   };
 
   const first = submitCreate(input);
   await submitCreate(input);
   expect(sent).toEqual([
-    { type: "item.create", projectId: "project-1", kind: "generic", title: "One item" },
+    {
+      type: "item.create",
+      workspaceId: "workspace-shared",
+      category: "design",
+      parentId: "root-1",
+      title: "One item",
+    },
   ]);
 
   create.resolve({ ok: true, revision: 5, result: { id: "item-2" } });
   await first;
 });
 
-test("creating an item expands its collapsed project before activation", async () => {
-  const fixture = activeItemFixture();
+test("creating a child delegates its parent to the shell without closing or expanding the form", async () => {
+  const fixture = activeItemFixture(true);
   const dialog = {
     kind: "create" as const,
-    createKind: "item" as const,
+    createKind: "generic-child" as const,
     returnFocus: { region: "navigator" as const },
   };
   fixture.state = {
     ...fixture.state,
-    activeNavigatorKey: "project:project-1",
-    navigatorCursorKey: "project:project-1",
+    activeNavigatorKey: "root:root-1",
+    navigatorCursorKey: "root:root-1",
     dialog,
     focus: { region: "navigator" },
-    expandedProjectIds: new Set(),
+    expandedRootIds: new Set(),
   };
   fixture.model = deriveShellModel({
     snapshot: fixture.snapshot,
     state: fixture.state,
-    sessionCursorId: null,
   });
   const actions: ShellAction[] = [];
   const sent: Command[] = [];
+  const created: unknown[] = [];
   let submitting: Exclude<ShellState["dialog"], null> | null = null;
 
   await submitCreate({
@@ -620,18 +964,24 @@ test("creating an item expands its collapsed project before activation", async (
     dispatch(action) {
       actions.push(action);
     },
+    onItemCreated: async (...args) => {
+      created.push(args);
+    },
     run: async (command) => {
       sent.push(command);
-      return { id: "item-2" };
+      return { id: "item-2", revision: 5 };
     },
   });
 
   expect(sent).toEqual([
-    { type: "item.create", projectId: "project-1", kind: "generic", title: "Visible item" },
+    {
+      type: "item.create",
+      workspaceId: "workspace-shared",
+      category: "design",
+      parentId: "root-1",
+      title: "Visible item",
+    },
   ]);
-  expect(actions).toEqual([
-    { type: "dialog.close" },
-    { type: "project.toggle", projectId: "project-1" },
-    { type: "navigator.activate", key: "item:item-2" },
-  ]);
+  expect(actions).toEqual([]);
+  expect(created).toEqual([["item-2", "root-1", 5]]);
 });

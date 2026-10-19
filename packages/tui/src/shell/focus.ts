@@ -4,7 +4,11 @@ import type { FocusTarget } from "@/input/focus.ts";
 import { focusRenderable, isEligibleFocusTarget } from "@/ui/focus-utils.ts";
 
 export function nativeFocusId(target: FocusTarget): string {
-  return target.region === "workbench" ? `terminal:${target.paneId}` : `region:${target.region}`;
+  return target.region === "workbench"
+    ? `${target.control ?? "terminal"}:${target.paneId}`
+    : target.region === "navigator" && target.control === "filter"
+      ? "navigator:filter"
+      : `region:${target.region}`;
 }
 
 /** Recognizes shell endpoints through child ancestry without a second focus registry. */
@@ -19,6 +23,8 @@ export function focusTargetFor(node: Renderable | null): FocusTarget | null {
         return { region: "category" };
       case "region:navigator":
         return { region: "navigator" };
+      case "navigator:filter":
+        return { region: "navigator", control: "filter" };
       case "region:tabs":
         return { region: "tabs" };
       case "dialog-overlay":
@@ -26,6 +32,13 @@ export function focusTargetFor(node: Renderable | null): FocusTarget | null {
     }
     if (current.id.startsWith("terminal:") && current.id.length > "terminal:".length) {
       return { region: "workbench", paneId: current.id.slice("terminal:".length) };
+    }
+    if (current.id.startsWith("reactivate:") && current.id.length > "reactivate:".length) {
+      return {
+        region: "workbench",
+        paneId: current.id.slice("reactivate:".length),
+        control: "reactivate",
+      };
     }
   }
   return null;

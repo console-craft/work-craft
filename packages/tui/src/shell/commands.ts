@@ -1,8 +1,15 @@
-import type { CategoryKind, Command, CommandResponse, Snapshot } from "@work-craft/server/client";
+import {
+  ApiError,
+  type CategoryKind,
+  type Command,
+  type CommandResponse,
+  resolveClientPath,
+  type Snapshot,
+} from "@work-craft/server/client";
 
 import type { CommandId } from "@/input/command-router.ts";
-import { type FocusNode, type FocusTarget, moveFocus } from "@/input/focus.ts";
-import { type CreateKind, projectIdForShellContext, type ShellModel } from "@/shell/model.ts";
+import { focusKey, type FocusNode, type FocusTarget, moveFocus } from "@/input/focus.ts";
+import { type CreateKind, genericRootIdForShellContext, type ShellModel } from "@/shell/model.ts";
 import type { DialogState, ShellAction, ShellRegion, ShellState } from "@/shell/state.ts";
 
 export const durableCommands = {
@@ -12,20 +19,24 @@ export const durableCommands = {
     sessionId,
     name,
   }),
-  createProject: (workspaceId: string, category: CategoryKind, name: string): Command => ({
-    type: "project.create",
+  registerDirectory: (workspaceId: string, path: string): Command => ({
+    type: "directory.register",
+    workspaceId,
+    path: resolveClientPath(path),
+  }),
+  createItem: (
+    workspaceId: string,
+    category: CategoryKind,
+    title: string,
+    parentId?: string,
+  ): Command => ({
+    type: "item.create",
     workspaceId,
     category,
-    name,
-  }),
-  createItem: (projectId: string, title: string): Command => ({
-    type: "item.create",
-    projectId,
-    kind: "generic",
+    ...(parentId === undefined ? {} : { parentId }),
     title,
   }),
   openItem: (itemId: string): Command => ({ type: "surface.ensure", itemId }),
-  openProject: (projectId: string): Command => ({ type: "surface.ensureHere", projectId }),
   createTab: (surfaceId: string): Command => ({ type: "tab.create", surfaceId, title: "Shell" }),
   selectTab: (surfaceId: string, tabId: string): Command => ({
     type: "surface.selectTab",
@@ -51,7 +62,7 @@ export type CompletionContext = {
   dialog: DialogState;
 };
 
-/** Retains the response revision so split focus can wait for a lagging snapshot. */
+/** Retains the response revision for guarded native terminal entry. */
 export type DurableCommandResult = CommandResponse["result"] & Pick<CommandResponse, "revision">;
 
 export type CommandAvailabilityInput = {
@@ -69,6 +80,7 @@ export type RunDurableCommandInput = {
   current(): CompletionContext;
   send(command: Command): Promise<CommandResponse>;
   dispatch(action: ShellAction): void;
+  source?: { key: string; label: string; requestId: number; epoch?: string; isCurrent(): boolean };
 };
 
 export type ExecuteCommandInput = {
@@ -81,10 +93,17 @@ export type ExecuteCommandInput = {
   focusNodes: readonly FocusNode[];
   terminalWidth: number;
   dispatch(action: ShellAction): void;
-  setFocus(target: FocusTarget, pending?: NonNullable<ShellState["pendingWorkbenchFocus"]>): void;
-  setSessionCursorId(id: string | null): void;
+  setFocus(target: FocusTarget): void;
   /** Local activation may enter the opened item after its response revision is rendered. */
   onItemOpened?(itemId: string, revision: number): void;
+  /** Capture terminal-source intent before tab selection can project focus onto tabs. */
+  onTabSelectionStarted?(tabId: string): (revision: number) => void;
+  /** Creation enters its exact returned terminal, including from control origins. */
+  onTabCreateStarted?(): (tabId: string, paneId: string, revision: number) => void;
+  /** Explicit recovery can enter only the pane and response revision it restarted. */
+  onPaneRestarted?(paneId: string, revision: number): void;
+  /** Capture split intent before its response or destination can arrive. */
+  onPaneSplitStarted?(): (paneId: string, revision: number) => void;
   run(
     command: Command,
     region: ShellRegion,
@@ -102,7 +121,8 @@ export type SubmitCreateInput = {
   getSubmittingDialog(): Exclude<DialogState, null> | null;
   setSubmittingDialog(dialog: Exclude<DialogState, null> | null): void;
   dispatch(action: ShellAction): void;
-  run(command: Command, region: ShellRegion): Promise<CommandResponse["result"] | undefined>;
+  run: ExecuteCommandInput["run"];
+  onItemCreated(itemId: string, parentId: string | null, revision: number): Promise<void>;
 };
 
 export function completionContextFor(model: ShellModel, dialog: DialogState): CompletionContext {
@@ -122,6 +142,7 @@ export function availableCommands({
     "focus.up",
     "focus.right",
     "navigator.toggle",
+    "navigator.dismiss",
     "session.open",
     "client.reload",
     "client.quit",
@@ -159,7 +180,10 @@ export function availableCommands({
       commands.add("pane.restart");
     }
   }
-  if (snapshot !== null && projectIdForShellContext({ ...state, focus }, snapshot) !== undefined) {
+  if (
+    snapshot !== null &&
+    genericRootIdForShellContext({ ...state, focus }, snapshot) !== undefined
+  ) {
     commands.add("item.create");
   }
 
@@ -168,7 +192,7 @@ export function availableCommands({
     if (state.activeSessionId !== null) {
       commands.add("dialog.cancel");
     }
-  } else if (state.dialog?.kind === "create") {
+  } else if (state.dialog !== null) {
     commands.add("dialog.cancel");
   } else if (focus.region === "workspace") {
     if (state.activeSessionId !== null) {
@@ -177,8 +201,14 @@ export function availableCommands({
   } else if (focus.region === "session") {
     commands.add("context.create");
   } else if (focus.region === "navigator") {
-    if (model.entries[model.navigatorCursorIndex]?.kind === "project") {
-      commands.add("project.openTerminal");
+    const candidate = snapshot?.items.find((item) => item.id === model.cursorEntry?.id);
+    if (
+      candidate &&
+      candidate.kind !== "generic" &&
+      !candidate.archived &&
+      candidate.data.availability === "unavailable"
+    ) {
+      commands.add("item.archive");
     }
     if (state.activeWorkspaceId !== null) {
       commands.add("context.create");
@@ -197,10 +227,12 @@ export async function runDurableCommand({
   current,
   send,
   dispatch,
+  source,
 }: RunDurableCommandInput): Promise<DurableCommandResult | undefined> {
   const contextIsCurrent = () => {
     const latest = current();
     return (
+      (source?.isCurrent() ?? true) &&
       latest.navigationKey === expected.navigationKey &&
       (expected.key === undefined || latest.key === expected.key) &&
       latest.dialog === expected.dialog
@@ -212,17 +244,42 @@ export async function runDurableCommand({
     if (!contextIsCurrent()) {
       return undefined;
     }
-    dispatch({ type: "error.set", region, error: null });
+    if (source) {
+      dispatch({ type: "source.clear", sourceKey: source.key, requestId: source.requestId });
+    }
     return { ...response.result, revision: response.revision };
   } catch (cause) {
     if (!contextIsCurrent()) {
       return undefined;
     }
-    dispatch({
-      type: "error.set",
-      region,
-      error: cause instanceof Error ? cause.message : String(cause),
-    });
+    const field =
+      expected.dialog?.kind === "create"
+        ? expected.dialog.createKind === "directory"
+          ? "path"
+          : expected.dialog.createKind.startsWith("generic-")
+            ? "title"
+            : "name"
+        : null;
+    if (cause instanceof ApiError && cause.field === field) {
+      dispatch({ type: "field.error", message: cause.message });
+    } else {
+      const now = Date.now();
+      dispatch({
+        type: "source.report",
+        now,
+        error: {
+          sourceKey: source?.key ?? region,
+          sourceLabel: source?.label ?? region,
+          requestId: source?.requestId ?? 0,
+          epoch: source?.epoch ?? "",
+          contextKey: expected.navigationKey,
+          operation: command.type,
+          message: cause instanceof Error ? cause.message : String(cause),
+          expiresAt: now + 8000,
+          origin: "direct",
+        },
+      });
+    }
     return undefined;
   }
 }
@@ -260,8 +317,11 @@ export async function executeCommand({
   terminalWidth,
   dispatch,
   setFocus,
-  setSessionCursorId,
   onItemOpened,
+  onTabSelectionStarted,
+  onTabCreateStarted,
+  onPaneRestarted,
+  onPaneSplitStarted,
   run,
   reload,
   quit,
@@ -279,7 +339,7 @@ export async function executeCommand({
       return;
     }
     dispatch({ type: "navigator.activate", key: entry.key });
-    if (entry.kind === "item") {
+    {
       const result = await run(durableCommands.openItem(entry.id), "navigator", {
         navigationKey: navigationContextKey(snapshot, state, entry.key),
         dialog: state.dialog,
@@ -296,13 +356,7 @@ export async function executeCommand({
     });
   };
   const activateCursor = async () => {
-    if (focus.region === "workspace" && state.workspaceCursorId !== null) {
-      dispatch({ type: "workspace.activate", id: state.workspaceCursorId });
-      reconcile();
-    } else if (focus.region === "category") {
-      dispatch({ type: "category.activate", category: state.categoryCursor });
-      reconcile();
-    } else if (focus.region === "navigator") {
+    if (focus.region === "navigator") {
       await activateNavigator(model.entries[model.navigatorCursorIndex], onItemOpened);
     } else if (focus.region === "tabs") {
       const tab = model.tabs[model.tabCursorIndex];
@@ -314,19 +368,87 @@ export async function executeCommand({
 
   if (command.startsWith("focus.")) {
     const direction = command.slice(6) as "left" | "right" | "up" | "down";
-    const next = moveFocus(focus, direction, focusNodes);
+    const stoppedSelection =
+      focus.region === "tabs" &&
+      focusedPaneId !== null &&
+      snapshot?.panes.some(
+        (pane) =>
+          pane.id === focusedPaneId &&
+          ["exited", "failed", "interrupted"].includes(pane.processStatus),
+      );
+    const origin = stoppedSelection
+      ? (focusNodes.find(
+          ({ target }) =>
+            target.region === "workbench" &&
+            target.paneId === focusedPaneId &&
+            target.control === "reactivate",
+        )?.target ?? { region: "workbench" as const, paneId: focusedPaneId! })
+      : focus;
+    const eligibleNodes = focusNodes.filter(
+      ({ target, rect }) =>
+        target.region !== "workbench" ||
+        target.control === "reactivate" ||
+        (rect.width >= 20 &&
+          rect.height >= 5 &&
+          !focusNodes.some(
+            (node) =>
+              node.target.region === "workbench" &&
+              node.target.paneId === target.paneId &&
+              node.target.control === "reactivate",
+          )),
+    );
+    const originNode = focusNodes.find(({ target }) => focusKey(target) === focusKey(origin));
+    // A shrunken leaf remains a movement origin, never an eligible destination.
+    const movementNodes =
+      originNode && !eligibleNodes.includes(originNode)
+        ? [...eligibleNodes, originNode]
+        : eligibleNodes;
+    let next = moveFocus(
+      origin.region === "navigator" ? { region: "navigator" } : origin,
+      direction,
+      movementNodes,
+    );
+    if (stoppedSelection && next.region !== "workbench") {
+      next = moveFocus(focus, direction, eligibleNodes);
+    }
+    const rememberedPaneId = state.lastPaneByTab[model.activeTab?.id ?? ""];
+    const rememberedTarget = eligibleNodes.find(
+      ({ target }) => target.region === "workbench" && target.paneId === rememberedPaneId,
+    )?.target;
     const restored =
-      focus.region !== "workbench" &&
+      origin.region !== "workbench" &&
       next.region === "workbench" &&
-      state.lastWorkbenchPaneId !== null &&
-      model.paneIds.includes(state.lastWorkbenchPaneId)
-        ? { region: "workbench" as const, paneId: state.lastWorkbenchPaneId }
+      rememberedPaneId !== undefined &&
+      model.paneIds.includes(rememberedPaneId) &&
+      rememberedTarget
+        ? rememberedTarget
         : next;
     setFocus(restored);
     return;
   }
 
   switch (command) {
+    case "item.archive": {
+      const item = snapshot?.items.find((item) => item.id === model.cursorEntry?.id);
+      if (
+        item &&
+        item.kind !== "generic" &&
+        !item.archived &&
+        item.data.availability === "unavailable"
+      ) {
+        dispatch({
+          type: "dialog.open",
+          dialog: {
+            kind: "archive",
+            itemId: item.id,
+            title: item.title,
+            path: item.data.path,
+            returnFocus: focus,
+          },
+        });
+      }
+      return;
+    }
     case "category.previous":
     case "category.next": {
       const category = adjacent(
@@ -351,24 +473,41 @@ export async function executeCommand({
       );
       return;
     case "navigator.toggle":
+    case "navigator.dismiss":
       dispatch({ type: "navigator.toggle", hasWorkbench: model.paneIds.length > 0 });
       return;
     case "tab.previous":
     case "tab.next": {
       const tab = adjacent(model.tabs, model.tabActiveIndex, command === "tab.previous" ? -1 : 1);
       if (model.surface !== undefined && tab !== undefined) {
+        const complete =
+          focus.region === "workbench" && !focus.control
+            ? onTabSelectionStarted?.(tab.id)
+            : undefined;
         dispatch({ type: "tab.cursor", id: tab.id });
-        await run(durableCommands.selectTab(model.surface.id, tab.id), "tabs");
+        const result = await run(durableCommands.selectTab(model.surface.id, tab.id), "tabs", {
+          navigationKey: model.navigationKey,
+          dialog: state.dialog,
+        });
+        if (result !== undefined) {
+          complete?.(result.revision);
+        }
       }
       return;
     }
     case "tab.create":
       if (model.surface !== undefined) {
-        await run(durableCommands.createTab(model.surface.id), "tabs");
+        const complete = onTabCreateStarted?.();
+        const result = await run(durableCommands.createTab(model.surface.id), "tabs", {
+          navigationKey: model.navigationKey,
+          dialog: state.dialog,
+        });
+        if (result?.tabId !== undefined && result.paneId !== undefined) {
+          complete?.(result.tabId, result.paneId, result.revision);
+        }
       }
       return;
     case "session.open":
-      setSessionCursorId(state.activeSessionId ?? model.sessions[0]?.id ?? null);
       dispatch({ type: "dialog.open", dialog: { kind: "sessions", returnFocus: focus } });
       return;
     case "client.reload":
@@ -378,11 +517,12 @@ export async function executeCommand({
       quit();
       return;
     case "item.create":
-      openCreate("item");
+      openCreate("generic-child");
       return;
     case "pane.splitHorizontal":
     case "pane.splitVertical":
       if (focusedPaneId !== null) {
+        const complete = onPaneSplitStarted?.();
         const result = await run(
           command === "pane.splitHorizontal"
             ? durableCommands.splitHorizontal(focusedPaneId)
@@ -390,21 +530,16 @@ export async function executeCommand({
           "workbench",
         );
         if (result?.paneId !== undefined) {
-          setFocus(
-            { region: "workbench", paneId: result.paneId },
-            snapshot === null
-              ? undefined
-              : {
-                  epoch: snapshot.epoch,
-                  revision: result.revision,
-                },
-          );
+          complete?.(result.paneId, result.revision);
         }
       }
       return;
     case "pane.restart":
       if (focusedPaneId !== null) {
-        await run(durableCommands.restartPane(focusedPaneId), "workbench");
+        const result = await run(durableCommands.restartPane(focusedPaneId), "workbench");
+        if (result !== undefined) {
+          onPaneRestarted?.(focusedPaneId, result.revision);
+        }
       }
       return;
     case "cursor.activate":
@@ -416,34 +551,11 @@ export async function executeCommand({
           ? "session"
           : focus.region === "workspace"
             ? "workspace"
-            : "project",
+            : state.activeCategory === "implementation"
+              ? "directory"
+              : "generic-root",
       );
       return;
-    case "project.openTerminal": {
-      const entry = model.entries[model.navigatorCursorIndex];
-      if (entry?.kind === "project") {
-        const result = await run(durableCommands.openProject(entry.id), "navigator");
-        const itemId = result?.itemId ?? result?.id;
-        if (result !== undefined && itemId !== undefined) {
-          if (!state.expandedProjectIds.has(entry.id)) {
-            dispatch({ type: "project.toggle", projectId: entry.id });
-          }
-          dispatch({
-            type: "navigator.activate",
-            key: `item:${itemId}`,
-            pending:
-              snapshot === null
-                ? undefined
-                : {
-                    epoch: snapshot.epoch,
-                    revision: result.revision,
-                  },
-          });
-          onItemOpened?.(itemId, result.revision);
-        }
-      }
-      return;
-    }
     case "navigator.shrink":
     case "navigator.grow":
       dispatch({
@@ -466,6 +578,7 @@ export async function submitCreate({
   setSubmittingDialog,
   dispatch,
   run,
+  onItemCreated,
 }: SubmitCreateInput): Promise<void> {
   if (
     snapshot === null ||
@@ -477,17 +590,36 @@ export async function submitCreate({
   const dialog = state.dialog;
   const { createKind, returnFocus } = dialog;
   let command: Command | undefined;
-  let projectId: string | undefined;
+  let rootId: string | undefined;
   if (createKind === "session") {
     command = durableCommands.createSession(value);
   } else if (createKind === "workspace" && state.activeSessionId !== null) {
     command = durableCommands.createWorkspace(state.activeSessionId, value);
-  } else if (createKind === "project" && state.activeWorkspaceId !== null) {
-    command = durableCommands.createProject(state.activeWorkspaceId, state.activeCategory, value);
-  } else {
-    projectId = projectIdForShellContext({ ...state, focus: returnFocus }, snapshot);
-    if (projectId !== undefined) {
-      command = durableCommands.createItem(projectId, value);
+  } else if (createKind === "directory" && state.activeWorkspaceId !== null) {
+    try {
+      command = durableCommands.registerDirectory(state.activeWorkspaceId, value);
+    } catch (error) {
+      dispatch({
+        type: "field.error",
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+  } else if (
+    createKind === "generic-root" &&
+    state.activeWorkspaceId !== null &&
+    state.activeCategory !== "implementation"
+  ) {
+    command = durableCommands.createItem(state.activeWorkspaceId, state.activeCategory, value);
+  } else if (createKind === "generic-child" && state.activeWorkspaceId !== null) {
+    rootId = genericRootIdForShellContext({ ...state, focus: returnFocus }, snapshot);
+    if (rootId !== undefined) {
+      command = durableCommands.createItem(
+        state.activeWorkspaceId,
+        state.activeCategory,
+        value,
+        rootId,
+      );
     }
   }
   if (command === undefined) {
@@ -499,20 +631,23 @@ export async function submitCreate({
     setSubmittingDialog(null);
   }
   const id = result?.itemId ?? result?.id;
-  if (id === undefined) {
+  if (id === undefined || result === undefined) {
     return;
   }
-  dispatch({ type: "dialog.close" });
   if (createKind === "session") {
+    dispatch({ type: "dialog.close" });
     dispatch({ type: "session.activate", id });
   } else if (createKind === "workspace") {
+    dispatch({ type: "dialog.close" });
     dispatch({ type: "workspace.activate", id });
-  } else if (createKind === "project") {
-    dispatch({ type: "navigator.activate", key: `project:${id}` });
+    dispatch({ type: "focus.set", focus: { region: "category" } });
   } else {
-    if (projectId !== undefined && !state.expandedProjectIds.has(projectId)) {
-      dispatch({ type: "project.toggle", projectId });
-    }
-    dispatch({ type: "navigator.activate", key: `item:${id}` });
+    const parentId =
+      createKind === "directory"
+        ? result.rootItemId === id
+          ? null
+          : (result.rootItemId ?? null)
+        : (rootId ?? null);
+    await onItemCreated(id, parentId, result.revision);
   }
 }

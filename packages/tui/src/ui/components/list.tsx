@@ -12,16 +12,18 @@ import {
 import { useRenderer } from "@opentui/react";
 import {
   createContext,
+  type Ref,
   useCallback,
   useContext,
   useId,
+  useImperativeHandle,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
 
-import { useControlHints } from "@/ui/control-hints";
+import { type ControlHintSource, useControlHints } from "@/ui/control-hints";
 import { useNativeFocus } from "@/ui/focus-manager";
 import { focusRenderable, isEligibleFocusTarget, isVisible } from "@/ui/focus-utils";
 import { Box, type BoxProps } from "@/ui/primitives/box";
@@ -61,9 +63,15 @@ function useList(): ListContextValue {
   return context;
 }
 
+export type ListCursorHandle = {
+  /** Focus an eligible current cursor without selecting; controlled requests must be acknowledged. */
+  focusValue(value: string): boolean;
+};
+
 export interface ListProps extends Omit<BoxProps, "focusable"> {
   /** Disables focus and row interaction; wheel scrolling remains available. */
   disabled?: boolean;
+  horizontalScrolling?: boolean;
   /** Passing value, including undefined, selects controlled state. */
   value?: string;
   defaultValue?: string;
@@ -72,6 +80,10 @@ export interface ListProps extends Omit<BoxProps, "focusable"> {
   /** Independent virtual cursor. Passing this prop, including undefined, selects controlled state. */
   activeValue?: string;
   defaultActiveValue?: string;
+  /** Separate from the native Box ref; only moves the browsing cursor and List focus. */
+  cursorRef?: Ref<ListCursorHandle>;
+  /** Replaces the default hints; an empty array or empty getter result suppresses them. */
+  controlHints?: ControlHintSource;
   /** Controlled cursor is read-only without this callback; undefined means no eligible cursor remains. */
   onActiveValueChange?: (value: string | undefined) => void;
   /** Every deliberate activation fires, including for an already selected item. */
@@ -87,6 +99,7 @@ export function List(props: ListProps) {
     ref,
     children,
     disabled = false,
+    horizontalScrolling = false,
     focused: requestedFocus,
     bg,
     value,
@@ -94,6 +107,8 @@ export function List(props: ListProps) {
     onValueChange,
     activeValue,
     defaultActiveValue,
+    cursorRef,
+    controlHints,
     onActiveValueChange,
     onActivate,
     onKeyDown,
@@ -249,6 +264,50 @@ export function List(props: ListProps) {
       };
     },
     [ref, repairActive],
+  );
+
+  useImperativeHandle(
+    cursorRef,
+    () => ({
+      focusValue(value: string): boolean {
+        if (!mounted.current) {
+          return false;
+        }
+        const root = rootRef.current;
+        const target = getItems().find((item) => item.value === value);
+        if (!root || !target || !isEligibleFocusTarget(root, renderer.root)) {
+          return false;
+        }
+        changeActive(value);
+        const isCurrent = (): boolean => {
+          return (
+            mounted.current &&
+            rootRef.current === root &&
+            state.current.active === value &&
+            isEligibleFocusTarget(root, renderer.root) &&
+            getItems().includes(target)
+          );
+        };
+        if (!isCurrent()) {
+          return false;
+        }
+        const previous = renderer.currentFocusedRenderable;
+        focusRenderable(renderer, root);
+        if (renderer.currentFocusedRenderable === root && isCurrent()) {
+          return true;
+        }
+        if (
+          renderer.currentFocusedRenderable === root &&
+          previous &&
+          previous !== root &&
+          isEligibleFocusTarget(previous, renderer.root)
+        ) {
+          focusRenderable(renderer, previous);
+        }
+        return false;
+      },
+    }),
+    [renderer, getItems, changeActive],
   );
 
   useLayoutEffect(() => {
@@ -486,20 +545,24 @@ export function List(props: ListProps) {
     changeActive(next?.value);
   }
 
-  useControlHints(rootRef, () =>
-    getItems().length > 0
-      ? [
-          ...(!state.current.controlledActive || state.current.onActiveValueChange
+  useControlHints(
+    rootRef,
+    controlHints === undefined
+      ? () =>
+          getItems().length > 0
             ? [
-                { keys: "↑/↓/j/k", label: "Navigate" },
-                { keys: "Ctrl+d/u", label: "Half-page" },
+                ...(!state.current.controlledActive || state.current.onActiveValueChange
+                  ? [
+                      { keys: "↑/↓/j/k", label: "Navigate" },
+                      { keys: "Ctrl+d/u", label: "Half-page" },
+                    ]
+                  : []),
+                ...(getItems().some((item) => item.value === state.current.active)
+                  ? [{ keys: "Enter", label: "Open" }]
+                  : []),
               ]
-            : []),
-          ...(getItems().some((item) => item.value === state.current.active)
-            ? [{ keys: "Enter", label: "Open" }]
-            : []),
-        ]
-      : [],
+            : []
+      : controlHints,
   );
 
   const context = useMemo<ListContextValue>(
@@ -533,6 +596,7 @@ export function List(props: ListProps) {
           minHeight={0}
           focusable={false}
           keyboardFallback={false}
+          scrollX={horizontalScrolling}
         >
           {children}
         </ScrollArea>

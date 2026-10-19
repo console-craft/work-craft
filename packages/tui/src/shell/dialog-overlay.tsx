@@ -1,81 +1,86 @@
-import { isRenderable, type MouseEvent, parseColor, RGBA } from "@opentui/core";
 import type { Snapshot } from "@work-craft/server/client";
 import type { ReactNode } from "react";
 
+import { ArchivePrompt } from "@/shell/archive-prompt.tsx";
 import { CreatePrompt } from "@/shell/create-prompt.tsx";
 import { SessionChooser } from "@/shell/session-chooser.tsx";
 import type { DialogState } from "@/shell/state.ts";
-import { isEligibleFocusTarget } from "@/ui/focus-utils";
-import { Box } from "@/ui/primitives/box.tsx";
-import { Center } from "@/ui/primitives/center.tsx";
-import { useTheme } from "@/ui/theme-provider.tsx";
+import { Dialog, DialogContent } from "@/ui/components/dialog";
 
 export type DialogOverlayProps = {
   dialog: Exclude<DialogState, null>;
-  width: number;
-  height: number;
+  canCancel: boolean;
   sessions: Snapshot["sessions"];
-  sessionCursorId: string | null;
   promptValue: string;
   error: string | null;
   onCreateSession(): void;
-  onFocusSession(id: string): void;
+  onCancel(): void;
   onSelectSession(id: string): void;
   onPromptChange(value: string): void;
   onPromptSubmit(value: string): void;
+  onArchive?(): void;
+  visible?: boolean;
+  canRestoreFocus?(): boolean;
 };
 
 export function DialogOverlay({
   dialog,
   error,
-  height,
+  canCancel,
   promptValue,
-  sessionCursorId,
   sessions,
-  width,
   onCreateSession,
-  onFocusSession,
+  onCancel,
   onPromptChange,
   onPromptSubmit,
   onSelectSession,
+  onArchive,
+  visible = true,
+  canRestoreFocus,
 }: DialogOverlayProps): ReactNode {
-  const theme = useTheme();
-  const overlayColor = RGBA.clone(parseColor(theme.colors.background));
-  overlayColor.a = 0.5;
-
   return (
-    <Center
-      id="dialog-overlay"
-      focusable
-      position="absolute"
-      left={0}
-      top={0}
-      width={width}
-      height={height}
-      zIndex={1}
-      bg={overlayColor}
-      onMouseDown={(event: MouseEvent) => {
-        event.stopPropagation();
-        const root = event.currentTarget;
-        let target = event.target;
-        // Native autofocus runs after bubbling and uses the first focusable ancestor.
-        while (target && !target.focusable && isRenderable(target.parent)) {
-          target = target.parent;
-        }
-        if (!root || !target || target === root || !isEligibleFocusTarget(target, root)) {
-          event.preventDefault();
+    <Dialog
+      open
+      closeOnBackdropClick={canCancel}
+      onOpenChange={(open) => {
+        if (!open && canCancel) {
+          onCancel();
         }
       }}
     >
-      <Box id="dialog" flexDirection="row" width="60%" height="60%" bg="background">
+      <DialogContent
+        canRestoreFocus={canRestoreFocus}
+        visible={visible}
+        id="dialog"
+        overlayMargins={{ bottom: 1 }}
+        key={dialog.kind === "create" ? `create:${dialog.createKind}` : dialog.kind}
+        maxHeight="100%"
+        initialFocusId={
+          dialog.kind === "sessions"
+            ? sessions.length === 0
+              ? "session:create"
+              : "session:search"
+            : dialog.kind === "archive"
+              ? "archive:confirm"
+              : dialog.createKind === "directory"
+                ? "create:path"
+                : dialog.createKind.startsWith("generic-")
+                  ? "create:title"
+                  : "create:name"
+        }
+        width="50%"
+        minWidth={80}
+        maxWidth={100}
+      >
         {dialog.kind === "sessions" ? (
           <SessionChooser
-            cursorId={sessionCursorId}
+            canCancel={canCancel}
             sessions={sessions}
             onCreate={onCreateSession}
-            onFocus={onFocusSession}
             onSelect={onSelectSession}
           />
+        ) : dialog.kind === "archive" ? (
+          <ArchivePrompt title={dialog.title} path={dialog.path} onConfirm={() => onArchive?.()} />
         ) : (
           <CreatePrompt
             error={error}
@@ -85,7 +90,7 @@ export function DialogOverlay({
             onSubmit={onPromptSubmit}
           />
         )}
-      </Box>
-    </Center>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -37,6 +37,82 @@ function deferred<T>(): {
   return { promise, resolve, reject };
 }
 
+for (const change of [
+  "exited",
+  "failed",
+  "interrupted",
+  "epoch",
+  "disconnect",
+  "active tab",
+  "removed",
+  "item archived",
+  "parent archived",
+  "owner removed",
+] as const) {
+  test(`captured state rejects input after authoritative ${change} before React commits`, async () => {
+    const snapshot = snapshotFixture({
+      surfaces: [{ id: "surface-1", itemId: "item-1", activeTabId: "tab-1" }],
+      tabs: [
+        {
+          id: "tab-1",
+          surfaceId: "surface-1",
+          title: "Shell",
+          position: 0,
+          layout: { type: "pane", paneId: "pane-1" },
+        },
+      ],
+      panes: [
+        {
+          id: "pane-1",
+          surfaceId: "surface-1",
+          kind: "terminal",
+          title: "Shell",
+          cwd: "/tmp",
+          restorePolicy: { type: "shell", executable: "/bin/sh", args: [] },
+          processStatus: "running",
+          errorText: null,
+          startedAt: null,
+          exitedAt: null,
+        },
+      ],
+    });
+    const client = fakeClient(snapshot);
+    client.stream = async () => ({ close() {}, sendInput() {}, resize() {} });
+    const store = createWorkCraftStore(client);
+    await store.start();
+    const capturedState = store.getState();
+    expect(typeof capturedState.canSendInput).toBe("function");
+    expect(capturedState.canSendInput("pane-1", "epoch-a")).toBe(true);
+    expect(capturedState.canSendInput("missing", "epoch-a")).toBe(false);
+    expect(capturedState.canSendInput("pane-1", "old-epoch")).toBe(false);
+    const next = structuredClone(snapshot);
+    next.revision += 1;
+    if (change === "disconnect") {
+      store.stop();
+    } else {
+      if (change === "epoch") {
+        next.epoch = "epoch-b";
+      } else if (change === "active tab") {
+        next.surfaces[0]!.activeTabId = "tab-2";
+      } else if (change === "removed") {
+        next.tabs[0]!.layout = null;
+      } else if (change === "item archived" || change === "parent archived") {
+        next.items.find(
+          (item) => item.id === (change === "item archived" ? "item-1" : "root-1"),
+        )!.archived = true;
+      } else if (change === "owner removed") {
+        next.items = next.items.filter((item) => item.id !== "item-1");
+      } else {
+        next.panes[0]!.processStatus = change;
+      }
+      await store.apply({ type: "snapshot", snapshot: next });
+    }
+    expect(capturedState.canSendInput).toBe(store.getState().canSendInput);
+    expect(capturedState.canSendInput("pane-1", "epoch-a")).toBe(false);
+    store.stop();
+  });
+}
+
 test("force reload closes the old stream and retains coherent state while connecting", async () => {
   const snapshot = snapshotFixture();
   let closes = 0;
@@ -468,3 +544,105 @@ test("a reconnect snapshot requests a clean replay when its retained suffix star
   expect(terminal?.history).toEqual(retained);
   expect(terminal?.chunks).toEqual([]);
 });
+for (const change of [
+  "running",
+  "starting",
+  "failed",
+  "interrupted",
+  "epoch",
+  "disconnect",
+  "active tab",
+  "layout",
+  "pane",
+  "surface",
+  "tab owner",
+  "item",
+  "parent",
+  "item archived",
+  "parent archived",
+  "parent workspace",
+  "parent category",
+  "parent nesting",
+] as const) {
+  test(`captured exited-action eligibility rejects authoritative ${change} before React commits`, async () => {
+    const snapshot = snapshotFixture({
+      surfaces: [{ id: "s", itemId: "item-1", activeTabId: "t" }],
+      tabs: [
+        {
+          id: "t",
+          surfaceId: "s",
+          title: "Shell",
+          position: 0,
+          layout: { type: "pane", paneId: "p" },
+        },
+      ],
+      panes: [
+        {
+          id: "p",
+          surfaceId: "s",
+          kind: "terminal",
+          title: "Shell",
+          cwd: "/tmp",
+          restorePolicy: { type: "shell", executable: "/bin/sh", args: [] },
+          processStatus: "exited",
+          errorText: null,
+          startedAt: null,
+          exitedAt: null,
+        },
+      ],
+    });
+    const client = fakeClient(snapshot);
+    client.stream = async () => ({ close() {}, sendInput() {}, resize() {} });
+    const store = createWorkCraftStore(client);
+    try {
+      await store.start();
+      const captured = store.getState();
+      expect(typeof captured.canReactivate).toBe("function");
+      expect(captured.canReactivate("p", "epoch-a")).toBe(true);
+      expect(captured.canReactivate("missing", "epoch-a")).toBe(false);
+      expect(captured.canReactivate("p", "old-epoch")).toBe(false);
+      expect(captured.canSendInput("p", "epoch-a")).toBe(false);
+      const next = structuredClone(snapshot);
+      next.revision += 1;
+      const parent = next.items.find((item) => item.id === "root-1")!;
+      if (change === "disconnect") {
+        store.stop();
+      } else {
+        if (change === "epoch") {
+          next.epoch = "epoch-b";
+        } else if (change === "active tab") {
+          next.surfaces[0]!.activeTabId = "other";
+        } else if (change === "layout") {
+          next.tabs[0]!.layout = null;
+        } else if (change === "pane") {
+          next.panes = [];
+        } else if (change === "surface") {
+          next.surfaces = [];
+        } else if (change === "tab owner") {
+          next.tabs[0]!.surfaceId = "other";
+        } else if (change === "item" || change === "parent") {
+          next.items = next.items.filter(
+            (item) => item.id !== (change === "item" ? "item-1" : "root-1"),
+          );
+        } else if (change === "item archived" || change === "parent archived") {
+          next.items.find(
+            (item) => item.id === (change === "item archived" ? "item-1" : "root-1"),
+          )!.archived = true;
+        } else if (change === "parent workspace") {
+          parent.workspaceId = "other";
+        } else if (change === "parent category") {
+          parent.category = "inbox";
+        } else if (change === "parent nesting") {
+          parent.parentId = "other";
+        } else {
+          next.panes[0]!.processStatus = change;
+        }
+        await store.apply({ type: "snapshot", snapshot: next });
+      }
+      expect(captured.canReactivate).toBe(store.getState().canReactivate);
+      expect(captured.canReactivate("p", "epoch-a")).toBe(false);
+    } finally {
+      store.stop();
+    }
+  });
+}

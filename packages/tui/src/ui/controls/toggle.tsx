@@ -1,8 +1,10 @@
 import {
   type BoxRenderable,
+  isRenderable,
   type KeyEvent,
   MouseButton,
   type MouseEvent as OpenTUIMouseEvent,
+  type Renderable,
   RenderableEvents,
 } from "@opentui/core";
 import {
@@ -20,11 +22,12 @@ import { useControlHints } from "@/ui/control-hints";
 import { Box, type BoxProps } from "@/ui/primitives/box";
 import { HStack, type HStackProps } from "@/ui/primitives/hstack";
 import { Text, type TextProps } from "@/ui/primitives/text";
-import { assignRef } from "@/ui/utils";
+import { assignRef, isTextContent } from "@/ui/utils";
 
 type ToggleRegistration = {
   value: string;
   disabled: boolean;
+  node: BoxRenderable | null;
 };
 
 type ToggleGroupContextValue = {
@@ -40,7 +43,7 @@ type ToggleGroupContextValue = {
   toggleValue: (value: string) => void;
 };
 
-const ToggleGroupContext = createContext<ToggleGroupContextValue | null>(null);
+export const ToggleGroupContext = createContext<ToggleGroupContextValue | null>(null);
 
 const toggleAction = {
   names: ["space", "return", "linefeed"],
@@ -96,8 +99,48 @@ export function ToggleGroup(props: ToggleGroupProps) {
 
   const [isFocused, setIsFocused] = useState(false);
   const [activeValue, setActiveValue] = useState<string>();
+  const activeValueRef = useRef<string | undefined>(undefined);
 
-  const getEnabledItems = useCallback(() => itemsRef.current.filter((item) => !item.disabled), []);
+  const changeActive = useCallback((value: string | undefined) => {
+    // Native keys can arrive before React commits the browsing highlight.
+    activeValueRef.current = value;
+    setActiveValue(value);
+  }, []);
+
+  const getEnabledItems = useCallback(() => {
+    // Keyed toggles can reorder without registering again.
+    const candidates = new Map<Renderable, ToggleRegistration>();
+    for (const item of itemsRef.current) {
+      if (!item.disabled && item.node !== null) {
+        candidates.set(item.node, item);
+      }
+    }
+    const ordered: ToggleRegistration[] = [];
+    function visit(node: Renderable): void {
+      const item = candidates.get(node);
+      if (item !== undefined) {
+        ordered.push(item);
+      }
+      for (const child of node.getChildren()) {
+        if (isRenderable(child)) {
+          visit(child);
+        }
+      }
+    }
+    if (groupRef.current !== null) {
+      visit(groupRef.current);
+    }
+    return ordered;
+  }, []);
+
+  useLayoutEffect(() => {
+    const items = getEnabledItems();
+    if (groupRef.current?.focused && !items.some((item) => item.value === activeValueRef.current)) {
+      changeActive(
+        items.find((item) => pressedValuesRef.current.has(item.value))?.value ?? items[0]?.value,
+      );
+    }
+  });
 
   useControlHints(
     groupRef,
@@ -134,15 +177,18 @@ export function ToggleGroup(props: ToggleGroupProps) {
 
   const isPressed = useCallback((value: string) => pressedValuesRef.current.has(value), []);
 
-  const focusValue = useCallback((value: string) => {
-    const item = itemsRef.current.find((item) => item.value === value && !item.disabled);
+  const focusValue = useCallback(
+    (value: string) => {
+      const item = itemsRef.current.find((item) => item.value === value && !item.disabled);
 
-    if (!item) return;
+      if (!item) return;
 
-    // Native focus initializes the candidate before the clicked value takes precedence.
-    groupRef.current?.focus();
-    setActiveValue(value);
-  }, []);
+      // Native focus initializes the candidate before the clicked value takes precedence.
+      groupRef.current?.focus();
+      changeActive(value);
+    },
+    [changeActive],
+  );
 
   function toggleValue(value: string) {
     if (disabled) return;
@@ -178,7 +224,7 @@ export function ToggleGroup(props: ToggleGroupProps) {
 
         const firstPressed = items.find((item) => pressedValuesRef.current.has(item.value));
 
-        setActiveValue(firstPressed?.value ?? items[0]?.value);
+        changeActive(firstPressed?.value ?? items[0]?.value);
       };
 
       const handleBlur = () => {
@@ -204,7 +250,7 @@ export function ToggleGroup(props: ToggleGroupProps) {
         assignRef(ref, null);
       };
     },
-    [ref, getEnabledItems],
+    [ref, getEnabledItems, changeActive],
   );
 
   useLayoutEffect(() => {
@@ -224,7 +270,7 @@ export function ToggleGroup(props: ToggleGroupProps) {
 
     if (items.length === 0) return;
 
-    const currentIndex = items.findIndex((item) => item.value === activeValue);
+    const currentIndex = items.findIndex((item) => item.value === activeValueRef.current);
 
     const nextIndex =
       currentIndex === -1
@@ -233,7 +279,7 @@ export function ToggleGroup(props: ToggleGroupProps) {
           : items.length - 1
         : (currentIndex + direction + items.length) % items.length;
 
-    setActiveValue(items[nextIndex].value);
+    changeActive(items[nextIndex].value);
   }
 
   function handleKeyDown(event: KeyEvent) {
@@ -267,9 +313,9 @@ export function ToggleGroup(props: ToggleGroupProps) {
 
     const activate = !event.repeated && noModifiers && toggleAction.names.includes(event.name);
 
-    if (activate && activeValue) {
+    if (activate && activeValueRef.current) {
       event.preventDefault();
-      toggleValue(activeValue);
+      toggleValue(activeValueRef.current);
     }
   }
 
@@ -318,7 +364,7 @@ export function ToggleGroup(props: ToggleGroupProps) {
   );
 }
 
-export interface ToggleProps extends Omit<HStackProps, "children" | "focusable" | "bg"> {
+export interface ToggleProps extends Omit<HStackProps, "children" | "focusable"> {
   value?: string;
 
   pressed?: boolean;
@@ -369,6 +415,7 @@ export function Toggle({
   const registrationRef = useRef<ToggleRegistration>({
     value: value ?? "",
     disabled: isDisabled,
+    node: null,
   });
 
   registrationRef.current.value = value ?? "";
@@ -380,6 +427,7 @@ export function Toggle({
   const setToggleRef = useCallback(
     (node: BoxRenderable | null) => {
       toggleRef.current = node;
+      registrationRef.current.node = node;
       assignRef(ref, node);
 
       if (!node) return;
@@ -408,6 +456,7 @@ export function Toggle({
 
         if (toggleRef.current === node) {
           toggleRef.current = null;
+          registrationRef.current.node = null;
         }
 
         assignRef(ref, null);
@@ -508,18 +557,18 @@ export function Toggle({
 
   return (
     <HStack
+      bg={backgroundColor}
       {...props}
       ref={setToggleRef}
       paddingX={paddingX}
       focusable={!isGrouped && !isDisabled}
       focused={isGrouped || isDisabled ? false : focused}
-      bg={backgroundColor}
       onKeyDown={handleKeyDown}
       onMouseDown={handleMouseDown}
       onMouseUp={handleMouseUp}
       onMouseOut={handleMouseOut}
     >
-      <Text fg={textColor}>{children}</Text>
+      {isTextContent(children) ? <Text fg={textColor}>{children}</Text> : children}
     </HStack>
   );
 }

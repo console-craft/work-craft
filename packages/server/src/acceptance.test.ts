@@ -1,5 +1,5 @@
 import { expect, spyOn, test } from "bun:test";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -188,6 +188,300 @@ async function runCli(home: string, args: string[]): Promise<CliResult> {
 }
 
 test.serial(
+  "linked-first registration returns the requested checkout and stays metadata-only through the daemon",
+  async () => {
+    const home = await realpath(await mkdtemp(join(tmpdir(), "work-craft-group-acceptance-")));
+    const primary = join(home, "primary");
+    const linked = join(home, "linked");
+    const shellPath = join(home, "shell");
+    const shellPidsPath = join(home, "shell.pids");
+    let daemon: Daemon | undefined;
+    try {
+      await mkdir(primary);
+      for (const args of [
+        ["init", "--initial-branch=trunk"],
+        [
+          "-c",
+          "user.name=Test",
+          "-c",
+          "user.email=t@example.com",
+          "commit",
+          "--allow-empty",
+          "-m",
+          "initial",
+        ],
+        ["worktree", "add", "-b", "feature", linked],
+      ]) {
+        const result = Bun.spawnSync(["git", "-C", primary, ...args]);
+        expect(result.exitCode).toBe(0);
+      }
+      await writeFile(
+        shellPath,
+        '#!/bin/sh\nprintf "%s\\n" "$$" >> "$WORK_CRAFT_TEST_SHELL_PIDS"\nexec /bin/sh\n',
+        { mode: 0o755 },
+      );
+      daemon = spawnDaemon(home, shellPath, shellPidsPath);
+      await waitForHealth(home, daemon);
+      const client = createClient({
+        socketPath: resolvePaths({ WORK_CRAFT_HOME: home }).socketPath,
+      });
+      const sessionId = (await client.command({ type: "session.create", name: "Main" })).result.id;
+      const workspaceId = (
+        await client.command({ type: "workspace.create", sessionId, name: "Work" })
+      ).result.id;
+      const first = await client.command({ type: "directory.register", workspaceId, path: linked });
+      const root = await client.command({ type: "directory.register", workspaceId, path: primary });
+      const repeated = await client.command({
+        type: "directory.register",
+        workspaceId,
+        path: linked,
+      });
+      expect(first.result.id).toBe(first.result.itemId!);
+      expect(first.result.id).not.toBe(first.result.rootItemId);
+      expect(root.result).toEqual({
+        id: first.result.rootItemId!,
+        itemId: first.result.rootItemId!,
+        rootItemId: first.result.rootItemId!,
+      });
+      expect(repeated.result).toEqual(first.result);
+      expect(repeated.revision).toBe(first.revision);
+      const snapshot = await client.snapshot();
+      expect(snapshot.items).toHaveLength(2);
+      expect(snapshot.items.find((item) => item.id === first.result.id)).toMatchObject({
+        parentId: root.result.id,
+        kind: "worktree",
+        data: { path: linked },
+      });
+      expect(snapshot.items.find((item) => item.id === root.result.id)).toMatchObject({
+        parentId: null,
+        kind: "directory",
+        data: { path: primary, branch: "trunk" },
+      });
+      expect(snapshot.surfaces).toEqual([]);
+      expect(snapshot.panes).toEqual([]);
+      expect(await readShellPids(shellPidsPath)).toEqual([]);
+      expect(
+        await runCli(home, ["directory", "register", "--workspace", workspaceId, "--path", linked]),
+      ).toEqual({
+        exitCode: 0,
+        stderr: "",
+        stdout: `ID: ${first.result.id}\nRoot: ${root.result.id}\n`,
+      });
+      const json = await runCli(home, [
+        "directory",
+        "register",
+        "--workspace",
+        workspaceId,
+        "--path",
+        linked,
+        "--json",
+      ]);
+      expect(json.exitCode).toBe(0);
+      expect(json.stderr).toBe("");
+      expect(JSON.parse(json.stdout)).toEqual(first.result);
+      const afterCli = await client.snapshot();
+      expect(afterCli.revision).toBe(snapshot.revision);
+      expect(afterCli.items).toEqual(snapshot.items);
+      expect(afterCli.surfaces).toEqual([]);
+      expect(afterCli.panes).toEqual([]);
+      expect(await readShellPids(shellPidsPath)).toEqual([]);
+    } finally {
+      if (daemon !== undefined) {
+        await stopDaemon(daemon);
+      }
+      await stopPids(await readShellPids(shellPidsPath));
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+  15_000,
+);
+
+test.serial(
+  "live shell cd feeds both split directions and equalizes only its tab without restarting shells",
+  async () => {
+    const home = await realpath(await mkdtemp(join(tmpdir(), "work-craft-split-acceptance-")));
+    const target = join(home, "live cwd 雪");
+    const shellPath = join(home, "shell");
+    const shellPidsPath = join(home, "shell.pids");
+    let daemon: Daemon | undefined;
+    let stream: StreamConnection | undefined;
+    try {
+      await mkdir(target);
+      await writeFile(
+        shellPath,
+        '#!/bin/sh\nprintf "%s\\n" "$$" >> "$WORK_CRAFT_TEST_SHELL_PIDS"\nexec /bin/sh\n',
+        { mode: 0o755 },
+      );
+      daemon = spawnDaemon(home, shellPath, shellPidsPath);
+      await waitForHealth(home, daemon);
+      const client = createClient({
+        socketPath: resolvePaths({ WORK_CRAFT_HOME: home }).socketPath,
+      });
+      const sessionId = (await client.command({ type: "session.create", name: "Main" })).result.id;
+      const workspaceId = (
+        await client.command({ type: "workspace.create", sessionId, name: "Work" })
+      ).result.id;
+      const itemId = (
+        await client.command({
+          type: "item.create",
+          workspaceId,
+          category: "design",
+          title: "Splits",
+        })
+      ).result.id;
+      const opened = (await client.command({ type: "surface.ensure", itemId, cwd: home })).result;
+      const other = (
+        await client.command({
+          type: "tab.create",
+          surfaceId: opened.surfaceId!,
+          title: "Untouched",
+        })
+      ).result;
+      const before = await client.snapshot();
+      const originalPids = await waitFor(
+        () => readShellPids(shellPidsPath),
+        (pids) => pids.length === 2,
+        "original shells",
+      );
+      stream = await client.stream({ onMessage() {} });
+      stream.sendInput(
+        opened.paneId!,
+        new TextEncoder().encode(`cd '${target}'; printf 'cwd-ready-PID-%s\\n' "$$"\n`),
+      );
+      const source = await waitFor(
+        () => client.snapshot(),
+        (snapshot) => /cwd-ready-PID-\d+/.test(history(snapshot, opened.paneId!)),
+        "source shell cd",
+      );
+      const sourcePid = history(source, opened.paneId!).match(/cwd-ready-PID-(\d+)/)![1]!;
+      expect(originalPids).toContain(Number(sourcePid));
+
+      const vertical = (
+        await client.command({ type: "pane.split", paneId: opened.paneId!, direction: "vertical" })
+      ).result;
+      const third = (
+        await client.command({
+          type: "pane.split",
+          paneId: vertical.paneId!,
+          direction: "vertical",
+        })
+      ).result;
+      const horizontal = (
+        await client.command({
+          type: "pane.split",
+          paneId: opened.paneId!,
+          direction: "horizontal",
+        })
+      ).result;
+      for (const [index, paneId] of [
+        vertical.paneId!,
+        third.paneId!,
+        horizontal.paneId!,
+      ].entries()) {
+        stream.sendInput(
+          paneId,
+          new TextEncoder().encode(`printf '\\nnew-${index}-%s\\n' "$(pwd)"\n`),
+        );
+        await waitFor(
+          () => client.snapshot(),
+          (snapshot) => history(snapshot, paneId).includes(`new-${index}-${target}`),
+          `new shell ${index} actual pwd`,
+        );
+      }
+      const after = await client.snapshot();
+      expect(after.panes.find(({ id }) => id === opened.paneId)?.cwd).toBe(home);
+      expect(
+        after.panes
+          .filter(({ id }) => [vertical.paneId, third.paneId, horizontal.paneId].includes(id))
+          .every(({ cwd }) => cwd === target),
+      ).toBe(true);
+      expect(after.tabs.find(({ id }) => id === other.tabId)).toEqual(
+        before.tabs.find(({ id }) => id === other.tabId),
+      );
+      expect(after.surfaces).toEqual(before.surfaces);
+      expect(after.tabs.find(({ id }) => id === opened.tabId)?.layout).toEqual({
+        type: "split",
+        direction: "vertical",
+        ratio: 1 / 3,
+        first: {
+          type: "split",
+          direction: "horizontal",
+          ratio: 0.5,
+          first: { type: "pane", paneId: opened.paneId! },
+          second: { type: "pane", paneId: horizontal.paneId! },
+        },
+        second: {
+          type: "split",
+          direction: "vertical",
+          ratio: 0.5,
+          first: { type: "pane", paneId: vertical.paneId! },
+          second: { type: "pane", paneId: third.paneId! },
+        },
+      });
+      expect(await readShellPids(shellPidsPath)).toHaveLength(5);
+      expect(originalPids.every(isAlive)).toBe(true);
+      expect((await client.health()).pid).toBe(daemon.pid);
+      stream.sendInput(
+        opened.paneId!,
+        new TextEncoder().encode("printf 'retained-PID-%s\\n' \"$$\"\n"),
+      );
+      const retained = await waitFor(
+        () => client.snapshot(),
+        (snapshot) => history(snapshot, opened.paneId!).includes(`retained-PID-${sourcePid}`),
+        "same source shell after repeated and mixed splits",
+      );
+      expect(history(retained, opened.paneId!)).toContain(`cwd-ready-PID-${sourcePid}`);
+
+      stream.sendInput(opened.paneId!, new TextEncoder().encode("exit\n"));
+      const stopped = await waitFor(
+        () => client.snapshot(),
+        (snapshot) =>
+          snapshot.panes.find(({ id }) => id === opened.paneId)?.processStatus === "exited",
+        "source exit",
+      );
+      await expect(
+        client.command({ type: "pane.split", paneId: opened.paneId!, direction: "vertical" }),
+      ).rejects.toThrow(/live runtime/);
+      await expect(
+        client.command({
+          type: "pane.split",
+          paneId: vertical.paneId!,
+          direction: "vertical",
+          cwd: join(home, "missing"),
+        }),
+      ).rejects.toThrow(/unavailable/);
+      const rejected = await client.snapshot();
+      expect(rejected.panes).toEqual(stopped.panes);
+      expect(rejected.tabs).toEqual(stopped.tabs);
+      expect(rejected.revision).toBe(stopped.revision);
+      const override = await client.command({
+        type: "pane.split",
+        paneId: opened.paneId!,
+        direction: "horizontal",
+        cwd: home,
+      });
+      stream.sendInput(
+        override.result.paneId!,
+        new TextEncoder().encode("printf '\\noverride-%s\\n' \"$(pwd)\"\n"),
+      );
+      await waitFor(
+        () => client.snapshot(),
+        (snapshot) => history(snapshot, override.result.paneId!).includes(`override-${home}`),
+        "explicit override actual pwd",
+      );
+    } finally {
+      stream?.close();
+      if (daemon !== undefined) {
+        await stopDaemon(daemon);
+      }
+      await stopPids(await readShellPids(shellPidsPath));
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+  20_000,
+);
+
+test.serial(
   "proves the first vertical slice end to end",
   async () => {
     const daemons: Daemon[] = [];
@@ -222,15 +516,16 @@ test.serial(
         workspaceId: workspace.result.id,
       });
       const project = await client.command({
-        type: "project.create",
+        type: "item.create",
         workspaceId: workspace.result.id,
-        category: "implementation",
-        name: "Work Craft",
+        category: "design",
+        title: "Work Craft",
       });
       const item = await client.command({
         type: "item.create",
-        projectId: project.result.id,
-        kind: "surface",
+        workspaceId: workspace.result.id,
+        category: "design",
+        parentId: project.result.id,
         title: "Acceptance",
       });
       const opened = await client.command({
@@ -368,9 +663,9 @@ test.serial(
           `    Inbox\n` +
           `    Today\n` +
           `    Design\n` +
+          `      "Work Craft" [${project.result.id}]\n` +
+          `        "Acceptance" [${item.result.id}]\n` +
           `    Implementation\n` +
-          `      Work Craft\n` +
-          `        Acceptance [${item.result.id}]\n` +
           `    Collaboration\n` +
           `    Operations\n`,
       });
@@ -384,8 +679,7 @@ test.serial(
           sessions: 1,
           workspaces: 1,
           categories: 6,
-          projects: 1,
-          items: 1,
+          items: 2,
           surfaces: 1,
           tabs: 1,
           panes: 2,

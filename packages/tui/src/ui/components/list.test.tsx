@@ -5,6 +5,7 @@ import {
   CliRenderEvents,
   type KeyEvent,
   parseColor,
+  RenderableEvents,
   type ScrollBoxRenderable,
   type TextRenderable,
 } from "@opentui/core";
@@ -18,8 +19,8 @@ import {
   useState,
 } from "react";
 
-import { List, ListItem, type ListProps } from "@/ui/components/list";
-import { getControlHints } from "@/ui/control-hints";
+import { List, type ListCursorHandle, ListItem, type ListProps } from "@/ui/components/list";
+import { type ControlHintSource, getControlHints } from "@/ui/control-hints";
 import { Button } from "@/ui/controls/button";
 import { FocusManager } from "@/ui/focus-manager";
 import { getFocusableRenderables } from "@/ui/focus-utils";
@@ -73,6 +74,32 @@ async function renderList(children: ReactNode) {
 function background(node: BoxRenderable, token: keyof typeof defaultTheme.colors): void {
   expect(node.backgroundColor.toInts()).toEqual(parseColor(defaultTheme.colors[token]).toInts());
 }
+
+test("a horizontal-scrolling List with a few wide rows has no vertical scrollbar", async () => {
+  const setup = await renderList(
+    <Fixture width={20} horizontalScrolling>
+      <ListItem value="one">
+        <Text width={60} height={2}>
+          First wide row
+        </Text>
+      </ListItem>
+      <ListItem value="two">
+        <Text width={60} height={2}>
+          Second wide row
+        </Text>
+      </ListItem>
+    </Fixture>,
+  );
+  try {
+    const list = setup.renderer.root.findDescendantById("list")!;
+    const area = list.getChildren()[0] as ScrollBoxRenderable;
+    expect(area.horizontalScrollBar.visible).toBe(true);
+    expect(area.viewport.height).toBe(5);
+    expect(area.verticalScrollBar.visible).toBe(false);
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
 
 test("disabled List skips focus and activation, adopts Select colors, and still scrolls", async () => {
   const events: string[] = [];
@@ -1045,5 +1072,385 @@ test("List revalidates activation when callbacks hide or destroy the target", as
     } finally {
       act(() => setup.renderer.destroy());
     }
+  }
+});
+
+test("cursor ref focuses an eligible uncontrolled value synchronously", async () => {
+  const cursor = createRef<ListCursorHandle>();
+  const box = createRef<BoxRenderable>();
+  const events: string[] = [];
+  const setup = await renderList(
+    <Fixture
+      ref={box}
+      cursorRef={cursor}
+      defaultValue="a"
+      defaultActiveValue="a"
+      onActiveValueChange={(value) => events.push(`active:${value}`)}
+      onValueChange={(value) => events.push(`selected:${value}`)}
+      onActivate={(value) => events.push(`open:${value}`)}
+    />,
+  );
+  try {
+    expect(cursor.current).not.toBeNull();
+    expect(box.current).toBe(setup.renderer.root.findDescendantById("list") as BoxRenderable);
+    act(() => {
+      expect(cursor.current!.focusValue("b")).toBe(true);
+      expect(setup.renderer.currentFocusedRenderable).toBe(box.current);
+      expect(events).toEqual(["active:b"]);
+      setup.mockInput.pressEnter();
+    });
+    expect(events).toEqual(["active:b", "selected:b", "open:b"]);
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
+test("cursor ref never selects or activates", async () => {
+  const cursor = createRef<ListCursorHandle>();
+  const selected: string[] = [];
+  const opened: string[] = [];
+  const setup = await renderList(
+    <Fixture
+      cursorRef={cursor}
+      defaultValue="a"
+      defaultActiveValue="a"
+      onValueChange={(value) => selected.push(value)}
+      onActivate={(value) => opened.push(value)}
+    />,
+  );
+  try {
+    expect(cursor.current).not.toBeNull();
+    act(() => {
+      expect(cursor.current!.focusValue("b")).toBe(true);
+    });
+    await act(async () => setup.flush());
+    background(setup.renderer.root.findDescendantById("b") as BoxRenderable, "focus");
+    act(() => setup.renderer.root.findDescendantById("before")!.focus());
+    await act(async () => setup.flush());
+    background(setup.renderer.root.findDescendantById("a") as BoxRenderable, "primary");
+    expect(selected).toEqual([]);
+    expect(opened).toEqual([]);
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
+test("controlled cursor waits for acknowledgment without moving focus", async () => {
+  const cursor = createRef<ListCursorHandle>();
+  const requests: (string | undefined)[] = [];
+  const opened: string[] = [];
+  function ControlledFixture() {
+    const [active, setActive] = useState<string | undefined>("a");
+    return (
+      <Fixture
+        cursorRef={cursor}
+        activeValue={active}
+        defaultValue="a"
+        onActiveValueChange={(value) => {
+          requests.push(value);
+          setActive(value);
+        }}
+        onActivate={(value) => opened.push(value)}
+      />
+    );
+  }
+  const setup = await renderList(<ControlledFixture />);
+  try {
+    expect(cursor.current).not.toBeNull();
+    const before = setup.renderer.currentFocusedRenderable;
+    act(() => {
+      expect(cursor.current!.focusValue("b")).toBe(false);
+      expect(setup.renderer.currentFocusedRenderable).toBe(before);
+      expect(requests).toEqual(["b"]);
+    });
+    await act(async () => setup.flush());
+    expect(setup.renderer.currentFocusedRenderable).toBe(before);
+    expect(opened).toEqual([]);
+    act(() => {
+      expect(cursor.current!.focusValue("b")).toBe(true);
+      setup.mockInput.pressEnter();
+    });
+    expect(requests).toEqual(["b"]);
+    expect(opened).toEqual(["b"]);
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
+test("already current controlled cursor can be focused without a change callback", async () => {
+  const cursor = createRef<ListCursorHandle>();
+  const setup = await renderList(<Fixture cursorRef={cursor} activeValue="b" defaultValue="a" />);
+  try {
+    expect(cursor.current).not.toBeNull();
+    const before = setup.renderer.currentFocusedRenderable;
+    act(() => {
+      expect(cursor.current!.focusValue("c")).toBe(false);
+    });
+    expect(setup.renderer.currentFocusedRenderable).toBe(before);
+    act(() => {
+      expect(cursor.current!.focusValue("b")).toBe(true);
+    });
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("list");
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
+test("invalid hidden disabled unregistered destroyed rows cannot receive focus", async () => {
+  const cursor = createRef<ListCursorHandle>();
+  const box = createRef<BoxRenderable>();
+  const events: string[] = [];
+  let update!: Dispatch<SetStateAction<{ present: boolean; disabled: boolean }>>;
+  function InvalidFixture() {
+    const [state, setState] = useState({ present: true, disabled: false });
+    update = setState;
+    return (
+      <Fixture
+        ref={box}
+        cursorRef={cursor}
+        disabled={state.disabled}
+        defaultValue="a"
+        defaultActiveValue="a"
+        onActiveValueChange={(value) => events.push(`active:${value}`)}
+        onValueChange={(value) => events.push(`selected:${value}`)}
+        onActivate={(value) => events.push(`open:${value}`)}
+      >
+        <ListItem id="a" value="a">
+          Alpha
+        </ListItem>
+        <ListItem id="b" value="b">
+          Beta
+        </ListItem>
+        {state.present ? <ListItem value="removed">Removed</ListItem> : null}
+        <ListItem value="disabled" disabled>
+          Disabled
+        </ListItem>
+        <Box visible={false}>
+          <ListItem value="hidden">Hidden</ListItem>
+        </Box>
+        <Box id="plain">
+          <Text>Not a registered row</Text>
+        </Box>
+      </Fixture>
+    );
+  }
+  const setup = await renderList(<InvalidFixture />);
+  try {
+    expect(cursor.current).not.toBeNull();
+    const before = setup.renderer.currentFocusedRenderable;
+    act(() => setup.renderer.root.findDescendantById("b")!.destroy());
+    await act(async () => update({ present: false, disabled: false }));
+    for (const value of ["missing", "hidden", "disabled", "plain", "removed", "b"]) {
+      act(() => {
+        expect(cursor.current!.focusValue(value)).toBe(false);
+      });
+      expect(setup.renderer.currentFocusedRenderable).toBe(before);
+    }
+    act(() => {
+      box.current!.visible = false;
+      expect(cursor.current!.focusValue("a")).toBe(false);
+    });
+    act(() => {
+      box.current!.visible = true;
+      box.current!.focusable = false;
+      expect(cursor.current!.focusValue("a")).toBe(false);
+    });
+    await act(async () => update({ present: false, disabled: true }));
+    act(() => {
+      expect(cursor.current!.focusValue("a")).toBe(false);
+    });
+    expect(setup.renderer.currentFocusedRenderable).toBe(before);
+    expect(events).toEqual([]);
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
+for (const invalidation of ["hide row", "destroy row", "hide list"] as const) {
+  test(`cursor ref revalidates after its cursor callback can ${invalidation}`, async () => {
+    const cursor = createRef<ListCursorHandle>();
+    const selected: string[] = [];
+    const opened: string[] = [];
+    const setup = await renderList(
+      <Fixture
+        cursorRef={cursor}
+        defaultValue="a"
+        defaultActiveValue="a"
+        onActiveValueChange={(value) => {
+          if (value !== "b") {
+            return;
+          }
+          const target = setup.renderer.root.findDescendantById(
+            invalidation === "hide list" ? "list" : "b",
+          )!;
+          if (invalidation === "destroy row") {
+            target.destroy();
+          } else {
+            target.visible = false;
+          }
+        }}
+        onValueChange={(value) => selected.push(value)}
+        onActivate={(value) => opened.push(value)}
+      />,
+    );
+    try {
+      expect(cursor.current).not.toBeNull();
+      const before = setup.renderer.currentFocusedRenderable;
+      act(() => {
+        expect(cursor.current!.focusValue("b")).toBe(false);
+      });
+      expect(setup.renderer.currentFocusedRenderable).toBe(before);
+      expect(selected).toEqual([]);
+      expect(opened).toEqual([]);
+    } finally {
+      act(() => setup.renderer.destroy());
+    }
+  });
+}
+
+for (const invalidation of ["hide row", "redirect focus"] as const) {
+  test(`cursor ref revalidates native focus when callbacks ${invalidation}`, async () => {
+    const cursor = createRef<ListCursorHandle>();
+    const setup = await renderList(
+      <Fixture cursorRef={cursor} defaultValue="a" defaultActiveValue="a" />,
+    );
+    try {
+      expect(cursor.current).not.toBeNull();
+      const before = setup.renderer.currentFocusedRenderable;
+      const after = setup.renderer.root.findDescendantById("after")!;
+      const list = setup.renderer.root.findDescendantById("list")!;
+      list.on(RenderableEvents.FOCUSED, () => {
+        if (invalidation === "hide row") {
+          setup.renderer.root.findDescendantById("b")!.visible = false;
+        } else {
+          after.focus();
+        }
+      });
+      act(() => {
+        expect(cursor.current!.focusValue("b")).toBe(false);
+      });
+      expect(setup.renderer.currentFocusedRenderable).toBe(
+        invalidation === "hide row" ? before : after,
+      );
+    } finally {
+      act(() => setup.renderer.destroy());
+    }
+  });
+}
+
+test("cursor ref reveals an eligible offscreen value using the existing viewport", async () => {
+  const cursor = createRef<ListCursorHandle>();
+  const setup = await renderList(
+    <Fixture cursorRef={cursor}>
+      {Array.from({ length: 12 }, (_, index) => (
+        <ListItem key={index} id={`row-${index}`} value={String(index)} height={2}>
+          {index}
+        </ListItem>
+      ))}
+    </Fixture>,
+  );
+  try {
+    expect(cursor.current).not.toBeNull();
+    act(() => {
+      expect(cursor.current!.focusValue("11")).toBe(true);
+    });
+    await act(async () => setup.flush());
+    const area = setup.renderer.root
+      .findDescendantById("list")!
+      .getChildren()[0] as ScrollBoxRenderable;
+    const row = setup.renderer.root.findDescendantById("row-11")!;
+    expect(area.scrollTop).toBeGreaterThan(0);
+    expect(row.screenY).toBeGreaterThanOrEqual(area.viewport.screenY);
+    expect(row.screenY + row.height).toBeLessThanOrEqual(
+      area.viewport.screenY + area.viewport.height,
+    );
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
+test("cursor refs clean up on replacement and unmount while the Box ref stays native", async () => {
+  const first = createRef<ListCursorHandle>();
+  const box = createRef<BoxRenderable>();
+  const callbacks: (ListCursorHandle | null)[] = [];
+  const second = (value: ListCursorHandle | null) => {
+    callbacks.push(value);
+    return () => {
+      callbacks.push(null);
+    };
+  };
+  let update!: Dispatch<SetStateAction<{ second: boolean; present: boolean }>>;
+  function RefFixture() {
+    const [state, setState] = useState({ second: false, present: true });
+    update = setState;
+    return state.present ? <Fixture ref={box} cursorRef={state.second ? second : first} /> : null;
+  }
+  const setup = await renderList(<RefFixture />);
+  try {
+    expect(first.current).not.toBeNull();
+    const native = box.current;
+    const handle = first.current!;
+    await act(async () => update({ second: true, present: true }));
+    expect(first.current).toBeNull();
+    expect(callbacks[0]).toMatchObject({ focusValue: expect.any(Function) });
+    expect(box.current).toBe(native);
+    await act(async () => update({ second: true, present: false }));
+    expect(callbacks.at(-1)).toBeNull();
+    expect(box.current).toBeNull();
+    expect(handle.focusValue("a")).toBe(false);
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
+for (const source of [undefined, [], () => [], [{ keys: "Space", label: "Expand" }]] as (
+  | ControlHintSource
+  | undefined
+)[]) {
+  test(`hint override replaces defaults including an empty source (${source === undefined ? "default" : typeof source === "function" ? "getter" : source.length})`, async () => {
+    const setup = await renderList(<Fixture defaultActiveValue="a" controlHints={source} />);
+    try {
+      act(() => setup.mockInput.pressTab());
+      const list = setup.renderer.root.findDescendantById("list")!;
+      expect(getControlHints(list)).toEqual(
+        source === undefined
+          ? [
+              { keys: "↑/↓/j/k", label: "Navigate" },
+              { keys: "Ctrl+d/u", label: "Half-page" },
+              { keys: "Enter", label: "Open" },
+            ]
+          : typeof source === "function"
+            ? source()
+            : source,
+      );
+    } finally {
+      act(() => setup.renderer.destroy());
+    }
+  });
+}
+
+test("a hint override getter sees synchronous cursor notifications without a render", async () => {
+  const cursor = createRef<ListCursorHandle>();
+  let candidate: string | undefined = "a";
+  const setup = await renderList(
+    <Fixture
+      cursorRef={cursor}
+      defaultActiveValue="a"
+      onActiveValueChange={(value) => {
+        candidate = value;
+      }}
+      controlHints={() => [{ keys: "Enter", label: `Open ${candidate}` }]}
+    />,
+  );
+  try {
+    expect(cursor.current).not.toBeNull();
+    act(() => {
+      expect(cursor.current!.focusValue("b")).toBe(true);
+      expect(getControlHints(setup.renderer.currentFocusedRenderable)).toEqual([
+        { keys: "Enter", label: "Open b" },
+      ]);
+    });
+  } finally {
+    act(() => setup.renderer.destroy());
   }
 });

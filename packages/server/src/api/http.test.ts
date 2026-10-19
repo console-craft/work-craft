@@ -7,19 +7,18 @@ import { join } from "node:path";
 import WebSocket from "ws";
 
 import { createApp } from "../application/app.ts";
-import { createClient } from "../client.ts";
+import { ApiError, createClient } from "../client.ts";
 import { openDatabase } from "../persistence/database.ts";
 import { TerminalHistory } from "../terminal/history.ts";
 import { startHttpServer } from "./http.ts";
-import { decodeBytes, type ServerMessage, type Snapshot } from "./protocol.ts";
+import { type Command, decodeBytes, type ServerMessage, type Snapshot } from "./protocol.ts";
 
 function seedPane(db: ReturnType<typeof openDatabase>): void {
   db.exec(`
     INSERT INTO sessions VALUES ('session-1', 'Main', 0);
     INSERT INTO workspaces VALUES ('workspace-1', 'Work');
     INSERT INTO session_workspaces VALUES ('session-1', 'workspace-1', 0);
-    INSERT INTO projects VALUES ('project-1', 'workspace-1', 'implementation', 'Work Craft', 0);
-    INSERT INTO items VALUES ('item-1', 'project-1', 'surface', 'Build', 0, '{}', NULL);
+    INSERT INTO items VALUES ('item-1', 'workspace-1', 'design', NULL, 'generic', 'Build', 0, 0, '{}');
     INSERT INTO surfaces VALUES ('surface-1', 'item-1', NULL);
     INSERT INTO panes VALUES ('pane-1', 'surface-1', 'terminal', 'Shell', '/tmp', '{"type":"shell","executable":"/bin/sh","args":[]}', 'interrupted', NULL, NULL, NULL);
   `);
@@ -76,6 +75,31 @@ test("the Unix socket is owner-only", async () => {
     expect((await stat(fixture.socketPath)).mode & 0o777).toBe(0o600);
   } finally {
     await fixture.close();
+  }
+});
+
+test("directory registration exposes requested and root IDs without opening a surface", async () => {
+  const fixture = await startTestServer();
+  const target = await mkdtemp(join(tmpdir(), "work-craft-http-directory-"));
+  try {
+    const sessionId = (await fixture.client.command({ type: "session.create", name: "Main" }))
+      .result.id;
+    const workspaceId = (
+      await fixture.client.command({ type: "workspace.create", sessionId, name: "Work" })
+    ).result.id;
+    const command = { type: "directory.register" as const, workspaceId, path: target };
+    const registered = await fixture.client.command(command);
+    expect(registered.result).toEqual({
+      id: registered.result.id,
+      itemId: registered.result.id,
+      rootItemId: registered.result.id,
+    });
+    expect((await fixture.client.command(command)).revision).toBe(registered.revision);
+    expect((await fixture.client.snapshot()).surfaces).toEqual([]);
+    expect((await fixture.client.snapshot()).panes).toEqual([]);
+  } finally {
+    await fixture.close();
+    await rm(target, { recursive: true, force: true });
   }
 });
 
@@ -140,7 +164,10 @@ test("routes endpoint failures by error class", async () => {
       body: JSON.stringify({ type: "session.create", name: " " }),
     });
     expect(protocolError.status).toBe(400);
-    expect(await protocolError.json()).toEqual({ error: "name must be a non-blank string" });
+    expect(await protocolError.json()).toEqual({
+      error: "name must be a non-blank string",
+      field: "name",
+    });
 
     expect((await request("/missing")).status).toBe(404);
 
@@ -152,6 +179,40 @@ test("routes endpoint failures by error class", async () => {
     });
     expect(unexpectedError.status).toBe(500);
     expect(await fixture.client.health()).toEqual(before);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("field attribution survives real HTTP and client validation boundaries", async () => {
+  const fixture = await startTestServer();
+  try {
+    const cases: [Command, string][] = [
+      [{ type: "session.create", name: " " }, "name"],
+      [{ type: "item.create", workspaceId: "w", category: "design", title: "" }, "title"],
+      [
+        { type: "directory.register", workspaceId: "w", path: join(tmpdir(), crypto.randomUUID()) },
+        "path",
+      ],
+    ];
+    for (const [command, field] of cases) {
+      try {
+        await fixture.client.command(command);
+        throw new Error("accepted invalid field");
+      } catch (error) {
+        expect(error).toBeInstanceOf(ApiError);
+        expect(String((error as ApiError).field)).toBe(field);
+      }
+    }
+    for (const body of ["{", "[]", "null", '{"type":"session.create","name":{}}']) {
+      const response = await fetch("http://localhost/command", {
+        unix: fixture.socketPath,
+        method: "POST",
+        body,
+      });
+      expect(response.status).toBe(400);
+    }
+    expect(fixture.app.health().revision).toBe(0);
   } finally {
     await fixture.close();
   }
@@ -338,7 +399,6 @@ test("applies a newer snapshot frame after a pending gap refresh", async () => {
     workspaces: [],
     sessionWorkspaces: [],
     categories: [],
-    projects: [],
     items: [],
     surfaces: [],
     tabs: [],

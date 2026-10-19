@@ -3,6 +3,7 @@ import {
   type CommandResponse,
   createClient,
   decodeBytes,
+  type LayoutNode,
   type ServerMessage,
   type Snapshot,
   type StreamConnection,
@@ -20,8 +21,13 @@ export type TerminalBuffer = {
 };
 
 export type WorkCraftState = {
+  connectionError: string | null;
   snapshot: Snapshot | null;
   status: ConnectionStatus;
+  /** Reads current authoritative state even from callbacks captured before a React commit. */
+  canSendInput(paneId: string, epoch: string): boolean;
+  /** Live exited-action readiness; never grants terminal input eligibility. */
+  canReactivate(paneId: string, epoch: string): boolean;
   command(command: Command): Promise<CommandResponse>;
   reload(): Promise<void>;
   stream: StreamConnection | null;
@@ -45,6 +51,15 @@ type WorkCraftStoreOptions = {
 
 const RETRY_DELAYS = [100, 250, 500, 1000, 2000] as const;
 const MAX_TERMINAL_BYTES = 1024 * 1024;
+
+function containsPane(layout: LayoutNode | null, paneId: string): boolean {
+  if (layout === null) {
+    return false;
+  }
+  return layout.type === "pane"
+    ? layout.paneId === paneId
+    : containsPane(layout.first, paneId) || containsPane(layout.second, paneId);
+}
 
 function snapshotTerminals(
   snapshot: Snapshot,
@@ -120,8 +135,11 @@ export function createWorkCraftStore(
   let run = 0;
   let applying = Promise.resolve();
   let state: WorkCraftState = {
+    connectionError: null,
     snapshot: null,
     status: "connecting",
+    canSendInput: (paneId, epoch) => canUsePane(paneId, epoch, "running"),
+    canReactivate: (paneId, epoch) => canUsePane(paneId, epoch, "exited"),
     command: async (command) => {
       if (state.status !== "connected") {
         throw new Error("Cannot mutate while disconnected");
@@ -132,6 +150,33 @@ export function createWorkCraftStore(
     stream: null,
     terminals: new Map(),
   };
+
+  function canUsePane(paneId: string, epoch: string, status: "running" | "exited"): boolean {
+    const snapshot = state.snapshot;
+    if (state.status !== "connected" || snapshot?.epoch !== epoch) {
+      return false;
+    }
+    const pane = snapshot.panes.find((pane) => pane.id === paneId);
+    const surface = snapshot.surfaces.find((surface) => surface.id === pane?.surfaceId);
+    const item = snapshot.items.find((item) => item.id === surface?.itemId);
+    const parent = snapshot.items.find((parent) => parent.id === item?.parentId);
+    const tab = snapshot.tabs.find(
+      (tab) => tab.id === surface?.activeTabId && tab.surfaceId === surface?.id,
+    );
+    return (
+      item !== undefined &&
+      !item.archived &&
+      (item.parentId === null ||
+        (parent !== undefined &&
+          !parent.archived &&
+          parent.parentId === null &&
+          parent.workspaceId === item.workspaceId &&
+          parent.category === item.category)) &&
+      pane?.kind === "terminal" &&
+      pane.processStatus === status &&
+      containsPane(tab?.layout ?? null, paneId)
+    );
+  }
 
   function update(patch: Partial<WorkCraftState>): void {
     state = { ...state, ...patch };
@@ -216,7 +261,7 @@ export function createWorkCraftStore(
       stream.close();
       return;
     }
-    update({ status: "connected", stream });
+    update({ status: "connected", stream, connectionError: null });
   }
 
   async function reconnect(activeRun: number): Promise<void> {
@@ -245,9 +290,13 @@ export function createWorkCraftStore(
         return;
       }
       await connect(activeRun);
-    } catch {
+    } catch (cause) {
       if (run === activeRun) {
-        update({ status: "disconnected", stream: null });
+        update({
+          status: "disconnected",
+          stream: null,
+          connectionError: cause instanceof Error ? cause.message : String(cause),
+        });
       }
     }
   }

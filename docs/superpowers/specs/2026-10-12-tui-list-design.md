@@ -1,5 +1,40 @@
 # TUI List Design
 
+## Implemented Additive API (2026-10-16)
+
+`ListCursorHandle = { focusValue(value: string): boolean }` is exposed only through separate `cursorRef?: Ref<ListCursorHandle>`; the normal ref still resolves to native Box. Focus requests never select/activate, reject invalid/hidden/disabled rows, and wait for controlled acknowledgment. `controlHints?: ControlHintSource` replaces defaults, including an explicitly empty result. Task 4 verified 43 List tests; existing pointer/reveal/paging/repeat/modifier behavior remains. Navigator adoption composes this API without exposing private List internals. Human acceptance of the Coding integration remains pending.
+
+## Accepted Extension And Delivery Status
+
+The original List behavior below is delivered. The accepted
+[Coding Navigator design](./2026-10-15-coding-navigator-design.md) adds two narrow
+contracts for its concrete filter/List caller; these extensions are approved
+design, not implemented API. They require the separate implementation plan and
+new controlled/uncontrolled, focus, hint, and buffered-input tests.
+
+### Cursor Ref And Hint Override
+
+- Preserve the native Box ref. Add a separate optional cursor ref exposing only
+  `focusValue(value: string): boolean`.
+- Validate a mounted, visible, enabled registered row. Request/update the cursor
+  through existing ownership rules, then focus List only when that value is
+  current. Return true only when native focus reached List with that cursor.
+- Uncontrolled cursor updates are synchronous for buffered input. Controlled
+  values remain parent-owned; requests that would change an unacknowledged or
+  read-only cursor do not move focus. An already-current value can be focused.
+- Missing/hidden/disabled/unregistered targets do not move focus. Never select,
+  activate, or synthesize keys. The caller owns pending-query/scope eligibility.
+- Add optional `controlHints: ControlHintSource` to replace the built-in hint
+  source. Omission preserves current defaults; an empty source suppresses hints.
+  List stays the single hint-registration owner of its endpoint.
+
+No keyboard opt-out, activation-source argument, header/footer slot, exported
+internal context, new scrolling API, or application-specific behavior is needed.
+Filtering, expansion/disclosure gestures, application errors, and opening surfaces
+remain caller responsibilities. Full failure messages use the application's status
+bar rather than become List content. Rich rows may handle a non-focusable
+disclosure gesture without introducing interactive focusable row controls.
+
 ## Approved direction
 
 List is a persistent, single-selection collection of application entities. Its
@@ -9,6 +44,9 @@ Filtering belongs to callers. No markers, search, data-array API, interactive ro
 controls, multi-selection, or generic collection engine are introduced.
 
 ## Public contract
+
+This section records the original public contract; the accepted extension above
+is additive and must not change its existing defaults or ownership semantics.
 
 Export `List`, `ListItem`, and their prop types directly from `ui/components/list.tsx`.
 List uses themed Box props and a native Box ref. ListItem uses themed Box props

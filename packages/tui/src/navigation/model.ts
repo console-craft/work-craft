@@ -1,12 +1,19 @@
 import type { CategoryKind, Snapshot } from "@work-craft/server/client";
 
+import { homeRelativePath } from "@/navigation/path-label.ts";
+
 export type NavigatorEntry = {
   key: string;
-  kind: "project" | "item";
+  kind: "root" | "item";
   id: string;
-  projectId: string;
+  rootId: string;
   label: string;
   depth: 0 | 1;
+  item: Snapshot["items"][number];
+  matches: boolean;
+  hasChildren: boolean;
+  expanded: boolean;
+  failed?: boolean;
 };
 
 export function workspacesForSession(
@@ -34,38 +41,67 @@ export function navigatorEntries(
   snapshot: Snapshot,
   workspaceId: string,
   category: CategoryKind,
-  expandedProjectIds: ReadonlySet<string>,
+  expandedRootIds: ReadonlySet<string>,
+  query = "",
+  homePath = "",
 ): NavigatorEntry[] {
-  return snapshot.projects
-    .filter((project) => project.workspaceId === workspaceId && project.category === category)
+  const needle = query.toLocaleLowerCase();
+  function matches(item: Snapshot["items"][number]): boolean {
+    return [
+      item.title,
+      ...(item.kind === "generic"
+        ? []
+        : [item.data.path, homeRelativePath(item.data.path, homePath), item.data.branch ?? ""]),
+    ].some((value) => value.toLocaleLowerCase().includes(needle));
+  }
+  return snapshot.items
+    .filter(
+      (root) =>
+        root.parentId === null &&
+        !root.archived &&
+        root.workspaceId === workspaceId &&
+        root.category === category,
+    )
     .sort((a, b) => a.position - b.position || a.id.localeCompare(b.id))
-    .flatMap((project) => {
-      const projectEntry: NavigatorEntry = {
-        key: `project:${project.id}`,
-        kind: "project",
-        id: project.id,
-        projectId: project.id,
-        label: project.name,
-        depth: 0,
-      };
-      if (!expandedProjectIds.has(project.id)) {
-        return [projectEntry];
+    .flatMap((root) => {
+      const children = snapshot.items
+        .filter((item) => item.parentId === root.id && !item.archived)
+        .sort((a, b) => a.position - b.position || a.id.localeCompare(b.id));
+      const matchingChildren = children.filter(matches);
+      if (query !== "" && !matches(root) && matchingChildren.length === 0) {
+        return [];
       }
-      const items = snapshot.items
-        .filter((item) => item.projectId === project.id)
-        .sort((a, b) => a.position - b.position || a.id.localeCompare(b.id))
-        .map<NavigatorEntry>((item) => ({
-          key: `item:${item.id}`,
-          kind: "item",
-          id: item.id,
-          projectId: project.id,
-          label: item.title,
-          depth: 1,
-        }));
-      return [projectEntry, ...items];
+      const rootEntry: NavigatorEntry = {
+        key: `root:${root.id}`,
+        kind: "root",
+        id: root.id,
+        rootId: root.id,
+        label: root.title,
+        depth: 0,
+        item: root,
+        matches: matches(root),
+        hasChildren: children.length > 0,
+        expanded: query !== "" ? matchingChildren.length > 0 : expandedRootIds.has(root.id),
+      };
+      if (query === "" && !expandedRootIds.has(root.id)) {
+        return [rootEntry];
+      }
+      const items = (query === "" ? children : matchingChildren).map<NavigatorEntry>((item) => ({
+        key: `item:${item.id}`,
+        kind: "item",
+        id: item.id,
+        rootId: root.id,
+        label: item.title,
+        depth: 1,
+        item,
+        matches: matches(item),
+        hasChildren: false,
+        expanded: false,
+      }));
+      return [rootEntry, ...items];
     });
 }
 
-export function projectIdForEntry(entry: NavigatorEntry | undefined): string | undefined {
-  return entry?.projectId;
+export function rootIdForEntry(entry: NavigatorEntry | undefined): string | undefined {
+  return entry?.rootId;
 }

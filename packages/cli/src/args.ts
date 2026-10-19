@@ -21,30 +21,24 @@ export type CliArgs =
     })
   | (OutputArgs & { command: "workspace.create"; sessionId: string; name: string })
   | (OutputArgs & {
-      command: "project.create";
+      command: "directory.register";
       workspaceId: string;
-      category: CategoryKind;
-      name: string;
+      path: string;
     })
   | (OutputArgs & {
       command: "item.create";
-      projectId: string;
-      kind: "generic" | "surface";
+      workspaceId: string;
+      category: CategoryKind;
+      parentId?: string;
       title: string;
       data?: Record<string, unknown>;
     })
   | (OutputArgs & {
       command: "surface.ensure";
       itemId: string;
-      projectId?: never;
       cwd?: string;
     })
-  | (OutputArgs & {
-      command: "surface.ensure";
-      itemId?: never;
-      projectId: string;
-      cwd?: string;
-    })
+  | (OutputArgs & { command: "item.setArchived"; itemId: string; archived: boolean })
   | (OutputArgs & { command: "surface.selectTab"; surfaceId: string; tabId: string })
   | (OutputArgs & { command: "tab.create"; surfaceId: string; title: string })
   | (OutputArgs & {
@@ -66,11 +60,13 @@ export const USAGE = `Usage:
   work-craft session add-workspace <id> --workspace <id> [--json]
   work-craft session remove-workspace <id> --workspace <id> [--json]
   work-craft workspace create --session <id> --name <name> [--json]
-  work-craft project create --workspace <id> --category <kind> --name <name> [--json]
-  work-craft item create --project <id> --kind <generic|surface> --title <title>
-                         [--data <json-object>] [--json]
+  work-craft directory register --workspace <id> --path <path> [--json]
+  work-craft item create --workspace <id> --category <kind> [--parent <id>] --title <title>
+                          [--data <json-object>] [--json]
+  work-craft item archive <id> [--json]
+  work-craft item restore <id> [--json]
 
-  work-craft surface ensure (--item <id> | --project <id>)
+  work-craft surface ensure --item <id>
                             [--cwd <path>] [--json]
   work-craft surface select-tab <surface-id> <tab-id> [--json]
 
@@ -84,7 +80,7 @@ export const USAGE = `Usage:
   work-craft daemon stop [--json]
   work-craft daemon destroy --force [--json]
 
-Project categories: inbox, today, design, implementation, collaboration, operations
+Generic categories: inbox, today, design, collaboration, operations
 `;
 
 export class UsageError extends Error {}
@@ -250,66 +246,68 @@ export function parseArgs(argv: string[]): CliArgs {
         json: values.json ?? false,
       };
     }
-    case "project.create": {
+    case "directory.register": {
       const { values, positionals } = parseLeaf(args, {
         workspace: { type: "string" },
-        category: { type: "string" },
-        name: { type: "string" },
+        path: { type: "string" },
         ...outputOption,
       });
       noPositionals(positionals);
-      const category = required(values.category);
-      if (!categories.has(category as CategoryKind)) {
-        throw new UsageError("invalid arguments");
-      }
       return {
         command,
         workspaceId: required(values.workspace),
-        category: category as CategoryKind,
-        name: required(values.name),
+        path: required(values.path),
         json: values.json ?? false,
       };
     }
     case "item.create": {
       const { values, positionals } = parseLeaf(args, {
-        project: { type: "string" },
-        kind: { type: "string" },
+        workspace: { type: "string" },
+        category: { type: "string" },
+        parent: { type: "string" },
         title: { type: "string" },
         data: { type: "string" },
         ...outputOption,
       });
       noPositionals(positionals);
-      if (values.kind !== "generic" && values.kind !== "surface") {
+      const category = required(values.category);
+      if (category === "implementation" || !categories.has(category as CategoryKind)) {
         throw new UsageError("invalid arguments");
       }
       const data = jsonData(values.data);
       return {
         command,
-        projectId: required(values.project),
-        kind: values.kind,
+        workspaceId: required(values.workspace),
+        category: category as CategoryKind,
+        ...(values.parent === undefined ? {} : { parentId: required(values.parent) }),
         title: required(values.title),
         ...(data === undefined ? {} : { data }),
+        json: values.json ?? false,
+      };
+    }
+    case "item.archive":
+    case "item.restore": {
+      const { values, positionals } = parseLeaf(args, outputOption);
+      if (positionals.length !== 1) {
+        throw new UsageError("invalid arguments");
+      }
+      return {
+        command: "item.setArchived",
+        itemId: required(positionals[0]),
+        archived: command === "item.archive",
         json: values.json ?? false,
       };
     }
     case "surface.ensure": {
       const { values, positionals } = parseLeaf(args, {
         item: { type: "string" },
-        project: { type: "string" },
         cwd: { type: "string" },
         ...outputOption,
       });
       noPositionals(positionals);
-      if ((values.item === undefined) === (values.project === undefined)) {
-        throw new UsageError("invalid arguments");
-      }
-      const target =
-        values.item === undefined
-          ? { projectId: required(values.project) }
-          : { itemId: required(values.item) };
       return {
         command,
-        ...target,
+        itemId: required(values.item),
         ...(values.cwd === undefined ? {} : { cwd: values.cwd }),
         json: values.json ?? false,
       };

@@ -8,6 +8,138 @@ import { Toggle, ToggleGroup } from "@/ui/controls/toggle";
 import { ThemeProvider } from "@/ui/theme-provider";
 import { defaultTheme } from "@/ui/themes/default";
 
+async function renderCursorGroup({
+  focused = false,
+  multiple = false,
+  selected = "a",
+  empty = false,
+} = {}) {
+  const changes: (string | string[] | undefined)[] = [];
+  let update!: Dispatch<SetStateAction<{ value: string; disabled?: boolean }[]>>;
+  function Fixture() {
+    const [rows, setRows] = useState<{ value: string; disabled?: boolean }[]>(
+      empty ? [] : [{ value: "a" }, { value: "b" }, { value: "c" }],
+    );
+    update = setRows;
+    const children = rows.map(({ value, disabled }) => (
+      <Toggle key={value} id={value} value={value} disabled={disabled}>
+        {value}
+      </Toggle>
+    ));
+    return (
+      <ThemeProvider theme={defaultTheme}>
+        {multiple ? (
+          <ToggleGroup
+            id="group"
+            type="multiple"
+            value={[selected]}
+            focused={focused}
+            onValueChange={(next) => changes.push(next)}
+          >
+            {children}
+          </ToggleGroup>
+        ) : (
+          <ToggleGroup
+            id="group"
+            type="single"
+            value={selected}
+            focused={focused}
+            onValueChange={(next) => changes.push(next)}
+          >
+            {children}
+          </ToggleGroup>
+        )}
+      </ThemeProvider>
+    );
+  }
+  const setup = await testRender(<Fixture />, { width: 20, height: 3, kittyKeyboard: true });
+  await act(async () => setup.flush());
+  return { ...setup, changes, update };
+}
+
+for (const multiple of [false, true]) {
+  test(`ToggleGroup buffered browsing activates the latest candidate (multiple=${multiple})`, async () => {
+    const setup = await renderCursorGroup({ multiple });
+    try {
+      act(() => setup.renderer.root.findDescendantById("group")!.focus());
+      await act(async () => setup.flush());
+      act(() => {
+        setup.mockInput.pressKey("l");
+        setup.mockInput.pressKey("l");
+        setup.mockInput.pressEnter();
+      });
+      expect(setup.changes).toEqual(multiple ? [["a", "c"]] : ["c"]);
+    } finally {
+      act(() => setup.renderer.destroy());
+    }
+  });
+}
+
+test("ToggleGroup initializes a cursor after focused child registration", async () => {
+  const setup = await renderCursorGroup({ focused: true, selected: "b" });
+  try {
+    act(() => setup.mockInput.pressEnter());
+    expect(setup.changes).toEqual([undefined]);
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
+test("ToggleGroup initializes late items without requiring native refocus", async () => {
+  const setup = await renderCursorGroup({ empty: true, selected: "b" });
+  try {
+    act(() => setup.renderer.root.findDescendantById("group")!.focus());
+    await act(async () => setup.update([{ value: "a" }, { value: "b" }]));
+    await act(async () => setup.flush());
+    expect(setup.changes).toEqual([]);
+    act(() => setup.mockInput.pressEnter());
+    expect(setup.changes).toEqual([undefined]);
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
+for (const removed of [false, true]) {
+  test(`ToggleGroup repairs an ineligible cursor without selection (removed=${removed})`, async () => {
+    const setup = await renderCursorGroup();
+    try {
+      act(() => setup.renderer.root.findDescendantById("group")!.focus());
+      await act(async () => setup.flush());
+      act(() => setup.mockInput.pressKey("l"));
+      await act(async () => setup.flush());
+      await act(async () =>
+        setup.update(
+          removed
+            ? [{ value: "a" }, { value: "c" }]
+            : [{ value: "a" }, { value: "b", disabled: true }, { value: "c" }],
+        ),
+      );
+      await act(async () => setup.flush());
+      expect(setup.changes).toEqual([]);
+      act(() => setup.mockInput.pressEnter());
+      expect(setup.changes).toEqual([undefined]);
+    } finally {
+      act(() => setup.renderer.destroy());
+    }
+  });
+}
+
+test("ToggleGroup pointer candidate feeds buffered browsing", async () => {
+  const setup = await renderCursorGroup();
+  try {
+    const row = setup.renderer.root.findDescendantById("b")!;
+    await act(async () => setup.mockMouse.pressDown(row.screenX, row.screenY));
+    expect(setup.changes).toEqual([]);
+    act(() => {
+      setup.mockInput.pressKey("l");
+      setup.mockInput.pressEnter();
+    });
+    expect(setup.changes).toEqual(["c"]);
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
 test("standalone Toggle keeps pressed visuals parent-owned and suppresses canceled and repeated keys", async () => {
   const changes: boolean[] = [];
   let press!: Dispatch<SetStateAction<boolean>>;
