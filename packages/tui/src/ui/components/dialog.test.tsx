@@ -7,9 +7,9 @@ import {
   TextAttributes,
   type TextRenderable,
 } from "@opentui/core";
-import { testRender } from "@opentui/react/test-utils";
 import { act, type Dispatch, type SetStateAction, useState } from "react";
 
+import { testRender } from "@/test-render";
 import {
   Dialog,
   DialogClose,

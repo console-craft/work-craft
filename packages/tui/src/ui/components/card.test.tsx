@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 
-import { testRender } from "@opentui/react/test-utils";
 import { act, type Dispatch, type SetStateAction, useState } from "react";
 
+import { testRender } from "@/test-render";
 import { CardFooter } from "@/ui/components/card";
 import { Text } from "@/ui/primitives/text";
 import { ThemeProvider } from "@/ui/theme-provider";

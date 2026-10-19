@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 
-import { testRender } from "@opentui/react/test-utils";
 import { act } from "react";
 
+import { testRender } from "@/test-render";
 import { Box } from "@/ui/primitives/box";
 import { Center } from "@/ui/primitives/center";
 import { Divider } from "@/ui/primitives/divider";

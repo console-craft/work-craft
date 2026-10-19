@@ -8,7 +8,6 @@ import {
   type Renderable,
   type SelectRenderable,
 } from "@opentui/core";
-import { testRender } from "@opentui/react/test-utils";
 import {
   act,
   type Dispatch,
@@ -19,6 +18,7 @@ import {
   useState,
 } from "react";
 
+import { testRender } from "@/test-render";
 import {
   type ControlHint,
   getControlHints,

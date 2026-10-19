@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 
 import { MouseButton, parseColor, type SelectRenderable } from "@opentui/core";
-import { testRender } from "@opentui/react/test-utils";
 import { act, type Dispatch, type SetStateAction, useState } from "react";
 
+import { testRender } from "@/test-render";
 import { getControlHints } from "@/ui/control-hints";
 import { Select, type SelectProps } from "@/ui/controls/select";
 import { ThemeProvider } from "@/ui/theme-provider";

@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 
 import { parseColor, type TextRenderable } from "@opentui/core";
-import { testRender } from "@opentui/react/test-utils";
 import { act, type Dispatch, type SetStateAction, useState } from "react";
 
+import { testRender } from "@/test-render";
 import { Spinner } from "@/ui/components/spinner";
 import { getControlHints } from "@/ui/control-hints";
 import { Button } from "@/ui/controls/button";

@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 
 import { type BoxRenderable, type InputRenderable, parseColor } from "@opentui/core";
-import { testRender } from "@opentui/react/test-utils";
 import { act, createRef, type Dispatch, type SetStateAction, useState } from "react";
 
+import { testRender } from "@/test-render";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/ui/components/collapsible";
 import { getControlHints } from "@/ui/control-hints";
 import { Button } from "@/ui/controls/button";

@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
 
 import { TextareaRenderable } from "@opentui/core";
-import { testRender } from "@opentui/react/test-utils";
 import { act } from "react";
 
 import { ControlsDemo } from "@/demos/controls";
+import { testRender } from "@/test-render";
 import { getFocusableRenderables } from "@/ui/focus-utils";
 
 for (const [name, index, text] of [

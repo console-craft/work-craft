@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 
 import type { KeyEvent, TextareaRenderable } from "@opentui/core";
-import { testRender } from "@opentui/react/test-utils";
 import { act, type Dispatch, type SetStateAction, useState } from "react";
 
+import { testRender } from "@/test-render";
 import { Input } from "@/ui/controls/input";
 import { Textarea } from "@/ui/controls/textarea";
 import { ThemeProvider } from "@/ui/theme-provider";

@@ -8,9 +8,9 @@ import {
   type ScrollBoxRenderable,
   type TextRenderable,
 } from "@opentui/core";
-import { testRender } from "@opentui/react/test-utils";
 import { act, createRef, type Dispatch, type SetStateAction, useState } from "react";
 
+import { testRender } from "@/test-render";
 import { HorizontalScroller } from "@/ui/components/horizontal-scroller";
 import { getFocusableRenderables } from "@/ui/focus-utils";
 import { Box } from "@/ui/primitives/box";

@@ -9,9 +9,9 @@ import {
   type TextRenderable,
 } from "@opentui/core";
 import { setRendererCapabilities } from "@opentui/core/testing";
-import { testRender } from "@opentui/react/test-utils";
 import { act, type Dispatch, type SetStateAction, useState } from "react";
 
+import { testRender } from "@/test-render";
 import { Toaster, type ToasterPosition, type ToasterProps } from "@/ui/components/toast";
 import { Button } from "@/ui/controls/button";
 import { FocusManager } from "@/ui/focus-manager";

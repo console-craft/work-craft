@@ -7,10 +7,10 @@ import {
   type ScrollBoxRenderable,
   TextRenderable,
 } from "@opentui/core";
-import { testRender } from "@opentui/react/test-utils";
 import { act, type Dispatch, type SetStateAction, useState } from "react";
 
 import { StatusBar, type StatusBarProps } from "@/shell/status-bar";
+import { testRender } from "@/test-render";
 import { getFocusableRenderables } from "@/ui/focus-utils";
 import { icons } from "@/ui/icons/nerd";
 import { Box } from "@/ui/primitives/box";

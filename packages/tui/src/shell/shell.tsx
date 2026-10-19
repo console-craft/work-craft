@@ -1223,7 +1223,9 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
           const candidate = terminalRefs.current.get(id);
           return (
             !candidate ||
-            ((candidate.width === 0 || candidate.height === 0) && (!tabEntry || !frame))
+            // A frame can precede the React commit of measured pane bounds.
+            ((candidate.width === 0 || candidate.height === 0) &&
+              (!tabEntry || !frame || canReceiveWorkbenchInput(id)))
           );
         })
       ) {

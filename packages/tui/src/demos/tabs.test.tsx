@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
 
 import { ScrollBoxRenderable, TextRenderable } from "@opentui/core";
-import { testRender } from "@opentui/react/test-utils";
 import { act } from "react";
 
 import { ComponentsDemo } from "@/demos/components";
+import { testRender } from "@/test-render";
 
 test("components demo overflows real two-row Tabs without page scroll leakage or abbreviated labels", async () => {
   const setup = await testRender(<ComponentsDemo />, { width: 100, height: 24 });

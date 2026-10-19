@@ -4,6 +4,7 @@ import { createRoot, extend } from "@opentui/react";
 import { App } from "@/app.tsx";
 import { ComponentsDemo } from "@/demos/components";
 import { ControlsDemo } from "@/demos/controls";
+import { configureRendererListeners } from "@/ui/renderer";
 
 declare module "@opentui/react" {
   interface OpenTUIComponents {
@@ -30,6 +31,7 @@ const renderer = await createCliRenderer({
   exitOnCtrlC: false,
   useKittyKeyboard: { disambiguate: true },
 });
+configureRendererListeners(renderer);
 if (process.env.CONTROLS_DEMO === "true" || process.env.COMPONENTS_DEMO === "true") {
   renderer.keyInput.on("keypress", (event) => {
     if (

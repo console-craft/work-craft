@@ -2,11 +2,11 @@ import { expect, test } from "bun:test";
 
 import { EmbeddedTerminalRenderable } from "@opentui/core";
 import { extend } from "@opentui/react";
-import { testRender as renderWithoutTheme } from "@opentui/react/test-utils";
 import type { LayoutNode, Snapshot } from "@work-craft/server/client";
 import { act, type ReactNode, useState } from "react";
 
 import { snapshotFixture } from "@/test-fixtures.ts";
+import { testRender as renderWithoutTheme } from "@/test-render";
 import { Box } from "@/ui/primitives/box.tsx";
 import { ThemeProvider } from "@/ui/theme-provider.tsx";
 import { defaultTheme } from "@/ui/themes/default.ts";

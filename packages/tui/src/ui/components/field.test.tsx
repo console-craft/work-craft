@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 
 import { parseColor, type TextRenderable } from "@opentui/core";
-import { testRender } from "@opentui/react/test-utils";
 import { act, type Dispatch, type SetStateAction, useState } from "react";
 
+import { testRender } from "@/test-render";
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/ui/components/field";
 import { Text } from "@/ui/primitives/text";
 import { ThemeProvider } from "@/ui/theme-provider";

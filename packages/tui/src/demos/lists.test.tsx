@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
 
 import type { TextRenderable } from "@opentui/core";
-import { testRender } from "@opentui/react/test-utils";
 import { act } from "react";
 
 import { ComponentsDemo } from "@/demos/components";
+import { testRender } from "@/test-render";
 
 test("List demo keeps selection while previewing and filtering, then commits on Enter", async () => {
   const setup = await testRender(<ComponentsDemo />, {
