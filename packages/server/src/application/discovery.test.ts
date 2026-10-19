@@ -771,10 +771,11 @@ for (const archived of [false, true]) {
     expect(new TextDecoder().decode(f.app.history.read(paneId).data)).toContain("conflict-history");
     expect(target(f.app, laterId).data.availability).toBe("unavailable");
     const revision = f.app.health().revision;
-    const count = f.messages.length;
+    // Live PTY output is independent of discovery's snapshot broadcasts.
+    const snapshots = f.messages.filter((message) => message.type === "snapshot").length;
     await f.app.refreshDirectories();
     expect(f.app.health().revision).toBe(revision);
-    expect(f.messages).toHaveLength(count);
+    expect(f.messages.filter((message) => message.type === "snapshot")).toHaveLength(snapshots);
   });
 }
 
