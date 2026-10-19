@@ -53,6 +53,7 @@ export function TerminalPane({
   const notice = paneNotice(pane.processStatus, connected);
   const viewport = terminalRect(bounds, notice !== null);
   const terminal = useRef<EmbeddedTerminalRenderable>(null);
+  const nativeSize = useRef({ width: 0, height: 0 });
   const resizePending = useRef(false);
   const rendered = useRef({ paneId: "", epoch: "", cursor: 0 });
   const running = pane.processStatus === "running";
@@ -77,11 +78,13 @@ export function TerminalPane({
   }
 
   function resizeTerminal(cols: number, rows: number): void {
+    nativeSize.current = { width: cols, height: rows };
     resizePending.current = true;
     if (acceptsInput() && resizeEnabled && canResize() && stream && cols >= 20 && rows >= 5) {
       stream.resize(pane.id, cols, rows);
       resizePending.current = false;
     }
+    writeOutput();
   }
 
   useLayoutEffect(() => {
@@ -91,9 +94,16 @@ export function TerminalPane({
     }
   });
 
-  useEffect(() => {
+  function writeOutput(): void {
     const target = terminal.current;
-    if (target === null || buffer === undefined) {
+    if (
+      target === null ||
+      buffer === undefined ||
+      viewport.width <= 0 ||
+      viewport.height <= 0 ||
+      nativeSize.current.width !== viewport.width ||
+      nativeSize.current.height !== viewport.height
+    ) {
       return;
     }
     if (rendered.current.paneId !== pane.id || rendered.current.epoch !== buffer.epoch) {
@@ -110,7 +120,10 @@ export function TerminalPane({
         rendered.current.cursor = chunk.cursor;
       }
     }
-  }, [buffer, pane.id]);
+  }
+
+  // Cursor-addressed history must not be parsed in the emulator's bootstrap 80x24 grid.
+  useEffect(writeOutput, [buffer, pane.id, viewport.width, viewport.height]);
 
   useLayoutEffect(() => {
     const eligible = acceptsInput();
