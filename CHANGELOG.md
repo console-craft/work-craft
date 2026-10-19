@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.0.0](https://github.com/console-craft/work-craft/compare/v0.9.0...v1.0.0) (2026-10-19)
+
+
+### ⚠ BREAKING CHANGES
+
+* **tui:** replace project-based CLI/API operations with workspace/category items and directory registration. Database schema v4 rejects older schemas without mutation; existing installations must use a fresh state directory or explicitly reset development state. No automatic migration or reset is performed.
+
+### Features
+
+* **tui:** complete component adoption and Coding navigation ([#36](https://github.com/console-craft/work-craft/issues/36)) ([6cc25f5](https://github.com/console-craft/work-craft/commit/6cc25f596ab046e3705e22e55972c2d164bab0e4))
+
+
+### Bug Fixes
+
+* **tui:** migrate OpenTUI to 0.6.6 ([#38](https://github.com/console-craft/work-craft/issues/38)) ([29b7a02](https://github.com/console-craft/work-craft/commit/29b7a026767a32726c8df2c4f6499444ef3e16e3))
+* **tui:** replay terminal output after native sizing ([#39](https://github.com/console-craft/work-craft/issues/39)) ([b12c6c2](https://github.com/console-craft/work-craft/commit/b12c6c24047210bfd4e66923022f628d8268fc5a))
+
 ## [0.9.0](https://github.com/console-craft/work-craft/compare/v0.8.0...v0.9.0) (2026-10-12)
 
 
