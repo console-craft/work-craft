@@ -5,20 +5,28 @@
 Approved by the user, including the capability-local test-placement amendment.
 This document describes the cleanup proposed in the October 20 assessment.
 The user approved the implementation plan and native execution. Implementation
-is proceeding in separately verified slices, with an independent final review.
+and independent whole-branch review are complete; the branch/worktree are retained
+for the user, with no merge or push performed.
 
 All implementation slices are delivered in the worktree: capability-local tests,
 shared projections/geometry, shell lifecycle owners, native UI mechanisms,
 compound collection internals, client store/buffers, named demos, current source
-documentation and executable import boundaries. Final connected review and its
-verification remain pending; this is not approval to merge or push.
+documentation and executable import boundaries. This is not approval to merge or
+push.
 
 Fresh implementation verification on macOS passed `bun run check`: 1,509 tests,
 zero failures, formatting/types, build and compiled smoke. The final TUI JUnit
 inventory preserves all 1,144 original case names/parameter combinations and adds
 92 focused cases. Only the existing server lint warning remains. No server, CLI,
 protocol/schema or dependency files changed. Physical-terminal/Linux/long-running
-acceptance and the final independent review are not inferred from this result.
+acceptance are not inferred from this result.
+
+The independent read-only review of `823da01..e927864` found no Critical,
+Important or Minor issues and no missing approved areas. It independently passed
+all 1,236 TUI tests (including shell races and real entrypoint/PTY cases), lint,
+formatting, types and whitespace checks. Build/smoke checks were run by the
+implementer, not rerun by the reviewer. No review fix pass was
+needed. All original behavior/platform caveats below remain recorded.
 
 Workflow checkpoints:
 
