@@ -22,6 +22,7 @@ import {
   useState,
 } from "react";
 
+import { cyclicIndex, renderedOrder } from "@/ui/collection";
 import { HorizontalScroller } from "@/ui/components/horizontal-scroller";
 import { type ControlHintSource, useControlHints } from "@/ui/control-hints";
 import { useNativeFocus } from "@/ui/focus-manager";
@@ -262,18 +263,9 @@ export function Tabs(props: TabsProps) {
     const byNode = new Map(
       [...triggers.current].map(([value, trigger]) => [trigger.node, { value, ...trigger }]),
     );
-    const values: string[] = [];
-    function visit(node: Renderable) {
-      const trigger = byNode.get(node as BoxRenderable);
-      if (trigger && !trigger.disabled) {
-        values.push(trigger.value);
-      }
-      for (const child of node.getChildren()) {
-        visit(child);
-      }
-    }
-    visit(renderer.root);
-    return values;
+    return renderedOrder(renderer.root, byNode)
+      .filter((trigger) => !trigger.disabled)
+      .map((trigger) => trigger.value);
   }, [renderer]);
 
   const setInitialValue = useCallback((value: string | undefined) => {
@@ -370,12 +362,7 @@ export function Tabs(props: TabsProps) {
 
       const currentIndex = navigationRef.current ? values.indexOf(navigationRef.current) : -1;
 
-      const nextIndex =
-        currentIndex === -1
-          ? direction === 1
-            ? 0
-            : values.length - 1
-          : (currentIndex + direction + values.length) % values.length;
+      const nextIndex = cyclicIndex(values.length, currentIndex, direction)!;
 
       const nextValue = values[nextIndex];
 

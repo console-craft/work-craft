@@ -24,6 +24,7 @@ import {
   useState,
 } from "react";
 
+import { cyclicIndex, pageIndex, renderedOrder } from "@/ui/collection";
 import { nativeActionHints, useControlHints } from "@/ui/control-hints";
 import { Input, type InputProps, inputSubmitBindings } from "@/ui/controls/input";
 import { focusRenderable, isEligibleFocusTarget } from "@/ui/focus-utils";
@@ -255,23 +256,7 @@ export function Command({
         candidates.set(item.node, item);
       }
     }
-    const ordered: (CommandItemRegistration & { node: BoxRenderable })[] = [];
-    // Rendered child order remains accurate when filtered rows have no layout coordinates.
-    function visit(node: Renderable) {
-      const item = candidates.get(node);
-      if (item) {
-        ordered.push(item);
-      }
-      for (const child of node.getChildren()) {
-        if (isRenderable(child)) {
-          visit(child);
-        }
-      }
-    }
-    if (rootRef.current) {
-      visit(rootRef.current);
-    }
-    return ordered;
+    return renderedOrder(rootRef.current, candidates);
   }, [isItemVisible, matchesValue]);
 
   const getEnabledItems = useCallback(() => {
@@ -356,12 +341,7 @@ export function Command({
       }
 
       const index = items.findIndex((item) => item.id === activeIdRef.current);
-      const nextIndex =
-        index === -1
-          ? direction === 1
-            ? 0
-            : items.length - 1
-          : (index + direction + items.length) % items.length;
+      const nextIndex = cyclicIndex(items.length, index, direction)!;
       updateActive(items[nextIndex]!.id);
     },
     [getEnabledItems, updateActive],
@@ -385,7 +365,6 @@ export function Command({
       }
 
       const area = listRef.current;
-      const currentNode = items[currentIndex]!.node;
 
       if (!area) {
         moveActive(direction);
@@ -394,26 +373,13 @@ export function Command({
 
       const viewportDistance = area.viewport.height * (amount === "half" ? 0.5 : 1);
 
-      let target = items[currentIndex]!;
-
-      for (
-        let index = currentIndex + direction;
-        index >= 0 && index < items.length;
-        index += direction
-      ) {
-        const candidate = items[index]!;
-        const candidateNode = candidate.node;
-
-        target = candidate;
-
-        const distance = Math.abs(candidateNode.screenY - currentNode.screenY);
-
-        if (distance >= viewportDistance) {
-          break;
-        }
-      }
-
-      updateActive(target.id);
+      const targetIndex = pageIndex(
+        items.map((item) => item.node.screenY),
+        currentIndex,
+        direction,
+        viewportDistance,
+      )!;
+      updateActive(items[targetIndex]!.id);
     },
     [getEnabledItems, moveActive, updateActive],
   );
