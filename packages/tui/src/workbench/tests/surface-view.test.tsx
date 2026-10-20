@@ -6,6 +6,7 @@ import type { LayoutNode, Snapshot } from "@work-craft/server/client";
 import { act, type ReactNode, useState } from "react";
 
 import { snapshotFixture } from "@/tests/support/fixtures.ts";
+import { flushMeasured } from "@/tests/support/measured-render";
 import { testRender as renderWithoutTheme } from "@/tests/support/render";
 import { Box } from "@/ui/primitives/box.tsx";
 import { ThemeProvider } from "@/ui/theme-provider.tsx";
@@ -29,11 +30,7 @@ async function testRender(node: ReactNode, options: Parameters<typeof renderWith
   );
   return {
     ...setup,
-    flush: async () => {
-      await act(async () => setup.flush());
-      // Host measurement commits the projected rectangles for the next native frame.
-      await act(async () => setup.flush());
-    },
+    flush: () => flushMeasured(setup),
   };
 }
 
