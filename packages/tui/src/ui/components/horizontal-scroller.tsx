@@ -9,9 +9,10 @@ import {
 import { useRenderer } from "@opentui/react";
 import { type ReactNode, type RefObject, useId, useLayoutEffect, useRef, useState } from "react";
 
+import { consumePrimaryPointerPress, usePointerObservation } from "@/ui/pointer";
 import { Box } from "@/ui/primitives/box";
 import { HStack, type HStackProps } from "@/ui/primitives/hstack";
-import { consumePrimaryPointerPress, ScrollArea } from "@/ui/primitives/scroll-area";
+import { ScrollArea } from "@/ui/primitives/scroll-area";
 import { Text } from "@/ui/primitives/text";
 
 export interface HorizontalScrollerProps extends Omit<
@@ -127,6 +128,7 @@ export function HorizontalScroller({
   const generatedId = useId();
   const name = id ?? generatedId;
   const renderer = useRenderer();
+  usePointerObservation();
   const areaRef = useRef<ScrollBoxRenderable | null>(null);
   const revealRef = useRef(revealId);
   revealRef.current = revealId;

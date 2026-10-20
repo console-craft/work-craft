@@ -26,10 +26,10 @@ import { HorizontalScroller } from "@/ui/components/horizontal-scroller";
 import { type ControlHintSource, useControlHints } from "@/ui/control-hints";
 import { useNativeFocus } from "@/ui/focus-manager";
 import { focusRenderable, getFocusableRenderables, isEligibleFocusTarget } from "@/ui/focus-utils";
+import { consumePrimaryPointerPress, usePointerObservation } from "@/ui/pointer";
 import { Box } from "@/ui/primitives/box";
 import type { HStackProps } from "@/ui/primitives/hstack";
 import { HStack } from "@/ui/primitives/hstack";
-import { consumePrimaryPointerPress } from "@/ui/primitives/scroll-area";
 import type { StackProps } from "@/ui/primitives/stack";
 import { Stack } from "@/ui/primitives/stack";
 import { Text } from "@/ui/primitives/text";
@@ -118,6 +118,7 @@ export interface TabsProps extends StackProps {
 
 export function Tabs(props: TabsProps) {
   const renderer = useRenderer();
+  usePointerObservation();
   const controlled = Object.prototype.hasOwnProperty.call(props, "value");
 
   const { value, defaultValue, onValueChange, onActivate, children, ...stackProps } = props;

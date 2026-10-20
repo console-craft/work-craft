@@ -26,12 +26,13 @@ import {
 import { type ControlHintSource, useControlHints } from "@/ui/control-hints";
 import { useNativeFocus } from "@/ui/focus-manager";
 import { focusRenderable, isEligibleFocusTarget, isVisible } from "@/ui/focus-utils";
-import { Box, type BoxProps } from "@/ui/primitives/box";
 import {
   consumePrimaryPointerPress,
   isPrimaryPointerPressed,
-  ScrollArea,
-} from "@/ui/primitives/scroll-area";
+  usePointerObservation,
+} from "@/ui/pointer";
+import { Box, type BoxProps } from "@/ui/primitives/box";
+import { ScrollArea } from "@/ui/primitives/scroll-area";
 import { Text } from "@/ui/primitives/text";
 import { assignRef, isTextContent, setDisabled } from "@/ui/utils";
 
@@ -93,6 +94,7 @@ export interface ListProps extends Omit<BoxProps, "focusable"> {
 /** One native focus endpoint; rich rows must not contain focusable controls. */
 export function List(props: ListProps) {
   const renderer = useRenderer();
+  usePointerObservation();
   const controlledValue = Object.prototype.hasOwnProperty.call(props, "value");
   const controlledActive = Object.prototype.hasOwnProperty.call(props, "activeValue");
   const {
