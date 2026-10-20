@@ -51,7 +51,12 @@ import { getActiveModalFocusScope } from "@/ui/modal-focus";
 import { Box } from "@/ui/primitives/box.tsx";
 import { HStack } from "@/ui/primitives/hstack.tsx";
 import { Stack } from "@/ui/primitives/stack.tsx";
-import { PANE_RECOVERY_HEIGHT, projectPaneLayout, terminalRect } from "@/workbench/layout.ts";
+import {
+  hasRecoveryViewport,
+  hasTerminalViewport,
+  projectPaneLayout,
+  terminalRect,
+} from "@/workbench/layout.ts";
 import { paneNotice } from "@/workbench/pane-state.ts";
 import { Workbench } from "@/workbench/workbench.tsx";
 
@@ -384,8 +389,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
       currentModel.paneIds.includes(paneId) &&
       !layout.undersized &&
       viewport !== undefined &&
-      viewport.width >= 20 &&
-      viewport.height >= 5 &&
+      hasTerminalViewport(viewport) &&
       workCraft.canSendInput(paneId, snapshot?.epoch ?? "")
     );
   }
@@ -415,12 +419,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
       currentModel.activeTab.layout,
       layout.workbenchContent,
     ).panes.find((node) => node.paneId === paneId);
-    return (
-      !layout.undersized &&
-      node !== undefined &&
-      node.rect.width >= 20 &&
-      node.rect.height >= PANE_RECOVERY_HEIGHT
-    );
+    return !layout.undersized && node !== undefined && hasRecoveryViewport(node.rect);
   }
   useLayoutEffect(() => {
     const onResize = () => {
@@ -747,7 +746,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
       command === "focus.right" &&
       (overrides.focus ?? focus).region === "navigator" &&
       focusNodes.some(
-        ({ target, rect }) => target.region === "workbench" && rect.width >= 20 && rect.height >= 5,
+        ({ target, rect }) => target.region === "workbench" && hasTerminalViewport(rect),
       );
     // Navigator entry targets usable content; the strip remains reachable vertically.
     const nodes = focusNodes.filter(
@@ -1174,7 +1173,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
           : runningIds;
       const usablePaneId = candidates.find((id) => {
         const terminal = terminalRefs.current.get(id);
-        return terminal && terminal.width >= 20 && terminal.height >= 5;
+        return terminal && hasTerminalViewport(terminal);
       });
       const paneId = usablePaneId ?? candidates[0];
       if (
@@ -1231,7 +1230,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
       ) {
         return;
       }
-      if (paneId && terminal && !undersized && terminal.width >= 20 && terminal.height >= 5) {
+      if (paneId && terminal && !undersized && hasTerminalViewport(terminal)) {
         if (navigatorMode === "drawer") {
           entryClosing.current = true;
           dispatch({ type: "navigator.hide" });

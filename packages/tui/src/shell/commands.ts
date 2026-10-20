@@ -12,6 +12,7 @@ import { focusKey, type FocusNode, type FocusTarget, moveFocus } from "@/input/f
 import { navigationContextKey } from "@/shell/context";
 import { type CreateKind, genericRootIdForShellContext, type ShellModel } from "@/shell/model.ts";
 import type { DialogState, ShellAction, ShellRegion, ShellState } from "@/shell/state.ts";
+import { hasTerminalViewport } from "@/workbench/layout";
 
 export const durableCommands = {
   createSession: (name: string): Command => ({ type: "session.create", name }),
@@ -375,8 +376,7 @@ export async function executeCommand({
       ({ target, rect }) =>
         target.region !== "workbench" ||
         target.control === "reactivate" ||
-        (rect.width >= 20 &&
-          rect.height >= 5 &&
+        (hasTerminalViewport(rect) &&
           !focusNodes.some(
             (node) =>
               node.target.region === "workbench" &&

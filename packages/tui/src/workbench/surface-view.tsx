@@ -8,7 +8,12 @@ import { Box } from "@/ui/primitives/box.tsx";
 import { Divider } from "@/ui/primitives/divider.tsx";
 import { Text } from "@/ui/primitives/text.tsx";
 import { useTheme } from "@/ui/theme-provider.tsx";
-import { paneIds, projectPaneLayout, terminalRect } from "@/workbench/layout.ts";
+import {
+  hasTerminalViewport,
+  paneIds,
+  projectPaneLayout,
+  terminalRect,
+} from "@/workbench/layout.ts";
 import { selectedTab } from "@/workbench/model";
 import { paneNotice } from "@/workbench/pane-state.ts";
 import { TerminalPane } from "@/workbench/terminal-pane.tsx";
@@ -105,7 +110,7 @@ export function SurfaceView({
               rect,
               pane !== undefined && paneNotice(pane.processStatus, connected) !== null,
             );
-            const usable = !undersized && viewport.width >= 20 && viewport.height >= 5;
+            const usable = !undersized && hasTerminalViewport(viewport);
             return (
               <Box
                 key={paneId}

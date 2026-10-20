@@ -749,6 +749,9 @@ test("transparent undimmed output reserves its double top border and bottom reco
       const button = root.findDescendantById("reactivate:pane-1");
       expect(button !== undefined).toBe(status === "exited");
       if (button) {
+        expect([button.screenX, button.screenY, button.width, button.height]).toEqual([
+          46, 10, 12, 1,
+        ]);
         expect(button.height).toBe(1);
         expect(button.opacity).toBe(1);
         expect(button.screenY).toBe(alert.screenY + 1);

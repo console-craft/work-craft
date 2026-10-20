@@ -2,7 +2,29 @@ import { describe, expect, test } from "bun:test";
 
 import type { LayoutNode } from "@work-craft/server/client";
 
-import { paneIds, projectPaneLayout, terminalRect } from "@/workbench/layout.ts";
+import {
+  hasRecoveryViewport,
+  hasTerminalViewport,
+  paneIds,
+  projectPaneLayout,
+  reactivateRect,
+  terminalRect,
+} from "@/workbench/layout.ts";
+
+test("terminal and recovery eligibility use their distinct minimum interiors", () => {
+  expect(hasTerminalViewport({ width: 20, height: 5 })).toBe(true);
+  expect(hasTerminalViewport({ width: 19, height: 5 })).toBe(false);
+  expect(hasTerminalViewport({ width: 20, height: 4 })).toBe(false);
+  expect(hasRecoveryViewport({ width: 20, height: 4 })).toBe(true);
+  expect(hasRecoveryViewport({ width: 19, height: 4 })).toBe(false);
+  expect(hasRecoveryViewport({ width: 20, height: 3 })).toBe(false);
+  expect(reactivateRect({ x: 2, y: 3, width: 60, height: 12 })).toEqual({
+    x: 48,
+    y: 13,
+    width: 12,
+    height: 1,
+  });
+});
 
 const layout: LayoutNode = {
   type: "split",
