@@ -1,13 +1,14 @@
-import { expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 
 import {
   CliRenderEvents,
+  type Clock,
   type Renderable,
   RGBA,
   type ScrollBoxRenderable,
   TextRenderable,
 } from "@opentui/core";
-import { setRendererCapabilities } from "@opentui/core/testing";
+import { ManualClock, setRendererCapabilities } from "@opentui/core/testing";
 import { act } from "react";
 
 import { ComponentsDemo } from "@/demos/components";
@@ -15,6 +16,41 @@ import { testRender } from "@/tests/support/render";
 import { getFocusableRenderables } from "@/ui/interaction/focus-utils";
 import * as notifications from "@/ui/notifications";
 import { defaultTheme } from "@/ui/theming/themes/default";
+
+const frameClock: Clock = {
+  now: performance.now.bind(performance),
+  setTimeout,
+  clearTimeout,
+  setInterval,
+  clearInterval,
+};
+let clock: ManualClock;
+let restoreTimers = () => {};
+
+beforeEach(() => {
+  clock = new ManualClock();
+  const spies = [
+    spyOn(globalThis, "setTimeout").mockImplementation(
+      clock.setTimeout.bind(clock) as typeof setTimeout,
+    ),
+    spyOn(globalThis, "clearTimeout").mockImplementation(
+      clock.clearTimeout.bind(clock) as typeof clearTimeout,
+    ),
+    spyOn(globalThis, "setInterval").mockImplementation(
+      clock.setInterval.bind(clock) as typeof setInterval,
+    ),
+    spyOn(globalThis, "clearInterval").mockImplementation(
+      clock.clearInterval.bind(clock) as typeof clearInterval,
+    ),
+    spyOn(performance, "now").mockImplementation(clock.now.bind(clock)),
+  ];
+  restoreTimers = () => {
+    for (const spy of spies) {
+      spy.mockRestore();
+    }
+  };
+});
+afterEach(() => restoreTimers());
 
 function findText(node: Renderable, text: string): TextRenderable | undefined {
   if (node instanceof TextRenderable && node.plainText === text) {
@@ -32,7 +68,11 @@ async function renderDemo() {
   // Observe the real factory's result; delivery, history and subscriptions stay real.
   const factory = spyOn(notifications, "createNotificationStore");
   try {
-    const setup = await testRender(<ComponentsDemo />, { width: 100, height: 24 });
+    const setup = await testRender(<ComponentsDemo />, {
+      width: 100,
+      height: 24,
+      clock: frameClock,
+    });
     try {
       await act(async () => setup.flush());
       // Table columns resolve from native layout; capture bounds after their reflow.
@@ -41,6 +81,7 @@ async function renderDemo() {
       return { ...setup, notify };
     } catch (error) {
       act(() => setup.renderer.destroy());
+      await setup.renderer.closed;
       throw error;
     }
   } finally {
@@ -62,6 +103,13 @@ async function press(setup: Awaited<ReturnType<typeof renderDemo>>, label: strin
   await act(async () => setup.flush());
   await act(async () => setup.flush());
   return button!;
+}
+
+async function click(setup: Awaited<ReturnType<typeof renderDemo>>, x: number, y: number) {
+  await act(async () => {
+    await setup.mockMouse.pressDown(x, y);
+    await setup.mockMouse.release(x, y);
+  });
 }
 
 test("demo variants use isolated history and burst overflow leaves scrolling layout intact", async () => {
@@ -128,6 +176,7 @@ test("demo variants use isolated history and burst overflow leaves scrolling lay
     expect(notifications.notify.getSnapshot()).toBe(defaultHistory);
   } finally {
     act(() => setup.renderer.destroy());
+    await setup.renderer.closed;
   }
 });
 
@@ -137,12 +186,12 @@ test("persistent demo survives expiry and pointer action visibly increments View
     await press(setup, "Persistent");
     const root = setup.renderer.root;
     const persistent = setup.notify!.getSnapshot()[0]!;
-    await act(async () => Bun.sleep(5_100));
+    act(() => clock.advance(5_100));
     await act(async () => setup.flush());
     expect(persistent.description).toBe("Close with the mouse.");
     expect(setup.notify!.getSnapshot()[0]!.dismissedAt).toBeNull();
     const close = root.findDescendantById(`toast-${persistent.id}-close`)!;
-    await act(async () => setup.mockMouse.click(close.screenX, close.screenY));
+    await click(setup, close.screenX, close.screenY);
     await act(async () => setup.flush());
     expect(root.findDescendantById(`toast-${persistent.id}`)).toBeUndefined();
     expect(findText(root, "History: 1 · Viewed: 0")).toBeDefined();
@@ -150,13 +199,14 @@ test("persistent demo survives expiry and pointer action visibly increments View
     const record = setup.notify!.getSnapshot()[0]!;
     const action = root.findDescendantById(`toast-${record.id}-action`)!;
     expect(action.focusable).toBe(false);
-    await act(async () => setup.mockMouse.click(action.screenX, action.screenY));
+    await click(setup, action.screenX, action.screenY);
     await act(async () => setup.flush());
     expect(findText(root, "History: 2 · Viewed: 1")).toBeDefined();
     expect(root.findDescendantById(`toast-${record.id}`)).toBeUndefined();
     expect(setup.renderer.currentFocusedRenderable).toBe(button);
   } finally {
     act(() => setup.renderer.destroy());
+    await setup.renderer.closed;
   }
 }, 10_000);
 
@@ -171,8 +221,10 @@ test("native and delayed auto demo route using terminal focus at delivery time",
     expect(setup.notify!.getSnapshot()[0]!.channel).toBe("native");
     await press(setup, "Auto in 3 seconds");
     expect(setup.notify!.getSnapshot()).toHaveLength(1);
+    act(() => clock.advance(2_999));
+    expect(setup.notify!.getSnapshot()).toHaveLength(1);
     setup.renderer.emit(CliRenderEvents.BLUR);
-    await act(async () => Bun.sleep(3_100));
+    act(() => clock.advance(1));
     await act(async () => setup.flush());
     expect(native).toHaveBeenCalledWith("No errors", "Build finished");
     expect(setup.notify!.getSnapshot()[0]).toMatchObject({
@@ -182,8 +234,10 @@ test("native and delayed auto demo route using terminal focus at delivery time",
       variant: "success",
     });
     await press(setup, "Auto in 3 seconds");
+    act(() => clock.advance(2_999));
+    expect(setup.notify!.getSnapshot()).toHaveLength(2);
     setup.renderer.emit(CliRenderEvents.FOCUS);
-    await act(async () => Bun.sleep(3_100));
+    act(() => clock.advance(1));
     await act(async () => setup.flush());
     const record = setup.notify!.getSnapshot()[0]!;
     expect(record.channel).toBe("toast");
@@ -193,6 +247,7 @@ test("native and delayed auto demo route using terminal focus at delivery time",
   } finally {
     native.mockRestore();
     act(() => setup.renderer.destroy());
+    await setup.renderer.closed;
   }
 }, 10_000);
 
@@ -206,9 +261,10 @@ test("unmount clears demo history and cancels every delayed creation; a new life
     expect(setup.notify!.getSnapshot()).toHaveLength(1);
   } finally {
     act(() => setup.renderer.destroy());
+    await setup.renderer.closed;
   }
   expect(setup.notify!.getSnapshot()).toEqual([]);
-  await act(async () => Bun.sleep(3_100));
+  act(() => clock.advance(3_100));
   expect(setup.notify!.getSnapshot()).toEqual([]);
   const remounted = await renderDemo();
   try {
@@ -217,5 +273,6 @@ test("unmount clears demo history and cancels every delayed creation; a new life
     expect(notifications.notify.getSnapshot()).toBe(defaultHistory);
   } finally {
     act(() => remounted.renderer.destroy());
+    await remounted.renderer.closed;
   }
 }, 10_000);

@@ -16,6 +16,9 @@ export async function testRender(
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   let root: ReturnType<typeof createRoot> | null = null;
   const setup = await createTestRenderer({
+    // Keep real frames without waiting for interactive UI frame pacing.
+    targetFps: 1000,
+    maxFps: 1000,
     ...options,
     onDestroy() {
       act(() => {
