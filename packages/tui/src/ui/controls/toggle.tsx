@@ -1,6 +1,5 @@
 import {
   type BoxRenderable,
-  isRenderable,
   type KeyEvent,
   MouseButton,
   type MouseEvent as OpenTUIMouseEvent,
@@ -18,11 +17,12 @@ import {
   useState,
 } from "react";
 
-import { useControlHints } from "@/ui/control-hints";
+import { cyclicIndex, renderedOrder } from "@/ui/interaction/collection";
+import { useControlHints } from "@/ui/interaction/control-hints";
 import { Box, type BoxProps } from "@/ui/primitives/box";
 import { HStack, type HStackProps } from "@/ui/primitives/hstack";
 import { Text, type TextProps } from "@/ui/primitives/text";
-import { assignRef, isTextContent } from "@/ui/utils";
+import { assignRef, isTextContent, setDisabled } from "@/ui/utils";
 
 type ToggleRegistration = {
   value: string;
@@ -115,22 +115,7 @@ export function ToggleGroup(props: ToggleGroupProps) {
         candidates.set(item.node, item);
       }
     }
-    const ordered: ToggleRegistration[] = [];
-    function visit(node: Renderable): void {
-      const item = candidates.get(node);
-      if (item !== undefined) {
-        ordered.push(item);
-      }
-      for (const child of node.getChildren()) {
-        if (isRenderable(child)) {
-          visit(child);
-        }
-      }
-    }
-    if (groupRef.current !== null) {
-      visit(groupRef.current);
-    }
-    return ordered;
+    return renderedOrder(groupRef.current, candidates);
   }, []);
 
   useLayoutEffect(() => {
@@ -260,9 +245,7 @@ export function ToggleGroup(props: ToggleGroupProps) {
 
     if (!group?.focused) return;
 
-    group.focusable = true;
-    group.blur();
-    group.focusable = false;
+    setDisabled(group, true);
   }, [disabled]);
 
   function moveActive(direction: -1 | 1) {
@@ -272,12 +255,7 @@ export function ToggleGroup(props: ToggleGroupProps) {
 
     const currentIndex = items.findIndex((item) => item.value === activeValueRef.current);
 
-    const nextIndex =
-      currentIndex === -1
-        ? direction === 1
-          ? 0
-          : items.length - 1
-        : (currentIndex + direction + items.length) % items.length;
+    const nextIndex = cyclicIndex(items.length, currentIndex, direction)!;
 
     changeActive(items[nextIndex].value);
   }
@@ -474,9 +452,7 @@ export function Toggle({
 
     if (!toggle?.focused) return;
 
-    toggle.focusable = true;
-    toggle.blur();
-    toggle.focusable = false;
+    setDisabled(toggle, true);
   }, [isDisabled, isGrouped]);
 
   const backgroundColor = isDisabled

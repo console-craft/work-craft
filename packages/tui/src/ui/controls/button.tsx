@@ -3,15 +3,15 @@ import {
   type KeyEvent,
   MouseButton,
   type MouseEvent as OpenTUIMouseEvent,
-  RenderableEvents,
 } from "@opentui/core";
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 
-import { type ControlHintSource, useControlHints } from "@/ui/control-hints";
+import { type ControlHintSource, useControlHints } from "@/ui/interaction/control-hints";
+import { observeControlFocus } from "@/ui/interaction/focus-utils";
 import { Box, type BoxProps } from "@/ui/primitives/box";
 import { Text } from "@/ui/primitives/text";
-import type { ThemeColor } from "@/ui/theme";
-import { assignRef, isTextContent } from "@/ui/utils";
+import type { ThemeColor } from "@/ui/theming/theme";
+import { assignRef, isTextContent, setDisabled } from "@/ui/utils";
 
 export type ButtonVariant = "primary" | "secondary" | "ghost" | "destructive";
 
@@ -91,17 +91,10 @@ export function Button({
         return;
       }
 
-      setIsFocused(node.focused);
-
-      const handleFocus = () => setIsFocused(true);
-      const handleBlur = () => setIsFocused(false);
-
-      node.on(RenderableEvents.FOCUSED, handleFocus);
-      node.on(RenderableEvents.BLURRED, handleBlur);
+      const releaseFocus = observeControlFocus(node, setIsFocused);
 
       return () => {
-        node.off(RenderableEvents.FOCUSED, handleFocus);
-        node.off(RenderableEvents.BLURRED, handleBlur);
+        releaseFocus();
 
         if (buttonRef.current === node) {
           buttonRef.current = null;
@@ -113,8 +106,6 @@ export function Button({
     [ref],
   );
 
-  // OpenTUI currently doesn't automatically blur a focused renderable when
-  // focusable becomes false, and blur() itself requires focusable=true.
   useLayoutEffect(() => {
     if (!disabled) {
       return;
@@ -128,9 +119,7 @@ export function Button({
       return;
     }
 
-    button.focusable = true;
-    button.blur();
-    button.focusable = false;
+    setDisabled(button, true);
   }, [disabled]);
 
   const baseVisual = buttonVariants[variant];

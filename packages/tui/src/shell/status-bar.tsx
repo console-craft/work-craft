@@ -7,7 +7,7 @@ import { HorizontalScroller } from "@/ui/components/horizontal-scroller";
 import { icons } from "@/ui/icons/nerd";
 import { HStack } from "@/ui/primitives/hstack.tsx";
 import { Text } from "@/ui/primitives/text.tsx";
-import { useTheme } from "@/ui/theme-provider.tsx";
+import { useTheme } from "@/ui/theming/theme-provider.tsx";
 
 export type StatusBarProps =
   | { mode: "HINTS" | "LEADER" | "ERROR"; hints: readonly CommandHint[]; text?: string }

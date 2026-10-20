@@ -1,7 +1,5 @@
 import {
   type BoxRenderable,
-  CliRenderEvents,
-  isRenderable,
   type KeyEvent,
   MouseButton,
   type MouseEvent,
@@ -23,24 +21,17 @@ import {
   useState,
 } from "react";
 
-import { type ControlHintSource, useControlHints } from "@/ui/control-hints";
-import { useNativeFocus } from "@/ui/focus-manager";
-import { focusRenderable, isEligibleFocusTarget, isVisible } from "@/ui/focus-utils";
+import { type ListItemRecord, useListCursor } from "@/ui/components/list-cursor";
+import { useListReveal } from "@/ui/components/list-reveal";
+import { cyclicIndex, pageIndex, renderedOrder } from "@/ui/interaction/collection";
+import { type ControlHintSource, useControlHints } from "@/ui/interaction/control-hints";
+import { useNativeFocus } from "@/ui/interaction/focus-manager";
+import { focusRenderable, isEligibleFocusTarget, isVisible } from "@/ui/interaction/focus-utils";
+import { consumePrimaryPointerPress, usePointerObservation } from "@/ui/interaction/pointer";
 import { Box, type BoxProps } from "@/ui/primitives/box";
-import {
-  consumePrimaryPointerPress,
-  isPrimaryPointerPressed,
-  ScrollArea,
-} from "@/ui/primitives/scroll-area";
+import { ScrollArea } from "@/ui/primitives/scroll-area";
 import { Text } from "@/ui/primitives/text";
 import { assignRef, isTextContent, setDisabled } from "@/ui/utils";
-
-type ListItemRecord = {
-  id: string;
-  value: string;
-  disabled: boolean;
-  node: BoxRenderable;
-};
 
 type ListContextValue = {
   value: string | undefined;
@@ -93,6 +84,7 @@ export interface ListProps extends Omit<BoxProps, "focusable"> {
 /** One native focus endpoint; rich rows must not contain focusable controls. */
 export function List(props: ListProps) {
   const renderer = useRenderer();
+  usePointerObservation();
   const controlledValue = Object.prototype.hasOwnProperty.call(props, "value");
   const controlledActive = Object.prototype.hasOwnProperty.call(props, "activeValue");
   const {
@@ -115,10 +107,8 @@ export function List(props: ListProps) {
     flexDirection = "column",
     ...boxProps
   } = props;
-  const [internalValue, setInternalValue] = useState(defaultValue);
-  const [internalActive, setInternalActive] = useState(defaultActiveValue);
-  const currentValue = controlledValue ? value : internalValue;
-  const currentActive = controlledActive ? activeValue : internalActive;
+  const disabledRef = useRef(disabled);
+  disabledRef.current = disabled;
   const rootRef = useRef<BoxRenderable | null>(null);
   const areaRef = useRef<ScrollBoxRenderable | null>(null);
   const pressedRow = useRef<{ node: BoxRenderable; press: number } | null>(null);
@@ -127,28 +117,6 @@ export function List(props: ListProps) {
   const items = useRef(new Map<string, ListItemRecord>());
   const [registryVersion, setRegistryVersion] = useState(0);
   const mounted = useRef(false);
-  const state = useRef({
-    value: currentValue,
-    active: currentActive,
-    controlledValue,
-    controlledActive,
-    onValueChange,
-    onActiveValueChange,
-    onActivate,
-    disabled,
-  });
-  state.current = {
-    value: currentValue,
-    active: currentActive,
-    controlledValue,
-    controlledActive,
-    onValueChange,
-    onActiveValueChange,
-    onActivate,
-    disabled,
-  };
-  const repairRequest = useRef<{ from: string | undefined; to: string | undefined } | null>(null);
-
   useLayoutEffect(() => {
     mounted.current = true;
     return () => {
@@ -160,7 +128,6 @@ export function List(props: ListProps) {
     setDisabled(rootRef.current, disabled);
     if (disabled) {
       pressedRow.current = null;
-      repairRequest.current = null;
     }
   }, [disabled]);
 
@@ -178,7 +145,7 @@ export function List(props: ListProps) {
   }, []);
 
   const getItems = useCallback((): ListItemRecord[] => {
-    if (state.current.disabled) {
+    if (disabledRef.current) {
       return [];
     }
     const candidates = new Map<Renderable, ListItemRecord>();
@@ -187,68 +154,30 @@ export function List(props: ListProps) {
         candidates.set(item.node, item);
       }
     }
-    const ordered: ListItemRecord[] = [];
-    function visit(node: Renderable) {
-      const item = candidates.get(node);
-      if (item) {
-        ordered.push(item);
-      }
-      for (const child of node.getChildren()) {
-        if (isRenderable(child)) {
-          visit(child);
-        }
-      }
-    }
-    if (areaRef.current) {
-      visit(areaRef.current.content);
-    }
-    return ordered;
+    return renderedOrder(areaRef.current?.content ?? null, candidates);
   }, []);
 
-  const changeActive = useCallback((next: string | undefined, repair = false) => {
-    const current = state.current;
-    if (current.disabled) {
-      return;
-    }
-    if (next === current.active) {
-      repairRequest.current = null;
-      return;
-    }
-    if (current.controlledActive) {
-      if (!current.onActiveValueChange) {
-        repairRequest.current = null;
-        return;
-      }
-      const pending = repairRequest.current;
-      if (repair && pending && pending.from === current.active && pending.to === next) {
-        return;
-      }
-      repairRequest.current = repair ? { from: current.active, to: next } : null;
-    } else {
-      current.active = next;
-      setInternalActive(next);
-    }
-    current.onActiveValueChange?.(next);
-  }, []);
-
-  const repairActive = useCallback(() => {
-    const root = rootRef.current;
-    if (
-      state.current.disabled ||
-      !root ||
-      !isVisible(root) ||
-      (state.current.active === undefined && !root.focused)
-    ) {
-      return;
-    }
-    const eligible = getItems();
-    if (eligible.some((item) => item.value === state.current.active)) {
-      repairRequest.current = null;
-      return;
-    }
-    const selected = eligible.find((item) => item.value === state.current.value);
-    changeActive(selected?.value ?? eligible[0]?.value, true);
-  }, [getItems, changeActive]);
+  const cursor = useListCursor({
+    value,
+    defaultValue,
+    activeValue,
+    defaultActiveValue,
+    controlledValue,
+    controlledActive,
+    disabled,
+    onValueChange,
+    onActiveValueChange,
+    onActivate,
+    getItems,
+    root: () => rootRef.current,
+  });
+  const {
+    value: currentValue,
+    activeValue: currentActive,
+    changeActive,
+    repair: repairActive,
+    activate,
+  } = cursor;
 
   const setRootRef = useCallback(
     (node: BoxRenderable | null) => {
@@ -283,7 +212,7 @@ export function List(props: ListProps) {
           return (
             mounted.current &&
             rootRef.current === root &&
-            state.current.active === value &&
+            cursor.getActive() === value &&
             isEligibleFocusTarget(root, renderer.root) &&
             getItems().includes(target)
           );
@@ -322,103 +251,30 @@ export function List(props: ListProps) {
     repairActive,
   ]);
 
-  useLayoutEffect(() => {
-    let lastReveal: {
-      node: BoxRenderable;
-      top: number;
-      height: number;
-      width: number;
-      viewportHeight: number;
-      viewportWidth: number;
-      focused: boolean;
-    } | null = null;
-    function reconcile() {
-      if (state.current.disabled) {
-        lastReveal = null;
-        return;
-      }
-      repairActive();
-      if (pressedRow.current) {
-        if (
-          isPrimaryPointerPressed(renderer) &&
-          getItems().some((candidate) => candidate.node === pressedRow.current?.node)
-        ) {
-          // A focus-entry reveal must not move the clicked row before its release.
-          return;
-        }
-        pressedRow.current = null;
-      }
-      const root = rootRef.current;
-      const area = areaRef.current;
-      const item = getItems().find((candidate) => candidate.value === state.current.active);
-      if (!root || !area || !item || !isVisible(root)) {
-        lastReveal = null;
-        return;
-      }
-      const node = item.node;
-      // Content-relative geometry excludes manual scroll offsets: wheel scrolling must not snap back.
-      const next = {
-        node,
-        top: node.screenY - area.content.screenY,
-        height: node.height,
-        width: node.width,
-        viewportHeight: area.viewport.height,
-        viewportWidth: area.viewport.width,
-        focused: root.focused,
+  useListReveal({
+    renderer,
+    repair: repairActive,
+    read() {
+      const eligible = getItems();
+      return {
+        root: rootRef.current,
+        area: areaRef.current,
+        activeNode: eligible.find((item) => item.value === cursor.getActive())?.node ?? null,
+        disabled: disabledRef.current,
+        pressedNode: eligible.some((item) => item.node === pressedRow.current?.node)
+          ? (pressedRow.current?.node ?? null)
+          : null,
       };
-      const reveal =
-        !lastReveal ||
-        next.node !== lastReveal.node ||
-        next.top !== lastReveal.top ||
-        next.height !== lastReveal.height ||
-        next.width !== lastReveal.width ||
-        next.viewportHeight !== lastReveal.viewportHeight ||
-        next.viewportWidth !== lastReveal.viewportWidth ||
-        (next.focused && !lastReveal.focused);
-      lastReveal = next;
-      if (reveal) {
-        area.scrollChildIntoView(node.id);
-        // OpenTUI 0.5.14's nearest-edge reveal misses rows exactly one viewport tall.
-        if (node.height === area.viewport.height) {
-          area.scrollBy(node.screenY - area.viewport.screenY);
-        }
-      }
-    }
-    renderer.on(CliRenderEvents.FRAME, reconcile);
-    return () => {
-      renderer.off(CliRenderEvents.FRAME, reconcile);
-    };
-  }, [renderer, repairActive, getItems]);
-
-  const activate = useCallback(
-    (value: string) => {
-      const target = getItems().find((item) => item.value === value);
-      if (!target) {
-        return;
-      }
-      changeActive(value);
-      if (!getItems().includes(target)) {
-        return;
-      }
-      const current = state.current;
-      if (current.value !== value) {
-        if (!current.controlledValue) {
-          current.value = value;
-          setInternalValue(value);
-        }
-        current.onValueChange?.(value);
-      }
-      if (getItems().includes(target)) {
-        state.current.onActivate?.(value);
-      }
     },
-    [getItems, changeActive],
-  );
+    releasePress() {
+      pressedRow.current = null;
+    },
+  });
 
   const beginPress = useCallback(
     (node: BoxRenderable, event: MouseEvent) => {
       const press = consumePrimaryPointerPress(renderer, event);
-      if (state.current.disabled || press === undefined) {
+      if (disabledRef.current || press === undefined) {
         return;
       }
       pressedRow.current = { node, press };
@@ -449,26 +305,22 @@ export function List(props: ListProps) {
     direction: 1 | -1,
     half: boolean,
   ): ListItemRecord | undefined {
-    const current = eligible[index];
-    if (!current) {
-      return direction === 1 ? eligible[0] : eligible.at(-1);
-    }
     const distance = (areaRef.current?.viewport.height ?? 0) * (half ? 0.5 : 1);
-    let target = current;
-    for (let next = index + direction; next >= 0 && next < eligible.length; next += direction) {
-      target = eligible[next]!;
-      if (Math.abs(target.node.screenY - current.node.screenY) >= distance) {
-        break;
-      }
-    }
-    return target;
+    return eligible[
+      pageIndex(
+        eligible.map((item) => item.node.screenY),
+        index,
+        direction,
+        distance,
+      ) ?? -1
+    ];
   }
 
   function handleKeyDown(key: KeyEvent) {
     onKeyDown?.(key);
     if (
       key.defaultPrevented ||
-      state.current.disabled ||
+      disabledRef.current ||
       key.propagationStopped ||
       key.meta ||
       key.option ||
@@ -478,7 +330,7 @@ export function List(props: ListProps) {
       return;
     }
     const eligible = getItems();
-    const index = eligible.findIndex((item) => item.value === state.current.active);
+    const index = eligible.findIndex((item) => item.value === cursor.getActive());
     let next: ListItemRecord | undefined;
     if (key.ctrl && !key.shift && ["d", "u", "f", "b"].includes(key.name)) {
       next = pageTarget(
@@ -489,28 +341,18 @@ export function List(props: ListProps) {
       );
     } else if (key.ctrl && !key.shift && ["n", "p"].includes(key.name)) {
       const direction = key.name === "n" ? 1 : -1;
-      next =
-        eligible[
-          index < 0
-            ? direction === 1
-              ? 0
-              : eligible.length - 1
-            : (index + direction + eligible.length) % eligible.length
-        ];
+      next = eligible[cyclicIndex(eligible.length, index, direction) ?? -1];
     } else if (!key.ctrl && key.name === "g") {
       next = key.shift ? eligible.at(-1) : eligible[0];
     } else if (!key.ctrl && !key.shift) {
       switch (key.name) {
         case "down":
         case "j":
-          next = eligible[index < 0 ? 0 : (index + 1) % eligible.length];
+          next = eligible[cyclicIndex(eligible.length, index, 1) ?? -1];
           break;
         case "up":
         case "k":
-          next =
-            eligible[
-              index < 0 ? eligible.length - 1 : (index - 1 + eligible.length) % eligible.length
-            ];
+          next = eligible[cyclicIndex(eligible.length, index, -1) ?? -1];
           break;
         case "home":
           next = eligible[0];
@@ -551,13 +393,13 @@ export function List(props: ListProps) {
       ? () =>
           getItems().length > 0
             ? [
-                ...(!state.current.controlledActive || state.current.onActiveValueChange
+                ...(cursor.canNavigate()
                   ? [
                       { keys: "↑/↓/j/k", label: "Navigate" },
                       { keys: "Ctrl+d/u", label: "Half-page" },
                     ]
                   : []),
-                ...(getItems().some((item) => item.value === state.current.active)
+                ...(getItems().some((item) => item.value === cursor.getActive())
                   ? [{ keys: "Enter", label: "Open" }]
                   : []),
               ]

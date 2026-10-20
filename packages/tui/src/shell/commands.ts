@@ -9,8 +9,11 @@ import {
 
 import type { CommandId } from "@/input/command-router.ts";
 import { focusKey, type FocusNode, type FocusTarget, moveFocus } from "@/input/focus.ts";
+import { navigationContextKey } from "@/shell/context";
+import { OPERATIONAL_ERROR_DURATION } from "@/shell/errors";
 import { type CreateKind, genericRootIdForShellContext, type ShellModel } from "@/shell/model.ts";
 import type { DialogState, ShellAction, ShellRegion, ShellState } from "@/shell/state.ts";
+import { hasTerminalViewport } from "@/workbench/layout";
 
 export const durableCommands = {
   createSession: (name: string): Command => ({ type: "session.create", name }),
@@ -275,7 +278,7 @@ export async function runDurableCommand({
           contextKey: expected.navigationKey,
           operation: command.type,
           message: cause instanceof Error ? cause.message : String(cause),
-          expiresAt: now + 8000,
+          expiresAt: now + OPERATIONAL_ERROR_DURATION,
           origin: "direct",
         },
       });
@@ -286,20 +289,6 @@ export async function runDurableCommand({
 
 function adjacent<T>(values: readonly T[], index: number, offset: -1 | 1): T | undefined {
   return index < 0 ? undefined : values[index + offset];
-}
-
-function navigationContextKey(
-  snapshot: Snapshot | null,
-  state: ShellState,
-  navigatorKey: string | null,
-): string {
-  return JSON.stringify([
-    snapshot?.epoch ?? null,
-    state.activeSessionId,
-    state.activeWorkspaceId,
-    state.activeCategory,
-    navigatorKey,
-  ]);
 }
 
 function commandRegion(focus: FocusTarget): ShellRegion {
@@ -341,7 +330,7 @@ export async function executeCommand({
     dispatch({ type: "navigator.activate", key: entry.key });
     {
       const result = await run(durableCommands.openItem(entry.id), "navigator", {
-        navigationKey: navigationContextKey(snapshot, state, entry.key),
+        navigationKey: navigationContextKey(snapshot?.epoch ?? null, state, entry.key),
         dialog: state.dialog,
       });
       if (result !== undefined) {
@@ -388,8 +377,7 @@ export async function executeCommand({
       ({ target, rect }) =>
         target.region !== "workbench" ||
         target.control === "reactivate" ||
-        (rect.width >= 20 &&
-          rect.height >= 5 &&
+        (hasTerminalViewport(rect) &&
           !focusNodes.some(
             (node) =>
               node.target.region === "workbench" &&

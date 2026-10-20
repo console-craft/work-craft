@@ -1,6 +1,6 @@
 import type { BoxProps } from "@/ui/primitives/box";
 import { Box } from "@/ui/primitives/box";
-import type { ThemeColor } from "@/ui/theme";
+import type { ThemeColor } from "@/ui/theming/theme";
 
 export interface ProgressProps extends Omit<BoxProps, "children"> {
   value: number;

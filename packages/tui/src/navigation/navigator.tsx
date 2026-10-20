@@ -13,11 +13,11 @@ import type { NavigatorEntry } from "@/navigation/model.ts";
 import { escapeLabel, formatPathLabel } from "@/navigation/path-label.ts";
 import { List, type ListCursorHandle, ListItem } from "@/ui/components/list";
 import { Input } from "@/ui/controls/input";
-import { focusRenderable, isEligibleFocusTarget } from "@/ui/focus-utils";
+import { focusRenderable, isEligibleFocusTarget } from "@/ui/interaction/focus-utils";
+import { consumePrimaryPointerPress, usePointerObservation } from "@/ui/interaction/pointer";
 import { Box } from "@/ui/primitives/box";
 import { HStack } from "@/ui/primitives/hstack";
 import { Icon } from "@/ui/primitives/icon";
-import { consumePrimaryPointerPress } from "@/ui/primitives/scroll-area";
 import { Stack } from "@/ui/primitives/stack";
 import { Text } from "@/ui/primitives/text";
 
@@ -41,6 +41,7 @@ export type NavigatorProps = {
 
 export function Navigator(props: NavigatorProps): ReactNode {
   const renderer = useRenderer();
+  usePointerObservation();
   const filter = useRef<InputRenderable>(null);
   const list = useRef<BoxRenderable>(null);
   const cursor = useRef<ListCursorHandle>(null);

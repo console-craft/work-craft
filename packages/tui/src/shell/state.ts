@@ -1,15 +1,24 @@
 import type { CategoryKind, Snapshot } from "@work-craft/server/client";
 
 import { focusAfterNavigatorHide, focusKey, type FocusTarget } from "@/input/focus.ts";
-import { navigatorEntries, workspacesForSession } from "@/navigation/model.ts";
+import {
+  categoriesForWorkspace,
+  navigatorEntries,
+  navigatorItemKey,
+  sessionsInOrder,
+  workspacesForSession,
+} from "@/navigation/model.ts";
 import {
   clearOperationalError,
   type OperationalError,
   reportOperationalError,
+  retainedErrorSources,
+  retainsErrorSource,
 } from "@/shell/errors.ts";
 import { DEFAULT_NAVIGATOR_WIDTH, resizeNavigatorWidth } from "@/shell/layout.ts";
 import type { CreateKind } from "@/shell/model.ts";
 import { paneIds } from "@/workbench/layout.ts";
+import { selectedTab, surfaceForItem, tabsForSurface } from "@/workbench/model";
 
 export type ShellRegion = "workspace" | "session" | "category" | "navigator" | "tabs" | "workbench";
 
@@ -306,9 +315,7 @@ export function reduceShellState(state: ShellState, action: ShellAction): ShellS
 }
 
 export function reconcileShellState(state: ShellState, snapshot: Snapshot): ShellState {
-  const sessions = [...snapshot.sessions].sort(
-    (a, b) => a.position - b.position || a.id.localeCompare(b.id),
-  );
+  const sessions = sessionsInOrder(snapshot);
   const sessionStillExists = sessions.some(({ id }) => id === state.activeSessionId);
   const activeSessionId = sessionStillExists
     ? state.activeSessionId
@@ -321,9 +328,8 @@ export function reconcileShellState(state: ShellState, snapshot: Snapshot): Shel
   const activeWorkspaceId = workspaces.some(({ id }) => id === state.activeWorkspaceId)
     ? state.activeWorkspaceId
     : (workspaces[0]?.id ?? null);
-  const categories = snapshot.categories
-    .filter(({ workspaceId }) => workspaceId === activeWorkspaceId)
-    .sort((a, b) => a.position - b.position || a.kind.localeCompare(b.kind));
+  const categories =
+    activeWorkspaceId === null ? [] : categoriesForWorkspace(snapshot, activeWorkspaceId);
   const activeCategory = categories.some(({ kind }) => kind === state.activeCategory)
     ? state.activeCategory
     : (categories[0]?.kind ?? "inbox");
@@ -356,7 +362,7 @@ export function reconcileShellState(state: ShellState, snapshot: Snapshot): Shel
     (state.activeNavigatorKey === null && state.dialog?.kind === "create") ||
     snapshot.items.some(
       (item) =>
-        `${item.parentId === null ? "root" : "item"}:${item.id}` === state.activeNavigatorKey &&
+        navigatorItemKey(item) === state.activeNavigatorKey &&
         item.workspaceId === activeWorkspaceId &&
         item.category === activeCategory,
     ) ||
@@ -374,19 +380,15 @@ export function reconcileShellState(state: ShellState, snapshot: Snapshot): Shel
   const navigatorCursorKey = entries.some(({ key }) => key === scopedState.navigatorCursorKey)
     ? scopedState.navigatorCursorKey
     : (neighbor ?? entries.find((entry) => entry.matches)?.key ?? entries[0]?.key ?? null);
-  const itemId = snapshot.items.find(
-    (item) => `${item.parentId === null ? "root" : "item"}:${item.id}` === activeNavigatorKey,
-  )?.id;
-  const surface = snapshot.surfaces.find((candidate) => candidate.itemId === itemId);
-  const tabs = snapshot.tabs
-    .filter(({ surfaceId }) => surfaceId === surface?.id)
-    .sort((a, b) => a.position - b.position || a.id.localeCompare(b.id));
+  const itemId = snapshot.items.find((item) => navigatorItemKey(item) === activeNavigatorKey)?.id;
+  const surface = surfaceForItem(snapshot, itemId);
+  const tabs = tabsForSurface(snapshot, surface?.id);
   const tabCursorId = tabs.some(({ id }) => id === state.tabCursorId)
     ? state.tabCursorId
     : tabs.some(({ id }) => id === surface?.activeTabId)
       ? surface!.activeTabId
       : (tabs[0]?.id ?? null);
-  const activeTab = tabs.find(({ id }) => id === surface?.activeTabId) ?? tabs[0];
+  const activeTab = selectedTab(tabs, surface?.activeTabId) ?? tabs[0];
   const panes = paneIds(activeTab?.layout ?? null);
   const selectedPaneId = state.focus.region === "workbench" ? state.focus.paneId : null;
   const focus =
@@ -411,13 +413,9 @@ export function reconcileShellState(state: ShellState, snapshot: Snapshot): Shel
         ? null
         : state.dialog;
 
-  const sourceKeys = currentSourceKeys(snapshot);
+  const sourceKeys = retainedErrorSources(snapshot);
   function retainsSource(sourceKey: string): boolean {
-    return (
-      !/:(?:surface\.ensure|item\.setArchived|entry|discovery|pane\.split|process\.restart|tab\.create|surface\.selectTab|process|layout)$/.test(
-        sourceKey,
-      ) || sourceKeys.has(sourceKey)
-    );
+    return retainsErrorSource(sourceKey, sourceKeys);
   }
   return {
     ...scopedState,
@@ -448,51 +446,6 @@ export function reconcileShellState(state: ShellState, snapshot: Snapshot): Shel
       ),
     ),
   };
-}
-
-/** Record-owned failures stop existing with their source; transient form errors keep their lifetime. */
-function currentSourceKeys(snapshot: Snapshot): Set<string> {
-  const keys = new Set<string>();
-  const roots = new Set(
-    snapshot.items
-      .filter((item) => item.parentId === null && !item.archived)
-      .map((item) => item.id),
-  );
-  for (const item of snapshot.items) {
-    if (item.archived || (item.parentId !== null && !roots.has(item.parentId))) {
-      continue;
-    }
-    keys.add(`${item.id}:surface.ensure`);
-    keys.add(`${item.id}:item.setArchived`);
-    keys.add(`item:${item.id}:entry`);
-    keys.add(`directory:${item.id}:discovery`);
-  }
-  for (const pane of snapshot.panes) {
-    keys.add(`${pane.id}:process.restart`);
-    keys.add(`${pane.id}:pane.split`);
-    keys.add(`pane:${pane.id}:process`);
-  }
-  for (const surface of snapshot.surfaces) {
-    keys.add(`${surface.id}:tab.create`);
-    keys.add(`${surface.id}:surface.selectTab`);
-  }
-  for (const tab of snapshot.tabs) {
-    const surface = snapshot.surfaces.find((surface) => surface.id === tab.surfaceId);
-    if (surface && keys.has(`item:${surface.itemId}:entry`)) {
-      keys.add(`tab:${tab.id}:entry`);
-    }
-    for (const paneId of paneIds(tab.layout)) {
-      keys.add(`pane:${paneId}:layout`);
-      if (
-        surface &&
-        keys.has(`item:${surface.itemId}:entry`) &&
-        snapshot.panes.some((pane) => pane.id === paneId)
-      ) {
-        keys.add(`pane:${paneId}:entry`);
-      }
-    }
-  }
-  return keys;
 }
 
 function changeScope(

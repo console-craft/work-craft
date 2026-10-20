@@ -3,16 +3,16 @@ import {
   type KeyEvent,
   MouseButton,
   type MouseEvent as OpenTUIMouseEvent,
-  RenderableEvents,
 } from "@opentui/core";
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 
-import { useControlHints } from "@/ui/control-hints";
 import { symbols } from "@/ui/icons/symbols";
+import { useControlHints } from "@/ui/interaction/control-hints";
+import { observeControlFocus } from "@/ui/interaction/focus-utils";
 import { HStack, type HStackProps } from "@/ui/primitives/hstack";
 import { Text, type TextProps } from "@/ui/primitives/text";
-import type { ThemeColor } from "@/ui/theme";
-import { assignRef } from "@/ui/utils";
+import type { ThemeColor } from "@/ui/theming/theme";
+import { assignRef, setDisabled } from "@/ui/utils";
 
 const toggleAction = { name: "space", hint: { keys: "Space", label: "Toggle" } };
 
@@ -66,17 +66,10 @@ export function Switch({
 
       if (!node) return;
 
-      setIsFocused(node.focused);
-
-      const handleFocus = () => setIsFocused(true);
-      const handleBlur = () => setIsFocused(false);
-
-      node.on(RenderableEvents.FOCUSED, handleFocus);
-      node.on(RenderableEvents.BLURRED, handleBlur);
+      const releaseFocus = observeControlFocus(node, setIsFocused);
 
       return () => {
-        node.off(RenderableEvents.FOCUSED, handleFocus);
-        node.off(RenderableEvents.BLURRED, handleBlur);
+        releaseFocus();
 
         if (switchRef.current === node) {
           switchRef.current = null;
@@ -97,9 +90,7 @@ export function Switch({
 
     if (!switchControl?.focused) return;
 
-    switchControl.focusable = true;
-    switchControl.blur();
-    switchControl.focusable = false;
+    setDisabled(switchControl, true);
   }, [disabled]);
 
   const indicator = checked
@@ -195,7 +186,6 @@ export function Switch({
       onMouseUp={handleMouseUp}
       onMouseOut={handleMouseOut}
     >
-      {/* <Text>{resolvedJustifyContent}</Text> */}
       {indicatorPosition === "start" && <Text fg={indicatorColor}>{indicator}</Text>}
 
       <Text fg={labelColor}>{children}</Text>

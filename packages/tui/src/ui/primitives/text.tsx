@@ -1,8 +1,8 @@
 import { TextAttributes } from "@opentui/core";
 import type { TextProps as OpenTUITextProps } from "@opentui/react";
 
-import { resolveColor, type Theme, type ThemeColor } from "@/ui/theme";
-import { useTheme } from "@/ui/theme-provider";
+import { resolveColor, type Theme, type ThemeColor } from "@/ui/theming/theme";
+import { useTheme } from "@/ui/theming/theme-provider";
 import { textTransform } from "@/ui/utils";
 
 export type TextTransform = "none" | "uppercase" | "lowercase" | "capitalize";

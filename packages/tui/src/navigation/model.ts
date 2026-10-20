@@ -16,6 +16,14 @@ export type NavigatorEntry = {
   failed?: boolean;
 };
 
+export function navigatorItemKey(item: Pick<Snapshot["items"][number], "id" | "parentId">): string {
+  return `${item.parentId === null ? "root" : "item"}:${item.id}`;
+}
+
+export function sessionsInOrder(snapshot: Snapshot): Snapshot["sessions"] {
+  return [...snapshot.sessions].sort((a, b) => a.position - b.position || a.id.localeCompare(b.id));
+}
+
 export function workspacesForSession(
   snapshot: Snapshot,
   sessionId: string,
@@ -72,7 +80,7 @@ export function navigatorEntries(
         return [];
       }
       const rootEntry: NavigatorEntry = {
-        key: `root:${root.id}`,
+        key: navigatorItemKey(root),
         kind: "root",
         id: root.id,
         rootId: root.id,
@@ -87,7 +95,7 @@ export function navigatorEntries(
         return [rootEntry];
       }
       const items = (query === "" ? children : matchingChildren).map<NavigatorEntry>((item) => ({
-        key: `item:${item.id}`,
+        key: navigatorItemKey(item),
         kind: "item",
         id: item.id,
         rootId: root.id,

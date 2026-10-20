@@ -5,8 +5,23 @@ export const PANE_ALERT_HEIGHT = 3;
 export const PANE_TOP_BORDER_HEIGHT = 1;
 export const PANE_RECOVERY_HEIGHT = PANE_TOP_BORDER_HEIGHT + PANE_ALERT_HEIGHT;
 export const WORKBENCH_PADDING_X = 1;
+export const MIN_TERMINAL_COLUMNS = 20;
+export const MIN_TERMINAL_ROWS = 5;
 
 export type PaneRect = { x: number; y: number; width: number; height: number };
+
+export function hasTerminalViewport(rect: Pick<PaneRect, "width" | "height">): boolean {
+  return rect.width >= MIN_TERMINAL_COLUMNS && rect.height >= MIN_TERMINAL_ROWS;
+}
+
+export function hasRecoveryViewport(bounds: Pick<PaneRect, "width" | "height">): boolean {
+  return bounds.width >= MIN_TERMINAL_COLUMNS && bounds.height >= PANE_RECOVERY_HEIGHT;
+}
+
+/** The fixed action inside the unavailable pane's padded three-row alert. */
+export function reactivateRect(bounds: PaneRect): PaneRect {
+  return { x: bounds.x + bounds.width - 14, y: bounds.y + bounds.height - 2, width: 12, height: 1 };
+}
 
 /** The top border and unavailable footer are normal flow, never terminal output. */
 export function terminalRect(bounds: PaneRect, showAlert: boolean): PaneRect {

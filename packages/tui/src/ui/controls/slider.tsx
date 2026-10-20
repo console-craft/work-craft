@@ -3,8 +3,8 @@ import { useCallback, useLayoutEffect, useRef } from "react";
 import type { Ref } from "react";
 
 import { Box, type BoxProps } from "@/ui/primitives/box";
-import { resolveColor, type ThemeColor } from "@/ui/theme";
-import { useTheme } from "@/ui/theme-provider";
+import { resolveColor, type ThemeColor } from "@/ui/theming/theme";
+import { useTheme } from "@/ui/theming/theme-provider";
 import { assignRef, setDisabled } from "@/ui/utils";
 
 type Orientation = "horizontal" | "vertical";

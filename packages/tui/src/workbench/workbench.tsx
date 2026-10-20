@@ -2,7 +2,7 @@ import type { EmbeddedTerminalRenderable } from "@opentui/core";
 import type { Snapshot, StreamConnection } from "@work-craft/server/client";
 import type { ReactNode } from "react";
 
-import type { TerminalBuffer } from "@/client/use-work-craft.ts";
+import type { TerminalBuffer } from "@/client/terminal-buffer.ts";
 import { EmptyState, EmptyStateDescription, EmptyStateTitle } from "@/ui/components/empty-state";
 import { Box } from "@/ui/primitives/box.tsx";
 import { WORKBENCH_PADDING_X } from "@/workbench/layout.ts";

@@ -1,6 +1,7 @@
 /** Filenames are data: never allow them to add rows or terminal control sequences. */
 export function escapeLabel(value: string): string {
   return value.replace(
+    // oxlint-disable-next-line no-control-regex -- Escape terminal control bytes, never execute them.
     /[\x00-\x1f\x7f-\x9f]/g,
     (char) => `\\x${char.charCodeAt(0).toString(16).padStart(2, "0")}`,
   );

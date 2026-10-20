@@ -2,9 +2,9 @@ import { defaultTextareaKeyBindings, type InputRenderable, type KeyEvent } from 
 import type { InputProps as OpenTUIInputProps } from "@opentui/react";
 import { useCallback, useLayoutEffect, useRef } from "react";
 
-import { nativeActionHints, useControlHints } from "@/ui/control-hints";
-import { resolveColor, type ThemeColor } from "@/ui/theme";
-import { useTheme } from "@/ui/theme-provider";
+import { nativeActionHints, useControlHints } from "@/ui/interaction/control-hints";
+import { resolveColor, type ThemeColor } from "@/ui/theming/theme";
+import { useTheme } from "@/ui/theming/theme-provider";
 import { assignRef, clearTextOnCtrlC, consumeNativeKey, setDisabled } from "@/ui/utils";
 
 type ThemedColorProps = {

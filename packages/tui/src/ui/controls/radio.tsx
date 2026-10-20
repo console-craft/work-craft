@@ -16,12 +16,12 @@ import {
   useState,
 } from "react";
 
-import { useControlHints } from "@/ui/control-hints";
 import { symbols } from "@/ui/icons/symbols";
+import { useControlHints } from "@/ui/interaction/control-hints";
 import { Box, type BoxProps } from "@/ui/primitives/box";
 import { HStack, type HStackProps } from "@/ui/primitives/hstack";
 import { Text, type TextProps } from "@/ui/primitives/text";
-import { assignRef } from "@/ui/utils";
+import { assignRef, setDisabled } from "@/ui/utils";
 
 type RadioRegistration = {
   node: BoxRenderable | null;
@@ -203,9 +203,7 @@ export function RadioGroup({
 
     if (!group?.focused) return;
 
-    group.focusable = true;
-    group.blur();
-    group.focusable = false;
+    setDisabled(group, true);
   }, [disabled]);
 
   function moveActive(direction: -1 | 1) {

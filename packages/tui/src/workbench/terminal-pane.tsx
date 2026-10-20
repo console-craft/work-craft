@@ -2,13 +2,14 @@ import type { EmbeddedTerminalRenderable } from "@opentui/core";
 import type { Snapshot, StreamConnection } from "@work-craft/server/client";
 import { useEffect, useLayoutEffect, useRef } from "react";
 
-import type { TerminalBuffer } from "@/client/use-work-craft.ts";
+import type { TerminalBuffer } from "@/client/terminal-buffer.ts";
 import { Alert, AlertContent, AlertTitle } from "@/ui/components/alert.tsx";
 import { Button } from "@/ui/controls/button.tsx";
 import { Box } from "@/ui/primitives/box.tsx";
 import {
+  hasRecoveryViewport,
+  hasTerminalViewport,
   PANE_ALERT_HEIGHT,
-  PANE_RECOVERY_HEIGHT,
   PANE_TOP_BORDER_HEIGHT,
   type PaneRect,
   terminalRect,
@@ -62,8 +63,7 @@ export function TerminalPane({
       connected &&
       running &&
       inputEnabled &&
-      viewport.width >= 20 &&
-      viewport.height >= 5 &&
+      hasTerminalViewport(viewport) &&
       canReceiveInput(pane.id)
     );
   }
@@ -71,8 +71,7 @@ export function TerminalPane({
     return (
       connected &&
       !reactivatingPaneIds.has(pane.id) &&
-      bounds.width >= 20 &&
-      bounds.height >= PANE_RECOVERY_HEIGHT &&
+      hasRecoveryViewport(bounds) &&
       canReactivate(pane.id)
     );
   }
@@ -80,7 +79,13 @@ export function TerminalPane({
   function resizeTerminal(cols: number, rows: number): void {
     nativeSize.current = { width: cols, height: rows };
     resizePending.current = true;
-    if (acceptsInput() && resizeEnabled && canResize() && stream && cols >= 20 && rows >= 5) {
+    if (
+      acceptsInput() &&
+      resizeEnabled &&
+      canResize() &&
+      stream &&
+      hasTerminalViewport(nativeSize.current)
+    ) {
       stream.resize(pane.id, cols, rows);
       resizePending.current = false;
     }

@@ -2,9 +2,10 @@ import type { LayoutNode, Snapshot } from "@work-craft/server/client";
 
 import type { FocusNode, Rect } from "@/input/focus.ts";
 import {
-  PANE_RECOVERY_HEIGHT,
+  hasRecoveryViewport,
   type PaneRect,
   projectPaneLayout,
+  reactivateRect,
   TAB_STRIP_HEIGHT,
   terminalRect,
   WORKBENCH_PADDING_X,
@@ -118,20 +119,10 @@ export function calculateShellLayout(input: ShellLayoutInput): ShellLayout {
                   rect: terminalRect(rect, notice !== null),
                 },
               ];
-              if (
-                notice?.reactivate &&
-                (input.connected ?? true) &&
-                rect.width >= 20 &&
-                rect.height >= PANE_RECOVERY_HEIGHT
-              ) {
+              if (notice?.reactivate && (input.connected ?? true) && hasRecoveryViewport(rect)) {
                 nodes.push({
                   target: { region: "workbench", paneId, control: "reactivate" },
-                  rect: {
-                    x: rect.x + rect.width - 14,
-                    y: rect.y + rect.height - 2,
-                    width: 12,
-                    height: 1,
-                  },
+                  rect: reactivateRect(rect),
                 });
               }
               return nodes;

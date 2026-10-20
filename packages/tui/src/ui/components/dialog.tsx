@@ -13,9 +13,9 @@ import {
 
 import type { ButtonProps } from "@/ui/controls/button";
 import { Button } from "@/ui/controls/button";
-import { useFocusScope } from "@/ui/focus-manager";
-import { focusRenderable, isEligibleFocusTarget } from "@/ui/focus-utils";
-import { activateModalFocusScope } from "@/ui/modal-focus";
+import { useFocusScope } from "@/ui/interaction/focus-manager";
+import { focusRenderable, isEligibleFocusTarget } from "@/ui/interaction/focus-utils";
+import { activateModalFocusScope } from "@/ui/interaction/modal-focus";
 import { Box } from "@/ui/primitives/box";
 import type { HStackProps } from "@/ui/primitives/hstack";
 import { HStack } from "@/ui/primitives/hstack";

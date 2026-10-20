@@ -1,7 +1,7 @@
 import type { BaseRenderable, CliRenderer, Renderable } from "@opentui/core";
 
 import type { FocusTarget } from "@/input/focus.ts";
-import { focusRenderable, isEligibleFocusTarget } from "@/ui/focus-utils.ts";
+import { focusRenderable, isEligibleFocusTarget } from "@/ui/interaction/focus-utils.ts";
 
 export function nativeFocusId(target: FocusTarget): string {
   return target.region === "workbench"
