@@ -10,6 +10,7 @@ import {
 import type { CommandId } from "@/input/command-router.ts";
 import { focusKey, type FocusNode, type FocusTarget, moveFocus } from "@/input/focus.ts";
 import { navigationContextKey } from "@/shell/context";
+import { OPERATIONAL_ERROR_DURATION } from "@/shell/errors";
 import { type CreateKind, genericRootIdForShellContext, type ShellModel } from "@/shell/model.ts";
 import type { DialogState, ShellAction, ShellRegion, ShellState } from "@/shell/state.ts";
 import { hasTerminalViewport } from "@/workbench/layout";
@@ -277,7 +278,7 @@ export async function runDurableCommand({
           contextKey: expected.navigationKey,
           operation: command.type,
           message: cause instanceof Error ? cause.message : String(cause),
-          expiresAt: now + 8000,
+          expiresAt: now + OPERATIONAL_ERROR_DURATION,
           origin: "direct",
         },
       });

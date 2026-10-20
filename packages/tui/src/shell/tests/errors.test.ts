@@ -2,11 +2,111 @@ import { expect, test } from "bun:test";
 
 import {
   clearOperationalError,
+  commandSourceKey,
+  discoverySourceKey,
+  entrySourceKey,
+  layoutSourceKey,
+  observeOperationalFailures,
   type OperationalError,
+  processSourceKey,
   reportOperationalError,
+  retainedErrorSources,
+  retainsErrorSource,
   statusPresentation,
 } from "@/shell/errors.ts";
 import { createInitialShellState, reduceShellState } from "@/shell/state.ts";
+import { snapshotFixture } from "@/tests/support/fixtures";
+
+test("error source identities keep command owners distinct from entry and background failures", () => {
+  expect(commandSourceKey({ type: "surface.ensure", itemId: "i" }, "navigator")).toBe(
+    "i:surface.ensure",
+  );
+  expect(commandSourceKey({ type: "process.restart", paneId: "p" }, "workbench")).toBe(
+    "p:process.restart",
+  );
+  expect(commandSourceKey({ type: "surface.selectTab", surfaceId: "s", tabId: "t" }, "tabs")).toBe(
+    "s:surface.selectTab",
+  );
+  expect(commandSourceKey({ type: "session.create", name: "New" }, "session")).toBe(
+    "session:session.create",
+  );
+  expect(entrySourceKey("item", "i")).toBe("item:i:entry");
+  expect(entrySourceKey("tab", "t")).toBe("tab:t:entry");
+  expect(entrySourceKey("pane", "p")).toBe("pane:p:entry");
+  expect(discoverySourceKey("i")).toBe("directory:i:discovery");
+  expect(processSourceKey("p")).toBe("pane:p:process");
+  expect(layoutSourceKey("p")).toBe("pane:p:layout");
+});
+
+test("failure projection preserves ordering, eight-second expiry and observation deduplication", () => {
+  const snapshot = snapshotFixture({
+    panes: [
+      {
+        id: "p",
+        surfaceId: "s",
+        title: "Shell",
+        kind: "terminal",
+        cwd: "/tmp",
+        restorePolicy: { type: "shell", executable: "/bin/sh", args: [] },
+        processStatus: "failed",
+        errorText: null,
+        startedAt: null,
+        exitedAt: null,
+      },
+    ],
+  });
+  const root = snapshot.items[0]!;
+  if (root.kind === "directory") {
+    root.data.discoveryError = "Git unavailable";
+  }
+  let sequence = 0;
+  const failures = observeOperationalFailures(snapshot, "Offline", 100, () => ++sequence);
+  expect(
+    failures.map(({ sourceKey, message, expiresAt }) => ({ sourceKey, message, expiresAt })),
+  ).toEqual([
+    { sourceKey: "pane:p:process", message: "Process failed", expiresAt: 8100 },
+    { sourceKey: "directory:root-1:discovery", message: "Git unavailable", expiresAt: 8100 },
+    { sourceKey: "daemon:connection", message: "Offline", expiresAt: 8100 },
+  ]);
+  expect(failures.map(({ requestId }) => requestId)).toEqual([2, 1, 3]);
+  const state = reduceShellState(createInitialShellState(), {
+    type: "sources.observe",
+    epoch: snapshot.epoch,
+    failures,
+    now: 100,
+  });
+  const later = reduceShellState(state, {
+    type: "sources.observe",
+    epoch: snapshot.epoch,
+    failures: observeOperationalFailures(snapshot, "Offline", 1000, () => ++sequence),
+    now: 1000,
+  });
+  expect(later.operationalError).toBe(state.operationalError);
+  expect(observeOperationalFailures(null, null, 100, () => ++sequence)).toEqual([]);
+});
+
+test("record failures expire with archived or removed ancestry, not transient form errors", () => {
+  const snapshot = snapshotFixture({
+    surfaces: [{ id: "s", itemId: "item-1", activeTabId: "t" }],
+    tabs: [
+      { id: "t", surfaceId: "s", title: "Tab", position: 0, layout: { type: "pane", paneId: "p" } },
+    ],
+  });
+  let retained = retainedErrorSources(snapshot);
+  expect(retainsErrorSource("item:item-1:entry", retained)).toBe(true);
+  expect(retainsErrorSource("tab:t:entry", retained)).toBe(true);
+  expect(retainsErrorSource("pane:p:layout", retained)).toBe(true);
+  expect(retainsErrorSource("pane:p:entry", retained)).toBe(false);
+  snapshot.tabs[0]!.layout = null;
+  snapshot.items[0]!.archived = true;
+  retained = retainedErrorSources(snapshot);
+  expect(retainsErrorSource("item:item-1:entry", retained)).toBe(false);
+  expect(retainsErrorSource("tab:t:entry", retained)).toBe(false);
+  expect(retainsErrorSource("pane:p:layout", retained)).toBe(false);
+  expect(retainsErrorSource("navigator:item.create", retained)).toBe(true);
+  snapshot.items = [];
+  expect(retainsErrorSource("root-1:surface.ensure", retainedErrorSources(snapshot))).toBe(false);
+});
 
 function failure(overrides: Partial<OperationalError> = {}): OperationalError {
   return {

@@ -31,7 +31,12 @@ import {
 } from "@/shell/commands.ts";
 import { navigationContextKey } from "@/shell/context";
 import { DialogOverlay } from "@/shell/dialog-overlay.tsx";
-import { type OperationalError, statusPresentation } from "@/shell/errors.ts";
+import {
+  commandSourceKey,
+  entrySourceKey,
+  OPERATIONAL_ERROR_DURATION,
+  statusPresentation,
+} from "@/shell/errors.ts";
 import { focusShellTarget, focusTargetFor, nativeFocusId } from "@/shell/focus.ts";
 import { Header } from "@/shell/header.tsx";
 import { calculateShellLayout } from "@/shell/layout.ts";
@@ -44,6 +49,7 @@ import {
   type ShellAction,
 } from "@/shell/state.ts";
 import { StatusBar, type StatusBarProps } from "@/shell/status-bar.tsx";
+import { useShellErrors } from "@/shell/use-shell-errors";
 import { useFocusedControlHints } from "@/ui/control-hints";
 import { useNativeFocus } from "@/ui/focus-manager.tsx";
 import { focusRenderable, isEligibleFocusTarget, moveFocus } from "@/ui/focus-utils";
@@ -230,56 +236,13 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
   snapshotRef.current = snapshot;
   const operationSequence = useRef(0);
   const sourceOperations = useRef(new Map<string, number>());
-  const [errorClock, setErrorClock] = useState(Date.now());
-  useEffect(() => {
-    if (!state.operationalError) {
-      return;
-    }
-    const timeout = setTimeout(
-      () => setErrorClock(Date.now()),
-      Math.max(0, state.operationalError.expiresAt - Date.now()),
-    );
-    return () => clearTimeout(timeout);
-  }, [state.operationalError]);
-  const missingPanes = useRef(new Map<string, string>());
-  useEffect(() => {
-    const now = Date.now();
-    const epoch = snapshot?.epoch ?? "connecting";
-    const failures: OperationalError[] = [];
-    function add(sourceKey: string, sourceLabel: string, operation: string, message: string): void {
-      failures.push({
-        sourceKey,
-        sourceLabel,
-        operation,
-        message,
-        epoch,
-        contextKey: "",
-        requestId: ++operationSequence.current,
-        expiresAt: now + 8000,
-        origin: "background",
-      });
-    }
-    for (const item of snapshot?.items ?? []) {
-      if (item.kind === "directory" && !item.archived && item.data.discoveryError) {
-        add(
-          `directory:${item.id}:discovery`,
-          item.title,
-          "Git discovery",
-          item.data.discoveryError,
-        );
-      }
-    }
-    for (const pane of snapshot?.panes ?? []) {
-      if (pane.processStatus === "failed") {
-        add(`pane:${pane.id}:process`, pane.title, "Process", pane.errorText ?? "Process failed");
-      }
-    }
-    if (workCraft.connectionError) {
-      add("daemon:connection", "Daemon", "Connection", workCraft.connectionError);
-    }
-    failures.sort((a, b) => b.sourceKey.localeCompare(a.sourceKey));
-    dispatch({ type: "sources.observe", epoch, failures, now });
-  }, [snapshot, workCraft.connectionError]);
+  const errors = useShellErrors({
+    snapshot,
+    connectionError: workCraft.connectionError,
+    error: state.operationalError,
+    dispatch,
+    nextRequestId: () => ++operationSequence.current,
+  });
 
   useEffect(() => {
     if (snapshot !== null) {
@@ -630,7 +593,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
           : "surfaceId" in command
             ? command.surfaceId
             : region;
-    const sourceKey = `${id}:${command.type}`;
+    const sourceKey = commandSourceKey(command, region);
     const requestId = ++operationSequence.current;
     const version = itemFocusVersion.current;
     const originTarget = focusTargetFor(renderer.currentFocusedRenderable);
@@ -1158,10 +1121,10 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
       const paneEntry = restartEntry || pendingTerminalEntry.kind === "split";
       const exactPaneEntry = paneEntry || pendingTerminalEntry.creation !== undefined;
       const sourceKey = paneEntry
-        ? `pane:${pendingTerminalEntry.paneId}:entry`
+        ? entrySourceKey("pane", pendingTerminalEntry.paneId!)
         : tabEntry
-          ? `tab:${pendingTerminalEntry.tabId}:entry`
-          : `item:${pendingTerminalEntry.itemId}:entry`;
+          ? entrySourceKey("tab", pendingTerminalEntry.tabId!)
+          : entrySourceKey("item", pendingTerminalEntry.itemId);
       const rememberedPaneId = state.lastPaneByTab[activeTab?.id ?? ""];
       const runningIds = (missingTarget ? [] : entryPaneIds).filter((id) =>
         snapshot.panes.some((pane) => pane.id === id && pane.processStatus === "running"),
@@ -1280,7 +1243,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
                 : undersized || terminal
                   ? "Terminal layout is too small"
                   : "No running terminal in the active tab",
-            expiresAt: now + 8000,
+            expiresAt: now + OPERATIONAL_ERROR_DURATION,
             origin: "direct",
           },
         });
@@ -1549,7 +1512,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     invalidMessage: routerState.invalidMessage,
     invalidMessageUntil: routerState.invalidMessageUntil,
     operationalError: state.operationalError,
-    now: Math.max(errorClock, Date.now()),
+    now: errors.now,
   });
   const mode = presentation.mode;
   const modalRoot = state.dialog === null ? null : getActiveModalFocusScope()?.root;
@@ -1699,26 +1662,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     tabCursorId: state.tabCursorId,
     failed: workbenchFailed,
     onSourceFailure: ({ paneId, message }: { paneId: string; message: string }) => {
-      if (missingPanes.current.get(paneId) === message) {
-        return;
-      }
-      missingPanes.current.set(paneId, message);
-      const now = Date.now();
-      dispatch({
-        type: "source.report",
-        now,
-        error: {
-          sourceKey: `pane:${paneId}:layout`,
-          sourceLabel: "Pane",
-          operation: "Layout",
-          epoch: snapshot?.epoch ?? "",
-          contextKey: model.navigationKey,
-          requestId: ++operationSequence.current,
-          message,
-          expiresAt: now + 8000,
-          origin: "background",
-        },
-      });
+      errors.reportMissingPane(paneId, message, model.navigationKey);
     },
     tabs,
     tabsFocused: state.dialog === null && focus.region === "tabs",

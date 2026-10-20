@@ -12,6 +12,8 @@ import {
   clearOperationalError,
   type OperationalError,
   reportOperationalError,
+  retainedErrorSources,
+  retainsErrorSource,
 } from "@/shell/errors.ts";
 import { DEFAULT_NAVIGATOR_WIDTH, resizeNavigatorWidth } from "@/shell/layout.ts";
 import type { CreateKind } from "@/shell/model.ts";
@@ -411,13 +413,9 @@ export function reconcileShellState(state: ShellState, snapshot: Snapshot): Shel
         ? null
         : state.dialog;
 
-  const sourceKeys = currentSourceKeys(snapshot);
+  const sourceKeys = retainedErrorSources(snapshot);
   function retainsSource(sourceKey: string): boolean {
-    return (
-      !/:(?:surface\.ensure|item\.setArchived|entry|discovery|pane\.split|process\.restart|tab\.create|surface\.selectTab|process|layout)$/.test(
-        sourceKey,
-      ) || sourceKeys.has(sourceKey)
-    );
+    return retainsErrorSource(sourceKey, sourceKeys);
   }
   return {
     ...scopedState,
@@ -448,51 +446,6 @@ export function reconcileShellState(state: ShellState, snapshot: Snapshot): Shel
       ),
     ),
   };
-}
-
-/** Record-owned failures stop existing with their source; transient form errors keep their lifetime. */
-function currentSourceKeys(snapshot: Snapshot): Set<string> {
-  const keys = new Set<string>();
-  const roots = new Set(
-    snapshot.items
-      .filter((item) => item.parentId === null && !item.archived)
-      .map((item) => item.id),
-  );
-  for (const item of snapshot.items) {
-    if (item.archived || (item.parentId !== null && !roots.has(item.parentId))) {
-      continue;
-    }
-    keys.add(`${item.id}:surface.ensure`);
-    keys.add(`${item.id}:item.setArchived`);
-    keys.add(`item:${item.id}:entry`);
-    keys.add(`directory:${item.id}:discovery`);
-  }
-  for (const pane of snapshot.panes) {
-    keys.add(`${pane.id}:process.restart`);
-    keys.add(`${pane.id}:pane.split`);
-    keys.add(`pane:${pane.id}:process`);
-  }
-  for (const surface of snapshot.surfaces) {
-    keys.add(`${surface.id}:tab.create`);
-    keys.add(`${surface.id}:surface.selectTab`);
-  }
-  for (const tab of snapshot.tabs) {
-    const surface = snapshot.surfaces.find((surface) => surface.id === tab.surfaceId);
-    if (surface && keys.has(`item:${surface.itemId}:entry`)) {
-      keys.add(`tab:${tab.id}:entry`);
-    }
-    for (const paneId of paneIds(tab.layout)) {
-      keys.add(`pane:${paneId}:layout`);
-      if (
-        surface &&
-        keys.has(`item:${surface.itemId}:entry`) &&
-        snapshot.panes.some((pane) => pane.id === paneId)
-      ) {
-        keys.add(`pane:${paneId}:entry`);
-      }
-    }
-  }
-  return keys;
 }
 
 function changeScope(
