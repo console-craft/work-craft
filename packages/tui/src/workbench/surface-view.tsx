@@ -9,6 +9,7 @@ import { Divider } from "@/ui/primitives/divider.tsx";
 import { Text } from "@/ui/primitives/text.tsx";
 import { useTheme } from "@/ui/theme-provider.tsx";
 import { paneIds, projectPaneLayout, terminalRect } from "@/workbench/layout.ts";
+import { selectedTab } from "@/workbench/model";
 import { paneNotice } from "@/workbench/pane-state.ts";
 import { TerminalPane } from "@/workbench/terminal-pane.tsx";
 
@@ -67,10 +68,10 @@ export function SurfaceView({
       previous.width === width && previous.height === height ? previous : { width, height },
     );
   }
-  const tabs = snapshot.tabs
-    .filter(({ surfaceId }) => surfaceId === surface.id)
-    .sort((a, b) => a.position - b.position);
-  const activeTab = tabs.find(({ id }) => id === surface.activeTabId);
+  const activeTab = selectedTab(
+    snapshot.tabs.filter(({ surfaceId }) => surfaceId === surface.id),
+    surface.activeTabId,
+  );
   useEffect(() => {
     for (const paneId of paneIds(activeTab?.layout ?? null)) {
       if (!snapshot.panes.some((pane) => pane.id === paneId)) {

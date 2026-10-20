@@ -9,6 +9,7 @@ import {
 
 import type { CommandId } from "@/input/command-router.ts";
 import { focusKey, type FocusNode, type FocusTarget, moveFocus } from "@/input/focus.ts";
+import { navigationContextKey } from "@/shell/context";
 import { type CreateKind, genericRootIdForShellContext, type ShellModel } from "@/shell/model.ts";
 import type { DialogState, ShellAction, ShellRegion, ShellState } from "@/shell/state.ts";
 
@@ -288,20 +289,6 @@ function adjacent<T>(values: readonly T[], index: number, offset: -1 | 1): T | u
   return index < 0 ? undefined : values[index + offset];
 }
 
-function navigationContextKey(
-  snapshot: Snapshot | null,
-  state: ShellState,
-  navigatorKey: string | null,
-): string {
-  return JSON.stringify([
-    snapshot?.epoch ?? null,
-    state.activeSessionId,
-    state.activeWorkspaceId,
-    state.activeCategory,
-    navigatorKey,
-  ]);
-}
-
 function commandRegion(focus: FocusTarget): ShellRegion {
   return focus.region;
 }
@@ -341,7 +328,7 @@ export async function executeCommand({
     dispatch({ type: "navigator.activate", key: entry.key });
     {
       const result = await run(durableCommands.openItem(entry.id), "navigator", {
-        navigationKey: navigationContextKey(snapshot, state, entry.key),
+        navigationKey: navigationContextKey(snapshot?.epoch ?? null, state, entry.key),
         dialog: state.dialog,
       });
       if (result !== undefined) {

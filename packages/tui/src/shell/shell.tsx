@@ -17,6 +17,7 @@ import {
 } from "@/input/command-router.ts";
 import { focusKey, type FocusTarget } from "@/input/focus.ts";
 import { CategoryRail } from "@/navigation/category-rail.tsx";
+import { navigatorItemKey } from "@/navigation/model";
 import { Navigator } from "@/navigation/navigator.tsx";
 import {
   availableCommands,
@@ -28,6 +29,7 @@ import {
   runDurableCommand,
   submitCreate,
 } from "@/shell/commands.ts";
+import { navigationContextKey } from "@/shell/context";
 import { DialogOverlay } from "@/shell/dialog-overlay.tsx";
 import { type OperationalError, statusPresentation } from "@/shell/errors.ts";
 import { focusShellTarget, focusTargetFor, nativeFocusId } from "@/shell/focus.ts";
@@ -1099,13 +1101,11 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
         ["root", "item"].some(
           (prefix) =>
             pendingTerminalEntry.navigationKey ===
-            JSON.stringify([
+            navigationContextKey(
               snapshot.epoch,
-              liveState.current.activeSessionId,
-              liveState.current.activeWorkspaceId,
-              liveState.current.activeCategory,
+              liveState.current,
               `${prefix}:${pendingTerminalEntry.itemId}`,
-            ]),
+            ),
         );
       if (
         snapshot === null ||
@@ -1496,7 +1496,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
         }
         dispatch({
           type: "navigator.activate",
-          key: `${parentId === null ? "root" : "item"}:${itemId}`,
+          key: navigatorItemKey({ id: itemId, parentId }),
           pending: { epoch, revision },
         });
         const nextModel = deriveShellModel({

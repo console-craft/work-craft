@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 
+import { navigatorItemKey, sessionsInOrder } from "@/navigation/model";
 import {
   categoriesForWorkspace,
   navigatorEntries,
@@ -7,6 +8,20 @@ import {
   workspacesForSession,
 } from "@/navigation/model.ts";
 import { snapshotFixture } from "@/tests/support/fixtures.ts";
+
+test("navigator keys retain root and child identity; sessions order ties without mutation", () => {
+  expect(navigatorItemKey({ id: "child", parentId: "root" })).toBe("item:child");
+  expect(navigatorItemKey({ id: "root", parentId: null })).toBe("root:root");
+  const snapshot = snapshotFixture({
+    sessions: [
+      { id: "b", name: "B", position: 0 },
+      { id: "a", name: "A", position: 0 },
+    ],
+  });
+  Object.freeze(snapshot.sessions);
+  expect(sessionsInOrder(snapshot).map(({ id }) => id)).toEqual(["a", "b"]);
+  expect(snapshot.sessions.map(({ id }) => id)).toEqual(["b", "a"]);
+});
 
 test("projects and visible items are projected only for one workspace category", () => {
   const entries = navigatorEntries(

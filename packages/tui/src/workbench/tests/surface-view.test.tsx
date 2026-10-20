@@ -16,6 +16,32 @@ import { Workbench } from "@/workbench/workbench.tsx";
 
 extend({ terminal: EmbeddedTerminalRenderable });
 
+test("a missing authoritative tab renders empty rather than entering a fallback terminal", async () => {
+  const snapshot = surfaceSnapshot();
+  const setup = await testRender(
+    <SurfaceView
+      {...recoveryProps}
+      snapshot={snapshot}
+      surface={{ ...snapshot.surfaces[0]!, activeTabId: "missing" }}
+      stream={null}
+      terminals={new Map()}
+      focusedPaneId={null}
+      workbenchFocused={false}
+      undersized={false}
+      onFocusPane={() => {}}
+      onTerminalReady={() => {}}
+    />,
+    { width: 80, height: 24 },
+  );
+  try {
+    await setup.flush();
+    expect(setup.captureCharFrame()).toContain("No terminal panes");
+    expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBeUndefined();
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
 const recoveryProps = {
   connected: true,
   reactivatingPaneIds: new Set<string>(),

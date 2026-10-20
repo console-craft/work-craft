@@ -8,6 +8,25 @@ import {
 import { createInitialShellState, reconcileShellState } from "@/shell/state.ts";
 import { snapshotFixture } from "@/tests/support/fixtures.ts";
 
+test("shell presentation falls back to the first ordered tab when selection is missing", () => {
+  const snapshot = snapshotFixture({
+    surfaces: [{ id: "surface", itemId: "item-1", activeTabId: "missing" }],
+    tabs: [
+      { id: "b", surfaceId: "surface", position: 0, title: "B", layout: null },
+      { id: "a", surfaceId: "surface", position: 0, title: "A", layout: null },
+    ],
+  });
+  const state = {
+    ...createInitialShellState(),
+    activeSessionId: "session-work",
+    activeWorkspaceId: "workspace-shared",
+    activeCategory: "implementation" as const,
+    activeNavigatorKey: "item:item-1",
+  };
+  expect(deriveShellModel({ snapshot, state }).activeTab?.id).toBe("a");
+  expect(reconcileShellState(state, snapshot).tabCursorId).toBe("a");
+});
+
 test("filtering or archiving an active item does not erase its surface", () => {
   const snapshot = snapshotFixture({
     surfaces: [{ id: "surface", itemId: "item-1", activeTabId: null }],

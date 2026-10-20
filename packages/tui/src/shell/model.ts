@@ -5,10 +5,14 @@ import {
   categoriesForWorkspace,
   navigatorEntries,
   type NavigatorEntry,
+  navigatorItemKey,
   rootIdForEntry,
+  sessionsInOrder,
   workspacesForSession,
 } from "@/navigation/model.ts";
+import { completionContextKey, navigationContextKey } from "@/shell/context";
 import { paneIds } from "@/workbench/layout.ts";
+import { selectedTab, surfaceForItem, tabsForSurface } from "@/workbench/model";
 
 export type CreateKind = "session" | "workspace" | "directory" | "generic-root" | "generic-child";
 
@@ -65,9 +69,7 @@ export function deriveShellModel(input: {
   state: ShellModelState;
 }): ShellModel {
   const { snapshot, state } = input;
-  const sessions = [...(snapshot?.sessions ?? [])].sort(
-    (a, b) => a.position - b.position || a.id.localeCompare(b.id),
-  );
+  const sessions = snapshot === null ? [] : sessionsInOrder(snapshot);
   const activeSession = sessions.find(({ id }) => id === state.activeSessionId);
   const workspaces =
     snapshot === null || state.activeSessionId === null
@@ -98,7 +100,7 @@ export function deriveShellModel(input: {
         );
   const activeItem = snapshot?.items.find(
     (item) =>
-      `${item.parentId === null ? "root" : "item"}:${item.id}` === state.activeNavigatorKey &&
+      navigatorItemKey(item) === state.activeNavigatorKey &&
       item.workspaceId === state.activeWorkspaceId &&
       item.category === state.activeCategory,
   );
@@ -106,22 +108,18 @@ export function deriveShellModel(input: {
   const surface =
     snapshot === null || activeItem === undefined
       ? undefined
-      : snapshot.surfaces.find(({ itemId }) => itemId === activeItem.id);
-  const tabs = [...(snapshot?.tabs ?? [])]
-    .filter(({ surfaceId }) => surfaceId === surface?.id)
-    .sort((a, b) => a.position - b.position || a.id.localeCompare(b.id));
-  const activeTab = tabs.find(({ id }) => id === surface?.activeTabId) ?? tabs[0];
-  const navigationKey = JSON.stringify([
+      : surfaceForItem(snapshot, activeItem.id);
+  const tabs = snapshot === null ? [] : tabsForSurface(snapshot, surface?.id);
+  const activeTab = selectedTab(tabs, surface?.activeTabId) ?? tabs[0];
+  const navigationKey = navigationContextKey(
     snapshot?.epoch ?? null,
-    state.activeSessionId,
-    state.activeWorkspaceId,
-    state.activeCategory,
+    state,
     state.activeNavigatorKey,
-  ]);
+  );
 
   return {
     navigationKey,
-    completionKey: JSON.stringify([navigationKey, surface?.id ?? null, activeTab?.id ?? null]),
+    completionKey: completionContextKey(navigationKey, surface?.id ?? null, activeTab?.id ?? null),
     sessions,
     activeSession,
     workspaces,
@@ -191,9 +189,7 @@ export function genericRootIdForShellContext(
       entry.key ===
       (state.focus.region === "navigator" ? state.navigatorCursorKey : state.activeNavigatorKey),
   );
-  const active = snapshot.items.find(
-    (item) => `${item.parentId === null ? "root" : "item"}:${item.id}` === state.activeNavigatorKey,
-  );
+  const active = snapshot.items.find((item) => navigatorItemKey(item) === state.activeNavigatorKey);
   const rootId =
     state.focus.region === "navigator" ? rootIdForEntry(entry) : (active?.parentId ?? active?.id);
   return snapshot.items.some(
