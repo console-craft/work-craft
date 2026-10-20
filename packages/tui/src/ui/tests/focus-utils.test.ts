@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { BoxRenderable } from "@opentui/core";
+import { BoxRenderable, RenderableEvents } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 
 import {
@@ -9,8 +9,46 @@ import {
   isEligibleFocusTarget,
   isWithinScope,
   moveFocus,
+  observeControlFocus,
 } from "@/ui/focus-utils";
 import { setDisabled } from "@/ui/utils";
+
+test("control focus observation initializes native focus and releases replaced-node listeners", async () => {
+  const { renderer } = await createTestRenderer({ width: 40, height: 10 });
+  const first = new BoxRenderable(renderer, { id: "first", focusable: true });
+  const second = new BoxRenderable(renderer, { id: "second", focusable: true });
+  renderer.root.add(first);
+  renderer.root.add(second);
+  const firstValues: boolean[] = [];
+  const secondValues: boolean[] = [];
+  const focusedCount = first.listenerCount(RenderableEvents.FOCUSED);
+  const blurredCount = first.listenerCount(RenderableEvents.BLURRED);
+  first.focus();
+  let release = observeControlFocus(first, (value) => firstValues.push(value));
+  try {
+    expect(firstValues).toEqual([true]);
+    first.blur();
+    first.focus();
+    expect(firstValues).toEqual([true, false, true]);
+    expect(first.listenerCount(RenderableEvents.FOCUSED)).toBe(focusedCount + 1);
+    expect(first.listenerCount(RenderableEvents.BLURRED)).toBe(blurredCount + 1);
+    release();
+    expect(first.listenerCount(RenderableEvents.FOCUSED)).toBe(focusedCount);
+    expect(first.listenerCount(RenderableEvents.BLURRED)).toBe(blurredCount);
+    release = observeControlFocus(second, (value) => secondValues.push(value));
+    second.focus();
+    first.focus();
+    expect(firstValues).toEqual([true, false, true]);
+    expect(secondValues).toEqual([false, true, false]);
+    release();
+    release = observeControlFocus(first, (value) => firstValues.push(value));
+    expect(first.listenerCount(RenderableEvents.FOCUSED)).toBe(focusedCount + 1);
+    expect(first.listenerCount(RenderableEvents.BLURRED)).toBe(blurredCount + 1);
+  } finally {
+    release();
+    renderer.destroy();
+  }
+});
 
 test("scope repair preserves focus, skips ineligible controls, and never escapes", async () => {
   const { renderer } = await createTestRenderer({ width: 40, height: 10 });

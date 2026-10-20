@@ -3,7 +3,24 @@ import {
   type CliRenderer,
   isRenderable,
   type Renderable,
+  RenderableEvents,
 } from "@opentui/core";
+
+/** Subscribe to a concrete native node; ref owners release this before binding its replacement. */
+export function observeControlFocus(
+  node: Renderable,
+  onChange: (focused: boolean) => void,
+): () => void {
+  onChange(node.focused);
+  const focus = () => onChange(true);
+  const blur = () => onChange(false);
+  node.on(RenderableEvents.FOCUSED, focus);
+  node.on(RenderableEvents.BLURRED, blur);
+  return () => {
+    node.off(RenderableEvents.FOCUSED, focus);
+    node.off(RenderableEvents.BLURRED, blur);
+  };
+}
 
 export type FocusScopeController = {
   repair(): Renderable | null;

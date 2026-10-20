@@ -3,15 +3,15 @@ import {
   type KeyEvent,
   MouseButton,
   type MouseEvent as OpenTUIMouseEvent,
-  RenderableEvents,
 } from "@opentui/core";
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 
 import { useControlHints } from "@/ui/control-hints";
+import { observeControlFocus } from "@/ui/focus-utils";
 import { symbols } from "@/ui/icons/symbols";
 import { HStack, type HStackProps } from "@/ui/primitives/hstack";
 import { Text, type TextProps } from "@/ui/primitives/text";
-import { assignRef } from "@/ui/utils";
+import { assignRef, setDisabled } from "@/ui/utils";
 
 const toggleAction = { name: "space", hint: { keys: "Space", label: "Toggle" } };
 
@@ -50,17 +50,10 @@ export function Checkbox({
 
       if (!node) return;
 
-      setIsFocused(node.focused);
-
-      const handleFocus = () => setIsFocused(true);
-      const handleBlur = () => setIsFocused(false);
-
-      node.on(RenderableEvents.FOCUSED, handleFocus);
-      node.on(RenderableEvents.BLURRED, handleBlur);
+      const releaseFocus = observeControlFocus(node, setIsFocused);
 
       return () => {
-        node.off(RenderableEvents.FOCUSED, handleFocus);
-        node.off(RenderableEvents.BLURRED, handleBlur);
+        releaseFocus();
 
         if (checkboxRef.current === node) {
           checkboxRef.current = null;
@@ -81,9 +74,7 @@ export function Checkbox({
 
     if (!checkbox?.focused) return;
 
-    checkbox.focusable = true;
-    checkbox.blur();
-    checkbox.focusable = false;
+    setDisabled(checkbox, true);
   }, [disabled]);
 
   const symbol = indeterminate

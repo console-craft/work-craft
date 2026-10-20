@@ -22,7 +22,7 @@ import { useControlHints } from "@/ui/control-hints";
 import { Box, type BoxProps } from "@/ui/primitives/box";
 import { HStack, type HStackProps } from "@/ui/primitives/hstack";
 import { Text, type TextProps } from "@/ui/primitives/text";
-import { assignRef, isTextContent } from "@/ui/utils";
+import { assignRef, isTextContent, setDisabled } from "@/ui/utils";
 
 type ToggleRegistration = {
   value: string;
@@ -260,9 +260,7 @@ export function ToggleGroup(props: ToggleGroupProps) {
 
     if (!group?.focused) return;
 
-    group.focusable = true;
-    group.blur();
-    group.focusable = false;
+    setDisabled(group, true);
   }, [disabled]);
 
   function moveActive(direction: -1 | 1) {
@@ -474,9 +472,7 @@ export function Toggle({
 
     if (!toggle?.focused) return;
 
-    toggle.focusable = true;
-    toggle.blur();
-    toggle.focusable = false;
+    setDisabled(toggle, true);
   }, [isDisabled, isGrouped]);
 
   const backgroundColor = isDisabled
