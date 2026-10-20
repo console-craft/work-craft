@@ -17,26 +17,19 @@ import {
 } from "@/input/command-router.ts";
 import { focusKey, type FocusTarget } from "@/input/focus.ts";
 import { CategoryRail } from "@/navigation/category-rail.tsx";
-import { navigatorItemKey } from "@/navigation/model";
 import { Navigator } from "@/navigation/navigator.tsx";
 import {
   availableCommands,
   type CompletionContext,
   completionContextFor,
-  type DurableCommandResult,
   executeCommand,
   type ExecuteCommandInput,
   runDurableCommand,
   submitCreate,
 } from "@/shell/commands.ts";
-import { navigationContextKey } from "@/shell/context";
+import type { ShellEnvironment } from "@/shell/context";
 import { DialogOverlay } from "@/shell/dialog-overlay.tsx";
-import {
-  commandSourceKey,
-  entrySourceKey,
-  OPERATIONAL_ERROR_DURATION,
-  statusPresentation,
-} from "@/shell/errors.ts";
+import { commandSourceKey, statusPresentation } from "@/shell/errors.ts";
 import { focusShellTarget, focusTargetFor, nativeFocusId } from "@/shell/focus.ts";
 import { Header } from "@/shell/header.tsx";
 import { calculateShellLayout } from "@/shell/layout.ts";
@@ -50,6 +43,12 @@ import {
 } from "@/shell/state.ts";
 import { StatusBar, type StatusBarProps } from "@/shell/status-bar.tsx";
 import { useShellErrors } from "@/shell/use-shell-errors";
+import {
+  type PaneEntryHandle,
+  type TabEntryHandle,
+  useTerminalEntry,
+  useTerminalEntryCompletion,
+} from "@/shell/use-terminal-entry";
 import { useFocusedControlHints } from "@/ui/control-hints";
 import { useNativeFocus } from "@/ui/focus-manager.tsx";
 import { focusRenderable, isEligibleFocusTarget, moveFocus } from "@/ui/focus-utils";
@@ -68,41 +67,6 @@ import { Workbench } from "@/workbench/workbench.tsx";
 
 export type WorkCraftShellProps = { workCraft: WorkCraftState };
 
-type PendingTerminalEntry = {
-  kind: "item" | "tab" | "restart" | "split";
-  itemId: string;
-  tabId?: string;
-  paneId?: string;
-  epoch: string;
-  revision: number | null;
-  navigationKey: string;
-  origin: Renderable;
-  version: number;
-  requestId: number;
-  allowReactivate?: boolean;
-  creation?: {
-    sourceTabId: string | undefined;
-    existingTabIds: readonly string[];
-    selectionAdvanced?: boolean;
-  };
-};
-
-function canProjectTabEntry(
-  entry: PendingTerminalEntry,
-  snapshot: WorkCraftState["snapshot"],
-): boolean {
-  const selected = snapshot?.surfaces.find(
-    (surface) => surface.itemId === entry.itemId,
-  )?.activeTabId;
-  if (snapshot === null || selected == null) {
-    return false;
-  }
-  if (entry.creation && (entry.revision === null || snapshot.revision < entry.revision)) {
-    return !entry.creation.existingTabIds.includes(selected);
-  }
-  return selected === entry.tabId;
-}
-
 export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
   const renderer = useRenderer();
   const nativeFocus = useNativeFocus();
@@ -119,13 +83,6 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
   const presentationGeneration = useRef(0);
   const drawerReturn = useRef<Renderable | null>(null);
   const guardReturn = useRef<Renderable | null>(null);
-  const entryClosing = useRef(false);
-  const successfulFormCloses = useRef(new WeakSet<NonNullable<DialogState>>());
-  // Only this close commit may transfer the submitted input's origin to its return endpoint.
-  const formCloseOwner = useRef<{
-    entry: PendingTerminalEntry;
-    target: Renderable | null;
-  } | null>(null);
   const lastNavigatorControl = useRef<"filter" | "results">("results");
   function dispatch(action: ShellAction): void {
     const previous = liveState.current;
@@ -161,70 +118,26 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     routerStateRef.current = next;
     setRouterState(next);
   }
-  const [pendingTerminalEntry, setPendingTerminalEntry] = useState<PendingTerminalEntry | null>(
-    null,
-  );
   const [reactivatingPaneIds, setReactivatingPaneIds] = useState<ReadonlySet<string>>(new Set());
   const reactivatingPaneIdsRef = useRef(
     new Map<string, { epoch: string; revision: number | null }>(),
   );
-  const itemFocusVersion = useRef(0);
-  const tabEntryOwner = useRef<PendingTerminalEntry | null>(null);
-  const latestTabRequest = useRef<{
-    tabId: string;
-    promise: Promise<DurableCommandResult | undefined>;
-  } | null>(null);
-  const projectingTabEntry = useRef(false);
-  useLayoutEffect(() => {
-    if (pendingTerminalEntry === null) {
-      tabEntryOwner.current = null;
-    }
-  }, [pendingTerminalEntry]);
-  useLayoutEffect(() => {
-    // Even buffered leave-and-return movement permanently cancels an activation handoff.
-    const cancelItemFocus = (_target?: Renderable | null, previous?: Renderable | null) => {
-      const target = focusTargetFor(renderer.currentFocusedRenderable);
-      if (target?.region === "navigator") {
-        lastNavigatorControl.current = target.control ?? "results";
+  const entry = useTerminalEntry({
+    read: readEnvironment,
+    rendered: () => environment,
+    dispatch,
+    nextRequestId: () => ++operationSequence.current,
+    run: (...args) => runCommand(...args),
+    setFocus,
+    canReceiveInput: canReceiveWorkbenchInput,
+    canReactivate,
+    onNativeFocus(target) {
+      const focus = focusTargetFor(target);
+      if (focus?.region === "navigator") {
+        lastNavigatorControl.current = focus.control ?? "results";
       }
-      const tabEntry = tabEntryOwner.current;
-      if (tabEntry?.version === itemFocusVersion.current) {
-        // Only our origin becoming ineligible and our own tabs projection are not user movement.
-        if (
-          (renderer.currentFocusedRenderable === null &&
-            previous === tabEntry.origin &&
-            !isEligibleFocusTarget(tabEntry.origin, renderer.root) &&
-            canProjectTabEntry(tabEntry, snapshotRef.current)) ||
-          (projectingTabEntry.current && renderer.currentFocusedRenderable === tabEntry.origin)
-        ) {
-          return;
-        }
-      }
-      if (
-        formCloseOwner.current?.entry.version === itemFocusVersion.current &&
-        liveState.current.dialog === null &&
-        (renderer.currentFocusedRenderable === null ||
-          renderer.currentFocusedRenderable === formCloseOwner.current.target)
-      ) {
-        return;
-      }
-      if (
-        entryClosing.current &&
-        (renderer.currentFocusedRenderable === null ||
-          renderer.currentFocusedRenderable?.id === "region:category")
-      ) {
-        return;
-      }
-      itemFocusVersion.current += 1;
-      latestTabRequest.current = null;
-    };
-    renderer.on(CliRenderEvents.FOCUSED_RENDERABLE, cancelItemFocus);
-    return () => {
-      cancelItemFocus();
-      renderer.off(CliRenderEvents.FOCUSED_RENDERABLE, cancelItemFocus);
-    };
-  }, [renderer]);
-  const terminalRefs = useRef(new Map<string, EmbeddedTerminalRenderable>());
+    },
+  });
   const completionContextRef = useRef<CompletionContext>({
     key: "",
     navigationKey: "",
@@ -308,13 +221,40 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
   });
   const { focusNodes, navigatorMode, navigatorVisible, navigatorWidth, resizeBlocked, undersized } =
     shellLayout;
+  const environment: ShellEnvironment = {
+    snapshot,
+    state,
+    model,
+    layout: shellLayout,
+    connected: workCraft.status === "connected",
+  };
+  function readEnvironment(): ShellEnvironment {
+    const snapshot = snapshotRef.current;
+    const state = liveState.current;
+    const model = deriveShellModel({ snapshot, state });
+    return {
+      snapshot,
+      state,
+      model,
+      connected: workCraft.status === "connected",
+      layout: calculateShellLayout({
+        terminalWidth: renderer.width,
+        terminalHeight: renderer.height,
+        navigatorOpen: state.navigatorOpen,
+        preferredNavigatorWidth: state.navigatorWidth,
+        paneLayout: model.activeTab?.layout ?? null,
+        panes: snapshot?.panes,
+        connected: workCraft.status === "connected",
+      }),
+    };
+  }
   function canReceiveWorkbenchInput(paneId?: string): boolean {
     const local = liveState.current;
     if (
       renderer.width < 80 ||
       local.dialog !== null ||
       (renderer.width < 120 && local.navigatorOpen) ||
-      entryClosing.current
+      entry.isClosingDrawer()
     ) {
       return false;
     }
@@ -388,9 +328,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     const onResize = () => {
       if (renderer.width < 80) {
         guardReturn.current ??= renderer.currentFocusedRenderable;
-        itemFocusVersion.current += 1;
-        setPendingTerminalEntry(null);
-        entryClosing.current = false;
+        entry.cancelInput();
         updateRouterState({ ...routerStateRef.current, leaderStartedAt: null });
         renderer.currentFocusedRenderable?.blur();
       }
@@ -416,7 +354,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
       }
     } else if (navigatorMode === "drawer" && previous !== "drawer" && state.dialog === null) {
       focusShellTarget(renderer, { region: "navigator" });
-    } else if (previous === "drawer" && navigatorMode === "hidden" && !entryClosing.current) {
+    } else if (previous === "drawer" && navigatorMode === "hidden" && !entry.isClosingDrawer()) {
       const target = drawerReturn.current;
       const generation = presentationGeneration.current;
       queueMicrotask(() => {
@@ -442,20 +380,14 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
       !navigatorVisible &&
       state.focus.region === "navigator" &&
       liveState.current.focus.region === "navigator" &&
-      !entryClosing.current
+      !entry.isClosingDrawer()
     ) {
       dispatch({ type: "focus.set", focus: { region: "category" } });
     }
   }, [navigatorVisible, state.focus.region]);
 
   const { focus: resolvedFocus, focusedPaneId } = resolveShellFocus({
-    focus:
-      tabEntryOwner.current?.version === itemFocusVersion.current &&
-      tabEntryOwner.current.tabId !== undefined &&
-      surface?.activeTabId === tabEntryOwner.current.tabId &&
-      activeTab?.id !== tabEntryOwner.current.tabId
-        ? { region: "tabs" }
-        : state.focus,
+    focus: entry.focusFor(model, state.focus),
     rememberedPaneId: state.lastPaneByTab[activeTab?.id ?? ""] ?? null,
     paneIds: currentPaneIds,
     runningPaneIds: currentPaneIds.filter((id) =>
@@ -474,7 +406,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
         !(
           resolvedFocus.control === "reactivate"
             ? renderer.root.findDescendantById(nativeFocusId(resolvedFocus))
-            : terminalRefs.current.get(resolvedFocus.paneId)
+            : entry.terminal(resolvedFocus.paneId)
         )?.focusable));
   const focus =
     state.dialog === null && !transientWorkbenchProjection
@@ -491,28 +423,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
         (resolvedFocus.region === "workbench" || resolvedFocus.region === "tabs")
       )
     ) {
-      const owner = formCloseOwner.current;
-      if (owner?.entry.version === itemFocusVersion.current) {
-        owner.target = renderer.root.findDescendantById(nativeFocusId(resolvedFocus)) ?? null;
-      }
-      const tabEntry = tabEntryOwner.current;
-      const projectTab =
-        tabEntry?.version === itemFocusVersion.current &&
-        canProjectTabEntry(tabEntry, snapshot) &&
-        resolvedFocus.region === "tabs" &&
-        (renderer.currentFocusedRenderable === tabEntry.origin ||
-          (renderer.currentFocusedRenderable === null &&
-            !isEligibleFocusTarget(tabEntry.origin, renderer.root)));
-      if (projectTab) {
-        tabEntry.origin = renderer.root.findDescendantById("region:tabs")!;
-      }
-      projectingTabEntry.current = resolvedFocus.region === "tabs";
-      focusShellTarget(renderer, resolvedFocus);
-      projectingTabEntry.current = false;
-      if (owner?.entry.version === itemFocusVersion.current && renderer.currentFocusedRenderable) {
-        owner.entry.origin = renderer.currentFocusedRenderable;
-      }
-      formCloseOwner.current = null;
+      entry.projectFocus(resolvedFocus, () => focusShellTarget(renderer, resolvedFocus));
     }
   }, [renderer, resolvedFocusKey, dialogKey, resizeBlocked]);
 
@@ -552,11 +463,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
   }, [snapshot, workCraft.status]);
 
   useLayoutEffect(() => {
-    latestTabRequest.current = null;
-    if (workCraft.status !== "connected") {
-      itemFocusVersion.current += 1;
-      setPendingTerminalEntry(null);
-    }
+    entry.contextChanged(workCraft.status === "connected");
   }, [completionContext.navigationKey, dialogKey, workCraft.status]);
 
   useLayoutEffect(() => {
@@ -578,9 +485,6 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     region,
     expected = completionContextRef.current,
   ) => {
-    if (command.type === "surface.selectTab") {
-      latestTabRequest.current = null;
-    }
     if (command.type === "surface.ensure" && expected.key === undefined) {
       // Activation owns this navigation change before React commits its reducer action.
       completionContextRef.current = expected;
@@ -595,19 +499,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
             : region;
     const sourceKey = commandSourceKey(command, region);
     const requestId = ++operationSequence.current;
-    const version = itemFocusVersion.current;
-    const originTarget = focusTargetFor(renderer.currentFocusedRenderable);
-    const guardsEntry =
-      command.type === "surface.ensure" ||
-      command.type === "directory.register" ||
-      command.type === "item.create" ||
-      command.type === "process.restart" ||
-      command.type === "pane.split" ||
-      command.type === "tab.create" ||
-      (command.type === "surface.selectTab" &&
-        originTarget?.region === "workbench" &&
-        !originTarget.control &&
-        tabEntryOwner.current?.version === version);
+    const entryIsCurrent = entry.commandStarted(command);
     sourceOperations.current.set(sourceKey, requestId);
     const label =
       snapshot?.items.find((item) => item.id === id)?.title ??
@@ -640,9 +532,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
         label,
         requestId,
         epoch: snapshot?.epoch ?? "",
-        isCurrent: () =>
-          sourceOperations.current.get(sourceKey) === requestId &&
-          (!guardsEntry || itemFocusVersion.current === version),
+        isCurrent: () => sourceOperations.current.get(sourceKey) === requestId && entryIsCurrent(),
       },
     });
   };
@@ -740,10 +630,10 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
       // Transfer our own origin before pending state disables the initiating action.
       setFocus({ region: "tabs" });
     }
-    const onPaneRestarted = restartPaneId
-      ? focusOnPaneCommand("restart", restartPaneId)
+    const restartEntry = restartPaneId
+      ? entry.startPaneCommand("restart", restartPaneId)
       : undefined;
-    let entryVersion = restartPaneId ? itemFocusVersion.current : null;
+    let commandEntry: PaneEntryHandle | TabEntryHandle | undefined = restartEntry;
     const restart = restartPaneId
       ? {
           epoch: snapshotRef.current?.epoch ?? "",
@@ -766,17 +656,17 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
       dispatch,
       setFocus,
       onItemOpened: undefined,
-      onTabSelectionStarted: focusOnTabSelectionStarted,
+      onTabSelectionStarted: (id) => entry.startTabSelection(id).complete,
       onTabCreateStarted: () => {
-        const complete = focusOnTabSelectionStarted(undefined, false, true);
-        entryVersion = itemFocusVersion.current;
-        return (tabId, paneId, revision) => complete(revision, tabId, paneId);
+        const handle = entry.startTabSelection(undefined, false, true);
+        commandEntry = handle;
+        return (tabId, paneId, revision) => handle.complete(revision, tabId, paneId);
       },
-      onPaneRestarted,
+      onPaneRestarted: restartEntry?.complete,
       onPaneSplitStarted: () => {
-        const complete = focusOnPaneCommand("split");
-        entryVersion = itemFocusVersion.current;
-        return complete;
+        const handle = entry.startPaneCommand("split");
+        commandEntry = handle;
+        return handle.complete;
       },
       run: runCommand,
       reload: workCraft.reload,
@@ -793,216 +683,8 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
           }
         }
       }
-      if (
-        tabEntryOwner.current?.version === entryVersion &&
-        tabEntryOwner.current.revision === null
-      ) {
-        tabEntryOwner.current = null;
-      }
-      setPendingTerminalEntry((entry) =>
-        entry?.version === entryVersion && entry.revision === null ? null : entry,
-      );
+      commandEntry?.finish();
     });
-  }
-
-  function focusOnItemOpen(): ExecuteCommandInput["onItemOpened"] {
-    const origin = renderer.currentFocusedRenderable;
-    const epoch = snapshot?.epoch;
-    const version = ++itemFocusVersion.current;
-    const requestId = ++operationSequence.current;
-    setPendingTerminalEntry(null);
-    return (itemId, revision) => {
-      if (
-        origin !== null &&
-        epoch !== undefined &&
-        !renderer.isDestroyed &&
-        itemFocusVersion.current === version &&
-        renderer.currentFocusedRenderable === origin
-      ) {
-        setPendingTerminalEntry({
-          kind: "item",
-          itemId,
-          epoch,
-          revision,
-          origin,
-          version,
-          requestId,
-          navigationKey: deriveShellModel({
-            snapshot: snapshotRef.current,
-            state: liveState.current,
-          }).navigationKey,
-        });
-      }
-    };
-  }
-
-  function focusOnTabSelectionStarted(
-    tabId: string | undefined,
-    fromStrip = false,
-    creating = false,
-  ): (revision: number, tabId?: string, paneId?: string) => void {
-    const origin = renderer.currentFocusedRenderable;
-    const originTarget = focusTargetFor(origin);
-    const currentModel = deriveShellModel({
-      snapshot: snapshotRef.current,
-      state: liveState.current,
-    });
-    if (
-      !origin ||
-      (!creating &&
-        (originTarget?.region !== "workbench" || originTarget.control !== undefined) &&
-        !(fromStrip && originTarget?.region === "tabs")) ||
-      !snapshot ||
-      !currentModel.activeItem ||
-      !canReceiveWorkbenchInput() ||
-      !canEnterTab()
-    ) {
-      return () => {};
-    }
-    const entry: PendingTerminalEntry = {
-      kind: "tab",
-      itemId: currentModel.activeItem.id,
-      tabId,
-      epoch: snapshot.epoch,
-      revision: null,
-      navigationKey: currentModel.navigationKey,
-      origin,
-      version: ++itemFocusVersion.current,
-      requestId: ++operationSequence.current,
-      allowReactivate: fromStrip,
-      ...(creating
-        ? {
-            creation: {
-              sourceTabId: currentModel.activeTab?.id,
-              existingTabIds: currentModel.tabs.map((tab) => tab.id),
-            },
-          }
-        : {}),
-    };
-    tabEntryOwner.current = entry;
-    setPendingTerminalEntry(entry);
-    return (revision, createdTabId, paneId) => {
-      if (itemFocusVersion.current === entry.version && !renderer.isDestroyed) {
-        const completed = { ...entry, revision, tabId: createdTabId ?? entry.tabId, paneId };
-        tabEntryOwner.current = completed;
-        setPendingTerminalEntry(completed);
-      }
-    };
-  }
-
-  function requestTabSelection(tabId: string): Promise<DurableCommandResult | undefined> {
-    const currentModel = deriveShellModel({
-      snapshot: snapshotRef.current,
-      state: liveState.current,
-    });
-    if (
-      workCraft.status !== "connected" ||
-      !currentModel.surface ||
-      !currentModel.tabs.some((tab) => tab.id === tabId)
-    ) {
-      return Promise.resolve(undefined);
-    }
-    const expected = { navigationKey: currentModel.navigationKey, dialog: null };
-    const request = {
-      tabId,
-      promise: runCommand(
-        { type: "surface.selectTab", surfaceId: currentModel.surface.id, tabId },
-        "tabs",
-        expected,
-      ),
-    };
-    latestTabRequest.current = request;
-    void request.promise.then((result) => {
-      if (latestTabRequest.current === request) {
-        if (!result) {
-          const latestModel = deriveShellModel({
-            snapshot: snapshotRef.current,
-            state: liveState.current,
-          });
-          if (
-            latestModel.navigationKey === expected.navigationKey &&
-            liveState.current.dialog === null
-          ) {
-            dispatch({ type: "tab.cursor", id: latestModel.activeTab?.id ?? null });
-          }
-        }
-        latestTabRequest.current = null;
-      }
-    });
-    return request.promise;
-  }
-
-  function canEnterTab(): boolean {
-    const currentSnapshot = snapshotRef.current;
-    const item = deriveShellModel({
-      snapshot: currentSnapshot,
-      state: liveState.current,
-    }).activeItem;
-    return (
-      workCraft.status === "connected" &&
-      item !== undefined &&
-      !item.archived &&
-      !currentSnapshot?.items.some((parent) => parent.id === item.parentId && parent.archived)
-    );
-  }
-
-  async function enterTab(tabId: string): Promise<void> {
-    if (!canReceiveWorkbenchInput() || !canEnterTab()) {
-      return;
-    }
-    setFocus({ region: "tabs" });
-    dispatch({ type: "tab.cursor", id: tabId });
-    const complete = focusOnTabSelectionStarted(tabId, true);
-    const entry = tabEntryOwner.current;
-    const result = await (latestTabRequest.current?.tabId === tabId
-      ? latestTabRequest.current.promise
-      : requestTabSelection(tabId));
-    if (result) {
-      complete(result.revision);
-    } else if (tabEntryOwner.current === entry) {
-      setPendingTerminalEntry(null);
-    }
-  }
-
-  function focusOnPaneCommand(
-    kind: "restart" | "split",
-    paneId?: string,
-  ): NonNullable<ExecuteCommandInput["onPaneRestarted"]> {
-    const origin = renderer.currentFocusedRenderable;
-    const currentModel = deriveShellModel({
-      snapshot: snapshotRef.current,
-      state: liveState.current,
-    });
-    const epoch = snapshotRef.current?.epoch;
-    const version = ++itemFocusVersion.current;
-    const requestId = ++operationSequence.current;
-    const entry: PendingTerminalEntry | null =
-      origin && epoch && currentModel.activeItem
-        ? {
-            kind,
-            itemId: currentModel.activeItem.id,
-            tabId: currentModel.activeTab?.id,
-            paneId,
-            epoch,
-            revision: null,
-            navigationKey: currentModel.navigationKey,
-            origin,
-            version,
-            requestId,
-          }
-        : null;
-    setPendingTerminalEntry(entry);
-    return (paneId, revision) => {
-      if (
-        entry &&
-        (entry.kind === "split" || entry.paneId === paneId) &&
-        !renderer.isDestroyed &&
-        itemFocusVersion.current === version &&
-        renderer.currentFocusedRenderable === origin
-      ) {
-        setPendingTerminalEntry({ ...entry, paneId, revision });
-      }
-    };
   }
 
   function reactivatePane(paneId: string): void {
@@ -1014,263 +696,9 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     void execute("pane.restart", { focus: target, focusedPaneId: paneId });
   }
 
-  useLayoutEffect(() => {
-    if (pendingTerminalEntry === null) {
-      return;
-    }
-    function completeEntry(frame?: { frameId: number }): void {
-      if (pendingTerminalEntry === null) {
-        return;
-      }
-      const entryItem = snapshotRef.current?.items.find(
-        (item) => item.id === pendingTerminalEntry.itemId,
-      );
-      const archived =
-        entryItem?.archived ||
-        snapshotRef.current?.items.some((item) => item.id === entryItem?.parentId && item.archived);
-      let creationSelectionChanged = false;
-      if (pendingTerminalEntry.creation) {
-        const selected = snapshotRef.current?.surfaces.find(
-          (surface) => surface.itemId === pendingTerminalEntry.itemId,
-        )?.activeTabId;
-        if (
-          pendingTerminalEntry.revision === null ||
-          (snapshotRef.current?.revision ?? 0) < pendingTerminalEntry.revision
-        ) {
-          if (canProjectTabEntry(pendingTerminalEntry, snapshotRef.current)) {
-            // Uncorrelated new selections may transfer the origin, never bind response IDs.
-            pendingTerminalEntry.creation.selectionAdvanced = true;
-          } else {
-            creationSelectionChanged =
-              selected !== pendingTerminalEntry.creation.sourceTabId ||
-              pendingTerminalEntry.creation.selectionAdvanced === true;
-          }
-        } else {
-          creationSelectionChanged = selected !== pendingTerminalEntry.tabId;
-        }
-      }
-      if (archived && itemFocusVersion.current === pendingTerminalEntry.version) {
-        // Clearing state alone lets a delayed selection response rearm this entry.
-        itemFocusVersion.current += 1;
-        tabEntryOwner.current = null;
-        latestTabRequest.current = null;
-      }
-      const missingTarget =
-        snapshot !== null &&
-        pendingTerminalEntry.revision !== null &&
-        snapshot.revision >= pendingTerminalEntry.revision &&
-        !snapshot.items.some((item) => item.id === pendingTerminalEntry.itemId) &&
-        ["root", "item"].some(
-          (prefix) =>
-            pendingTerminalEntry.navigationKey ===
-            navigationContextKey(
-              snapshot.epoch,
-              liveState.current,
-              `${prefix}:${pendingTerminalEntry.itemId}`,
-            ),
-        );
-      if (
-        snapshot === null ||
-        archived ||
-        creationSelectionChanged ||
-        workCraft.status !== "connected" ||
-        snapshotRef.current?.epoch !== pendingTerminalEntry.epoch ||
-        liveState.current.dialog !== null ||
-        (!missingTarget &&
-          deriveShellModel({ snapshot: snapshotRef.current, state: liveState.current })
-            .navigationKey !== pendingTerminalEntry.navigationKey) ||
-        resizeBlocked ||
-        itemFocusVersion.current !== pendingTerminalEntry.version ||
-        ((pendingTerminalEntry.kind === "split" || pendingTerminalEntry.kind === "restart") &&
-          activeTab?.id !== pendingTerminalEntry.tabId) ||
-        (renderer.currentFocusedRenderable !== pendingTerminalEntry.origin &&
-          !(
-            entryClosing.current &&
-            (renderer.currentFocusedRenderable === null ||
-              renderer.currentFocusedRenderable?.id === "region:category")
-          )) ||
-        (pendingTerminalEntry.revision !== null &&
-          snapshot.revision >= pendingTerminalEntry.revision &&
-          !missingTarget &&
-          model.activeItem?.id !== pendingTerminalEntry.itemId)
-      ) {
-        if (
-          (pendingTerminalEntry.kind === "split" || pendingTerminalEntry.creation !== undefined) &&
-          itemFocusVersion.current === pendingTerminalEntry.version
-        ) {
-          itemFocusVersion.current += 1;
-        }
-        setPendingTerminalEntry((entry) =>
-          entry?.version === pendingTerminalEntry.version ? null : entry,
-        );
-        return;
-      }
-      if (
-        pendingTerminalEntry.revision === null ||
-        snapshot.revision < pendingTerminalEntry.revision
-      ) {
-        return;
-      }
-      const tabEntry = pendingTerminalEntry.kind === "tab";
-      const missingTab =
-        tabEntry &&
-        (!tabs.some((tab) => tab.id === pendingTerminalEntry.tabId) ||
-          surface?.activeTabId !== pendingTerminalEntry.tabId);
-      const entryPaneIds = missingTab ? [] : currentPaneIds;
-      const restartEntry = pendingTerminalEntry.kind === "restart";
-      const paneEntry = restartEntry || pendingTerminalEntry.kind === "split";
-      const exactPaneEntry = paneEntry || pendingTerminalEntry.creation !== undefined;
-      const sourceKey = paneEntry
-        ? entrySourceKey("pane", pendingTerminalEntry.paneId!)
-        : tabEntry
-          ? entrySourceKey("tab", pendingTerminalEntry.tabId!)
-          : entrySourceKey("item", pendingTerminalEntry.itemId);
-      const rememberedPaneId = state.lastPaneByTab[activeTab?.id ?? ""];
-      const runningIds = (missingTarget ? [] : entryPaneIds).filter((id) =>
-        snapshot.panes.some((pane) => pane.id === id && pane.processStatus === "running"),
-      );
-      const candidates = exactPaneEntry
-        ? runningIds.filter((id) => id === pendingTerminalEntry.paneId)
-        : rememberedPaneId !== undefined && runningIds.includes(rememberedPaneId)
-          ? [rememberedPaneId, ...runningIds.filter((id) => id !== rememberedPaneId)]
-          : runningIds;
-      const usablePaneId = candidates.find((id) => {
-        const terminal = terminalRefs.current.get(id);
-        return terminal && hasTerminalViewport(terminal);
-      });
-      const paneId = usablePaneId ?? candidates[0];
-      if (
-        tabEntry &&
-        pendingTerminalEntry.allowReactivate &&
-        !usablePaneId &&
-        !missingTarget &&
-        !missingTab
-      ) {
-        const actionIds = entryPaneIds.filter(canReactivate);
-        const selectedId = focusedPaneId ?? rememberedPaneId;
-        const actionId = selectedId && actionIds.includes(selectedId) ? selectedId : actionIds[0];
-        if (actionId) {
-          const target: FocusTarget = {
-            region: "workbench",
-            paneId: actionId,
-            control: "reactivate",
-          };
-          if (focusShellTarget(renderer, target)) {
-            setFocus(target);
-            setPendingTerminalEntry(null);
-            return;
-          }
-          if (!frame) {
-            return;
-          }
-        }
-      }
-      if (
-        !usablePaneId &&
-        !missingTarget &&
-        entryPaneIds
-          .filter((id) => !exactPaneEntry || id === pendingTerminalEntry.paneId)
-          .some((id) =>
-            snapshot.panes.some((pane) => pane.id === id && pane.processStatus === "starting"),
-          ) &&
-        !undersized
-      ) {
-        return;
-      }
-      const terminal = paneId ? terminalRefs.current.get(paneId) : undefined;
-      if (
-        !usablePaneId &&
-        !undersized &&
-        candidates.some((id) => {
-          const candidate = terminalRefs.current.get(id);
-          return (
-            !candidate ||
-            // A frame can precede the React commit of measured pane bounds.
-            ((candidate.width === 0 || candidate.height === 0) &&
-              (!tabEntry || !frame || canReceiveWorkbenchInput(id)))
-          );
-        })
-      ) {
-        return;
-      }
-      if (paneId && terminal && !undersized && hasTerminalViewport(terminal)) {
-        if (navigatorMode === "drawer") {
-          entryClosing.current = true;
-          dispatch({ type: "navigator.hide" });
-          return;
-        }
-        entryClosing.current = false;
-        if (
-          (pendingTerminalEntry.kind === "split" || pendingTerminalEntry.creation !== undefined) &&
-          (!canReceiveWorkbenchInput(paneId) || !isEligibleFocusTarget(terminal, renderer.root))
-        ) {
-          return;
-        }
-        setFocus({ region: "workbench", paneId });
-        if (renderer.currentFocusedRenderable === terminal) {
-          dispatch({
-            type: "source.clear",
-            sourceKey,
-            requestId: pendingTerminalEntry.requestId,
-          });
-        }
-      } else {
-        if (tabEntry || paneEntry) {
-          setFocus({ region: "tabs" });
-        }
-        const now = Date.now();
-        dispatch({
-          type: "source.report",
-          now,
-          error: {
-            sourceKey: missingTarget ? "navigator" : missingTab ? "tabs" : sourceKey,
-            sourceLabel: paneEntry
-              ? (snapshot.panes.find((pane) => pane.id === pendingTerminalEntry.paneId)?.title ??
-                "Pane")
-              : tabEntry
-                ? (tabs.find((tab) => tab.id === pendingTerminalEntry.tabId)?.title ?? "Tab")
-                : missingTarget
-                  ? "Item"
-                  : (model.activeItem?.title ?? "Item"),
-            operation: "Terminal entry",
-            epoch: snapshot.epoch,
-            contextKey: pendingTerminalEntry.navigationKey,
-            requestId: pendingTerminalEntry.requestId,
-            message: missingTab
-              ? "Requested tab is no longer available"
-              : missingTarget
-                ? "Requested item is no longer available"
-                : undersized || terminal
-                  ? "Terminal layout is too small"
-                  : "No running terminal in the active tab",
-            expiresAt: now + OPERATIONAL_ERROR_DURATION,
-            origin: "direct",
-          },
-        });
-      }
-      setPendingTerminalEntry(null);
-    }
-    completeEntry();
-    renderer.on(CliRenderEvents.FRAME, completeEntry);
-    return () => {
-      renderer.off(CliRenderEvents.FRAME, completeEntry);
-    };
-  }, [
-    pendingTerminalEntry,
-    snapshot,
-    state.activeNavigatorKey,
-    dialogKey,
-    nativeFocus,
-    currentPaneIds,
-    undersized,
-    navigatorMode,
-  ]);
+  useTerminalEntryCompletion(entry, environment, focusedPaneId, nativeFocus);
 
-  usePaste(() => {
-    entryClosing.current = false;
-    itemFocusVersion.current += 1;
-    setPendingTerminalEntry(null);
-  });
+  usePaste(() => entry.cancelInput());
 
   useKeyboard((key) => {
     // Further input supersedes a deferred handoff; local activation can start a new one.
@@ -1285,9 +713,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
       !key.hyper &&
       !key.shift;
     if (!duplicateSubmit) {
-      entryClosing.current = false;
-      itemFocusVersion.current += 1;
-      setPendingTerminalEntry(null);
+      entry.cancelInput();
     }
     const keyFocus = focusTargetFor(renderer.currentFocusedRenderable) ?? focus;
     if (keyFocus.region === "workbench") {
@@ -1377,7 +803,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
         !keyFocus.control &&
         canReceiveWorkbenchInput(keyFocus.paneId)
       ) {
-        terminalRefs.current.get(keyFocus.paneId)?.handleKeyPress(key);
+        entry.terminal(keyFocus.paneId)?.handleKeyPress(key);
       }
     } else if (routed.command !== undefined) {
       void execute(routed.command, {
@@ -1397,31 +823,6 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     ) {
       return Promise.resolve();
     }
-    const dialog = currentState.dialog;
-    const origin = renderer.currentFocusedRenderable;
-    const epoch = snapshotRef.current?.epoch;
-    const version = ++itemFocusVersion.current;
-    const requestId = ++operationSequence.current;
-    setPendingTerminalEntry(null);
-    const navigationKey = deriveShellModel({
-      snapshot: snapshotRef.current,
-      state: currentState,
-    }).navigationKey;
-    function isCurrent(
-      expectedNavigation: string,
-      expectedDialog: DialogState,
-      expectedOrigin: Renderable | null,
-    ): boolean {
-      return (
-        !renderer.isDestroyed &&
-        snapshotRef.current?.epoch === epoch &&
-        itemFocusVersion.current === version &&
-        liveState.current.dialog === expectedDialog &&
-        renderer.currentFocusedRenderable === expectedOrigin &&
-        deriveShellModel({ snapshot: snapshotRef.current, state: liveState.current })
-          .navigationKey === expectedNavigation
-      );
-    }
     return submitCreate({
       value,
       model,
@@ -1433,77 +834,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
       },
       dispatch,
       run: runCommand,
-      onItemCreated: async (itemId, parentId, revision) => {
-        if (!origin || !epoch || !isCurrent(navigationKey, dialog, origin)) {
-          return;
-        }
-        const currentSnapshot = snapshotRef.current;
-        if (
-          currentSnapshot &&
-          currentSnapshot.revision >= revision &&
-          currentSnapshot.items.some(
-            (item) => (item.id === itemId || item.id === parentId) && item.archived,
-          )
-        ) {
-          return;
-        }
-        successfulFormCloses.current.add(dialog);
-        dispatch({ type: "dialog.close" });
-        if (
-          parentId &&
-          !liveState.current.navigatorQuery &&
-          !liveState.current.expandedRootIds.has(parentId)
-        ) {
-          dispatch({ type: "root.toggle", rootId: parentId });
-        }
-        dispatch({
-          type: "navigator.activate",
-          key: navigatorItemKey({ id: itemId, parentId }),
-          pending: { epoch, revision },
-        });
-        const nextModel = deriveShellModel({
-          snapshot: snapshotRef.current,
-          state: liveState.current,
-        });
-        const nextNavigation = nextModel.navigationKey;
-        const closeFocus = resolveShellFocus({
-          focus: dialog.returnFocus,
-          rememberedPaneId: null,
-          paneIds: nextModel.paneIds,
-          runningPaneIds: nextModel.paneIds.filter((id) =>
-            snapshotRef.current?.panes.some(
-              (pane) => pane.id === id && pane.processStatus === "running",
-            ),
-          ),
-          undersized,
-        }).focus;
-        const entry: PendingTerminalEntry = {
-          kind: "item",
-          itemId,
-          epoch,
-          revision: null,
-          navigationKey: nextNavigation,
-          origin,
-          version,
-          requestId,
-        };
-        formCloseOwner.current = {
-          entry,
-          target: renderer.root.findDescendantById(nativeFocusId(closeFocus)) ?? null,
-        };
-        setPendingTerminalEntry(entry);
-        if (!isCurrent(nextNavigation, null, entry.origin)) {
-          return;
-        }
-        const result = await runCommand({ type: "surface.ensure", itemId }, "navigator", {
-          navigationKey: nextNavigation,
-          dialog: null,
-        });
-        if (!isCurrent(nextNavigation, null, entry.origin)) {
-          return;
-        }
-        setPendingTerminalEntry(result ? { ...entry, revision: result.revision } : null);
-      },
+      onItemCreated: entry.createdItemHandler(currentState.dialog),
     });
   }
 
@@ -1585,20 +916,17 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     query: state.navigatorQuery,
     homePath,
     onQueryChange: (query: string) => {
-      itemFocusVersion.current += 1;
-      setPendingTerminalEntry(null);
+      entry.cancel();
       dispatch({ type: "navigator.query", query });
     },
     onInteraction: () => {
-      itemFocusVersion.current += 1;
-      setPendingTerminalEntry(null);
+      entry.cancel();
     },
     onExpand: (rootId: string, expanded: boolean) => {
       if (renderer.width < 80 || !liveState.current.navigatorOpen || liveState.current.dialog) {
         return;
       }
-      itemFocusVersion.current += 1;
-      setPendingTerminalEntry(null);
+      entry.cancel();
       if (expandedRootIdsRef.current.has(rootId) !== expanded) {
         const next = new Set(expandedRootIdsRef.current);
         if (expanded) {
@@ -1622,8 +950,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
         return;
       }
       setFocus({ region: "navigator" });
-      itemFocusVersion.current += 1;
-      setPendingTerminalEntry(null);
+      entry.cancel();
       void execute("cursor.activate", {
         model: {
           ...model,
@@ -1631,12 +958,12 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
         },
         focus: { region: "navigator" },
         focusedPaneId: null,
-        onItemOpened: focusOnItemOpen(),
+        onItemOpened: entry.startItemOpen(),
       });
     },
     onCursorChange: (id: string | null) => {
       // List reconciliation during our close is projection, not a new browsing gesture.
-      if (formCloseOwner.current?.entry.version === itemFocusVersion.current) {
+      if (entry.isClosingForm()) {
         return;
       }
       const key = entries.find((entry) => entry.id === id)?.key ?? null;
@@ -1677,40 +1004,33 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
       if (!canReceiveWorkbenchInput()) {
         return;
       }
-      void requestTabSelection(id);
+      void entry.requestTabSelection(id);
     },
     onEnterTab: (id: string) => {
-      void enterTab(id);
+      void entry.enterTab(id);
     },
-    entryEnabled: canEnterTab(),
+    entryEnabled: entry.canEnterTab(),
     onTabScrollInteraction: () => {
-      itemFocusVersion.current += 1;
-      setPendingTerminalEntry(null);
+      entry.cancel();
     },
     onFocusTab: (id: string) => {
       if (!canReceiveWorkbenchInput()) {
         return;
       }
-      if (projectingTabEntry.current) {
+      if (entry.isProjectingTabFocus()) {
         dispatch({ type: "tab.cursor", id });
         return;
       }
-      itemFocusVersion.current += 1;
-      setPendingTerminalEntry(null);
+      entry.cancel();
       setFocus({ region: "tabs" });
       dispatch({ type: "tab.cursor", id });
     },
     onFocusPane: (paneId: string) => {
-      itemFocusVersion.current += 1;
-      setPendingTerminalEntry(null);
+      entry.cancel();
       setFocus({ region: "workbench", paneId });
     },
     onTerminalReady: (paneId: string, terminal: EmbeddedTerminalRenderable | null) => {
-      if (terminal === null) {
-        terminalRefs.current.delete(paneId);
-      } else {
-        terminalRefs.current.set(paneId, terminal);
-      }
+      entry.registerTerminal(paneId, terminal);
     },
   };
   const dialogProps =
@@ -1718,7 +1038,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
       ? null
       : {
           dialog: state.dialog,
-          canRestoreFocus: () => !successfulFormCloses.current.has(state.dialog!),
+          canRestoreFocus: () => entry.canRestoreFocus(state.dialog!),
           visible: !resizeBlocked,
           canCancel: state.dialog.kind === "create" || state.activeSessionId !== null,
           sessions,
