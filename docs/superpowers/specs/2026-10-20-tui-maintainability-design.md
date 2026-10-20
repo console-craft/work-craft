@@ -9,14 +9,21 @@ Workflow checkpoints:
 
 - [x] Confirm behavior-preserving intent and read existing architecture contracts.
 - [x] Create an isolated worktree and install dependencies with Bun.
-- [ ] Verify the fresh worktree baseline with `bun run check`.
+- [x] Verify the fresh worktree baseline with `bun run check`.
 - [x] Write the proposed design.
 - [x] Complete an independent builder check and resolve consequential questions.
 - [ ] Obtain user approval of this design.
 - [ ] Write the implementation plan after approval.
 
-Independent read-only builder check: no consequential questions remained. This
-review checks design completeness, not implementation or runtime behavior.
+The initial independent read-only builder check and a fresh check of the
+test-placement amendment found no consequential questions. The capability-local
+test-placement convention below was agreed with the user; the full amended design
+remains awaiting approval. A builder check assesses design completeness, not
+implementation or runtime behavior.
+
+Fresh worktree baseline: `bun run check` passed 1,417 tests with zero failures,
+formatting, types, build, and compiled smoke checks. Five existing lint warnings
+remain. This is pre-implementation evidence, not verification of future changes.
 
 ## Intent
 
@@ -68,6 +75,13 @@ This is a focused amendment to the existing
 Their current accepted behavior remains binding; earlier dated behavior is not
 revived by reorganizing source files.
 
+The user-approved test-placement convention below explicitly supersedes the
+older source-organization document's mixed source/test listings, root test-support
+placement, and requirement to retain `src/entrypoint.test.ts` at its original
+depth. Behavioral ownership and runtime contracts remain unchanged. Keep the
+older document as a historical record and explain the current convention in the
+new source map.
+
 ### Architecture And Dependencies
 
 - The single local daemon owns durable records, layouts, discovery, PTYs, history,
@@ -106,19 +120,86 @@ All module names below are proposed engineering choices, not additional product
 requirements. The implementation plan may refine names while preserving the
 responsibility boundaries and avoiding speculative abstractions.
 
-### 1. Shell Tests And Fixtures
+### 1. Capability-local Tests And Fixtures
 
-First reorganize `shell/shell.test.tsx` by behavior. Keep shell composition and
-cross-region assertions there; give item entry, tab entry, pane operations, and
-dialog integration their own shell-local test files. Move isolated component
-assertions into existing colocated component tests when they do not require the
-shell. Keep root `entrypoint.test.ts` and its repository-root calculation stable.
+Colocate by capability, not by individual file. Each meaningful existing source
+owner keeps its tests inside one local `tests/` directory, separate from the
+production-file listing. Apply this convention to all existing TUI tests during
+this refactor, not just newly extracted suites.
 
-Extract the existing render/setup helpers and snapshot builders into a small
-shell-local fixture module. Reuse the real client store for live authoritative
-input tests instead of reproducing its policy in more fakes. Presentation tests
-may retain intentionally permissive fakes. Test expectations must remain
-independent of the production decision functions they verify.
+Placement rules:
+
+- Capability tests belong in `client/tests/`, `input/tests/`, `shell/tests/`,
+  `navigation/tests/`, `workbench/tests/`, and `demos/tests/` as applicable.
+- UI tests follow their existing production owners: `ui/tests/` for UI-root
+  mechanisms, `ui/controls/tests/`, `ui/components/tests/`, and
+  `ui/primitives/tests/`. Do not mirror every source file with a new directory.
+- `src/tests/` holds root/package-wide tests, including the real entrypoint/PTY
+  acceptance suite. Its `support/` directory holds genuinely cross-capability
+  test support; move root `test-fixtures.ts` and `test-render.ts` there as
+  `fixtures.ts` and `render.ts` and update consumers directly.
+- Keep fixtures with their narrowest consumer, for example
+  `shell/tests/fixtures.ts`. A test-only helper does not belong beside production
+  modules merely because several tests use it.
+- Classify tests by behavioral owner, not mechanically by unit/integration level.
+  Shell integration remains shell-owned; package-wide process acceptance belongs
+  in `src/tests/`.
+- Do not add empty test directories or wrapper directories solely to contain one
+  source/test pair. A new production subdirectory is justified only by a cohesive
+  subsystem with cooperating production modules; its tests then follow the same
+  local-directory convention.
+- Preserve direct `@/` imports and descriptive test names. No new import alias,
+  mandatory `index.ts`, barrel, or test-discovery dependency is required.
+
+Illustrative ownership layout (not a requirement for empty files or directories):
+
+```text
+packages/tui/src/
+├── app.tsx
+├── main.tsx
+├── tests/
+│   ├── entrypoint.test.ts
+│   ├── render.test.tsx
+│   └── support/
+│       ├── fixtures.ts
+│       └── render.ts
+├── shell/
+│   ├── model.ts
+│   ├── state.ts
+│   ├── shell.tsx
+│   └── tests/
+│       ├── model.test.ts
+│       ├── state.test.ts
+│       ├── shell.test.tsx
+│       ├── terminal-entry.test.tsx
+│       └── fixtures.ts
+└── ui/
+    └── components/
+        ├── list.tsx
+        ├── tabs.tsx
+        └── tests/
+            ├── list.test.tsx
+            └── tabs.test.tsx
+```
+
+Within that migration, split `shell/shell.test.tsx` by behavior. Keep shell
+composition and cross-region assertions in `shell/tests/shell.test.tsx`; give
+item entry, tab entry, pane operations, and dialog integration their own files
+under `shell/tests/`. Move isolated component assertions into their owner's test
+suite when they do not require the shell.
+
+Moving the entrypoint suite to `src/tests/entrypoint.test.ts` changes its depth.
+Update its repository-root calculation and trace explicit test paths, import
+consumers, fixture paths, scripts, and documentation before moving tests. Verify
+the relocated process tests through the normal runner; preserving coverage means
+preserving what actually executes, not merely keeping the same source text.
+
+Extract the existing render/setup helpers and snapshot builders into
+`shell/tests/fixtures.ts` or a genuinely shared support module under
+`src/tests/support/`. Reuse the real client store for live authoritative input
+tests instead of reproducing its policy in more fakes. Presentation tests may
+retain intentionally permissive fakes. Test expectations must remain independent
+of the production decision functions they verify.
 
 Preserve explicit control over command responses, snapshot publication, React
 commits, native frames, and input batches. In particular, publishing a snapshot
@@ -260,11 +341,17 @@ Add a concise current TUI source/ownership map and link it from README. It shoul
 explain where changes belong, the three input gates, terminal identity/timing
 invariants, test commands, and intentional native exceptions. Link historical
 specifications rather than copying their checkpoint histories into another file.
+Include the capability-local test convention, fixture-placement rules, and
+package-wide acceptance/support locations rather than the old sibling-test tree.
 
 Extend the existing lint restrictions to enforce the documented capability and UI
 dependency boundaries, including type-only imports. Keep aliases/direct imports;
 add no dependency-analysis package. Verify both accepted and rejected import
 examples using the installed linter or a small focused regression check.
+Production code must not import test files or test support. Tests may import
+their subjects and the shared `src/tests/support/` modules; scope any test-specific
+lint allowances to test/support paths, never to the surrounding production
+capability. Test relocation must not weaken production dependency restrictions.
 
 Review touched warnings only. For intentional control-character sanitization,
 use a narrowly scoped explanation/suppression rather than weakening the regex.
@@ -300,6 +387,9 @@ Acceptance requires:
   and differing presentation/authoritative selection policies stay explicit.
 - Existing timing, native identity, input, dialog/status, reconnect, and output
   regressions remain covered; new nontrivial decisions have focused tests.
+- All TUI tests and test-only fixtures follow capability-local `tests/` ownership,
+  with root/package-wide suites and genuinely shared support in `src/tests/`.
+  Relocated tests are discovered and explicit path/depth assumptions are updated.
 - Capability boundaries are enforced, and the source map reflects actual files.
 - No new dependencies, protocol/schema changes, or user-visible differences.
 - Fresh final `bun run check` passes and the reviewed diff is limited to scope.
