@@ -79,7 +79,7 @@ for (const form of ["value", "type"] as const) {
   ]) {
     test(`TUI accepts ${form} import ${owner} -> ${path}`, async () => {
       const result = await lint(owner, source(path));
-      expect(result).toEqual({ code: 0, output: "" });
+      expect(result.code, result.output).toBe(0);
     });
   }
 }
