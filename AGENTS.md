@@ -4,6 +4,9 @@
 - Keep changes focused and follow existing project conventions.
 - Read `docs/superpowers/specs/2026-09-16-work-craft-architecture-design.md` before planning features or changing architectural boundaries.
 - Read `docs/superpowers/specs/2026-09-21-tui-source-organization-design.md` before changing TUI ownership or source organization.
+- Use `docs/tui-source-map.md` as the current TUI ownership and file-location reference; its linked amendments supersede historical source trees and test locations.
+- Keep TUI tests in their capability owner's `tests/` directory; reserve `packages/tui/src/tests/` for package-wide acceptance and genuinely shared support. Follow the enforced import boundaries described in the source map.
+- Keep README focused on current usage and development. Preserve dated specifications as decision history rather than rewriting their old checkpoints to match current code.
 - Optimize for a small codebase that one person can maintain.
 - Preserve the local-first, single-daemon architecture: the server owns durable state and runtimes; the TUI and CLI are disposable clients.
 - Use React with OpenTUI for the TUI. Do not introduce Solid.
