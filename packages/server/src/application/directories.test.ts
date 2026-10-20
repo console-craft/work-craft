@@ -506,6 +506,44 @@ test("Git commands share one total budget and ignore inherited repository redire
   }
 });
 
+async function expectProcessExit(pid: number): Promise<void> {
+  // Descendants are reaped by the OS, not the direct child's exited promise.
+  const deadline = Date.now() + 1000;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") {
+        throw error;
+      }
+      return;
+    }
+    await Bun.sleep(5);
+  }
+  throw new Error(`Process ${pid} did not exit within one second`);
+}
+
+test("process exit checks wait for asynchronous termination", async () => {
+  const child = Bun.spawn([process.execPath, "-e", "await Bun.stdin.text()"], { stdin: "pipe" });
+  try {
+    queueMicrotask(() => child.stdin.end());
+    await expectProcessExit(child.pid);
+  } finally {
+    child.kill("SIGKILL");
+    await child.exited;
+  }
+});
+
+test("process exit checks reject a process that remains alive", async () => {
+  const child = Bun.spawn([process.execPath, "-e", "await Bun.stdin.text()"], { stdin: "pipe" });
+  try {
+    await expect(expectProcessExit(child.pid)).rejects.toThrow(`Process ${child.pid} did not exit`);
+  } finally {
+    child.kill("SIGKILL");
+    await child.exited;
+  }
+});
+
 test("timeout and abort bound inherited pipes and terminate Git descendants", async () => {
   for (const abort of [false, true]) {
     await withGitShim(
@@ -531,7 +569,7 @@ test("timeout and abort bound inherited pipes and terminate Git descendants", as
           expect(Date.now() - start).toBeLessThan(abort ? 1000 : 2800);
           const wrapperPid = Number(await readFile(pidFile, "utf8"));
           expect(() => process.kill(wrapperPid, 0)).toThrow();
-          expect(() => process.kill(descendantPid!, 0)).toThrow();
+          await expectProcessExit(descendantPid!);
         } finally {
           controller.abort();
           if (descendantPid !== undefined) {
