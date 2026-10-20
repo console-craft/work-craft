@@ -40,6 +40,9 @@ Intel macOS, Linux ARM64, and musl Linux do not currently have supported prebuil
 
 ## Develop
 
+See the [TUI source map](docs/tui-source-map.md) for ownership, test locations,
+dependency boundaries and native terminal timing invariants.
+
 Development requires [Bun](https://bun.sh/) 1.4 or newer on macOS or Linux.
 
 Install dependencies and run from source. `bun run dev` restarts the TUI when source files change, while `bun run tui` runs it once:

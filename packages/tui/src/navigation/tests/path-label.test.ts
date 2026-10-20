@@ -18,6 +18,7 @@ test("labels escape controls and stay within cell width for Unicode and tiny bou
   ]) {
     for (let width = 0; width < 30; width += 1) {
       const label = formatPathLabel(path, "/home", width);
+      // oxlint-disable-next-line no-control-regex -- Assert labels cannot emit terminal control bytes.
       expect(label).not.toMatch(/[\x00-\x1f\x7f-\x9f]/);
       expect(Bun.stringWidth(label)).toBeLessThanOrEqual(width);
     }

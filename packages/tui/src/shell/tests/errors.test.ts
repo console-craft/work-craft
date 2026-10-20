@@ -168,6 +168,7 @@ test("error text cannot inject terminal control bytes", () => {
     operationalError: failure({ sourceLabel: "a\nb", message: "\u001b[31m\tbad" }),
     now: 0,
   });
+  // oxlint-disable-next-line no-control-regex -- Assert status messages cannot emit terminal control bytes.
   expect(presentation.text).not.toMatch(/[\x00-\x1f\x7f-\x9f]/);
 });
 

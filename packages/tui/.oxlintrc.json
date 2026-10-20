@@ -5,13 +5,11 @@
     "no-restricted-imports": [
       "error",
       {
-        "paths": [
-          {
-            "name": "@work-craft/server",
-            "message": "Import client-safe APIs from @work-craft/server/client."
-          }
-        ],
         "patterns": [
+          {
+            "group": ["@work-craft/server", "@work-craft/server/**", "!@work-craft/server/client"],
+            "message": "Import client-safe APIs from @work-craft/server/client."
+          },
           {
             "regex": "^\\.\\.?/",
             "message": "Use @/ aliases for internal TUI imports."
@@ -19,5 +17,93 @@
         ]
       }
     ]
-  }
+  },
+  "overrides": [
+    {
+      "files": ["src/**/*.{ts,tsx}"],
+      "excludeFiles": ["src/**/tests/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              { "regex": "^\\.\\.?/", "message": "Use @/ aliases for internal TUI imports." },
+              {
+                "group": [
+                  "@work-craft/server",
+                  "@work-craft/server/**",
+                  "!@work-craft/server/client"
+                ],
+                "message": "Import client-safe APIs from @work-craft/server/client."
+              },
+              {
+                "regex": "^@/(?:.*/)?tests(?:/|$)|\\.test(?:\\.[cm]?[jt]sx?)?$",
+                "message": "Production modules must not import tests or test support."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/{client,input,navigation,workbench}/**/*.{ts,tsx}"],
+      "excludeFiles": ["src/**/tests/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              { "regex": "^\\.\\.?/", "message": "Use @/ aliases for internal TUI imports." },
+              {
+                "group": [
+                  "@work-craft/server",
+                  "@work-craft/server/**",
+                  "!@work-craft/server/client"
+                ],
+                "message": "Import client-safe APIs from @work-craft/server/client."
+              },
+              {
+                "regex": "^@/(?:.*/)?tests(?:/|$)|\\.test(?:\\.[cm]?[jt]sx?)?$",
+                "message": "Production modules must not import tests or test support."
+              },
+              {
+                "regex": "^@/shell(?:/|$)",
+                "message": "Shell composes capabilities; capabilities never import shell."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/ui/**/*.{ts,tsx}"],
+      "excludeFiles": ["src/**/tests/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              { "regex": "^\\.\\.?/", "message": "Use @/ aliases for internal TUI imports." },
+              {
+                "group": [
+                  "@work-craft/server",
+                  "@work-craft/server/**",
+                  "!@work-craft/server/client"
+                ],
+                "message": "Import client-safe APIs from @work-craft/server/client."
+              },
+              {
+                "regex": "^@/(?:.*/)?tests(?:/|$)|\\.test(?:\\.[cm]?[jt]sx?)?$",
+                "message": "Production modules must not import tests or test support."
+              },
+              {
+                "regex": "^@/(?:client|input|shell|navigation|workbench|demos)(?:/|$)",
+                "message": "Reusable UI must not import application capabilities."
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
 }

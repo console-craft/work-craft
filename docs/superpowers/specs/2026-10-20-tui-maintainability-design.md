@@ -2,8 +2,23 @@
 
 ## Status
 
-Draft for approval. This document describes the cleanup proposed in the October 20
-assessment; it does not authorize implementation until the user approves it.
+Approved by the user, including the capability-local test-placement amendment.
+This document describes the cleanup proposed in the October 20 assessment.
+The user approved the implementation plan and native execution. Implementation
+is proceeding in separately verified slices, with an independent final review.
+
+All implementation slices are delivered in the worktree: capability-local tests,
+shared projections/geometry, shell lifecycle owners, native UI mechanisms,
+compound collection internals, client store/buffers, named demos, current source
+documentation and executable import boundaries. Final connected review and its
+verification remain pending; this is not approval to merge or push.
+
+Fresh implementation verification on macOS passed `bun run check`: 1,509 tests,
+zero failures, formatting/types, build and compiled smoke. The final TUI JUnit
+inventory preserves all 1,144 original case names/parameter combinations and adds
+92 focused cases. Only the existing server lint warning remains. No server, CLI,
+protocol/schema or dependency files changed. Physical-terminal/Linux/long-running
+acceptance and the final independent review are not inferred from this result.
 
 Workflow checkpoints:
 
@@ -12,18 +27,26 @@ Workflow checkpoints:
 - [x] Verify the fresh worktree baseline with `bun run check`.
 - [x] Write the proposed design.
 - [x] Complete an independent builder check and resolve consequential questions.
-- [ ] Obtain user approval of this design.
-- [ ] Write the implementation plan after approval.
+- [x] Obtain user approval of this design.
+- [x] Write the implementation plan after approval.
 
 The initial independent read-only builder check and a fresh check of the
-test-placement amendment found no consequential questions. The capability-local
-test-placement convention below was agreed with the user; the full amended design
-remains awaiting approval. A builder check assesses design completeness, not
-implementation or runtime behavior.
+test-placement amendment found no consequential questions. The user subsequently
+approved the full amended design. A builder check assesses design completeness,
+not implementation or runtime behavior. The self-reviewed implementation plan is
+`docs/superpowers/plans/2026-10-20-tui-maintainability.md`; that directory remains
+intentionally workspace-local/gitignored.
 
 Fresh worktree baseline: `bun run check` passed 1,417 tests with zero failures,
 formatting, types, build, and compiled smoke checks. Five existing lint warnings
 remain. This is pre-implementation evidence, not verification of future changes.
+
+A later planning check completed the same full gate but emitted one native
+OpenTUI `LayoutLimit` diagnostic during the shell suite. An unchanged isolated
+shell rerun passed 508 tests without reproducing it. No production code had
+changed; the root cause remains unresolved. Preserve this observation when
+comparing refactor verification instead of treating a zero test-failure count as
+proof that native diagnostics are clean.
 
 ## Intent
 
