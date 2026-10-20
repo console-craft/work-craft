@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 
-import { CliRenderEvents, type EmbeddedTerminalRenderable, type Renderable } from "@opentui/core";
+import type { EmbeddedTerminalRenderable } from "@opentui/core";
 import { useKeyboard, usePaste, useRenderer, useTerminalDimensions } from "@opentui/react";
 import type { CategoryKind } from "@work-craft/server/client";
 import { type ReactNode, useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
@@ -9,49 +9,32 @@ import type { WorkCraftState } from "@/client/use-work-craft.ts";
 import {
   type CommandContext,
   commandHints,
-  type CommandId,
   initialRouterState,
   type KeyLike,
   routeKey,
   type RouterState,
 } from "@/input/command-router.ts";
-import { focusKey, type FocusTarget } from "@/input/focus.ts";
+import type { FocusTarget } from "@/input/focus.ts";
 import { CategoryRail } from "@/navigation/category-rail.tsx";
 import { Navigator } from "@/navigation/navigator.tsx";
-import {
-  availableCommands,
-  type CompletionContext,
-  completionContextFor,
-  executeCommand,
-  type ExecuteCommandInput,
-  runDurableCommand,
-  submitCreate,
-} from "@/shell/commands.ts";
+import { availableCommands, completionContextFor } from "@/shell/commands.ts";
 import type { ShellEnvironment } from "@/shell/context";
 import { DialogOverlay } from "@/shell/dialog-overlay.tsx";
-import { commandSourceKey, statusPresentation } from "@/shell/errors.ts";
-import { focusShellTarget, focusTargetFor, nativeFocusId } from "@/shell/focus.ts";
+import { statusPresentation } from "@/shell/errors.ts";
+import { focusTargetFor } from "@/shell/focus.ts";
 import { Header } from "@/shell/header.tsx";
 import { calculateShellLayout } from "@/shell/layout.ts";
-import { deriveShellModel, resolveShellFocus } from "@/shell/model.ts";
+import { deriveShellModel } from "@/shell/model.ts";
 import { ResizeGuard } from "@/shell/resize-guard.tsx";
-import {
-  createInitialShellState,
-  type DialogState,
-  reduceShellState,
-  type ShellAction,
-} from "@/shell/state.ts";
+import { createInitialShellState, reduceShellState, type ShellAction } from "@/shell/state.ts";
 import { StatusBar, type StatusBarProps } from "@/shell/status-bar.tsx";
+import { useShellCommands } from "@/shell/use-shell-commands";
 import { useShellErrors } from "@/shell/use-shell-errors";
-import {
-  type PaneEntryHandle,
-  type TabEntryHandle,
-  useTerminalEntry,
-  useTerminalEntryCompletion,
-} from "@/shell/use-terminal-entry";
+import { useShellFocus } from "@/shell/use-shell-focus";
+import { useTerminalEntry, useTerminalEntryCompletion } from "@/shell/use-terminal-entry";
 import { useFocusedControlHints } from "@/ui/control-hints";
 import { useNativeFocus } from "@/ui/focus-manager.tsx";
-import { focusRenderable, isEligibleFocusTarget, moveFocus } from "@/ui/focus-utils";
+import { isEligibleFocusTarget, moveFocus } from "@/ui/focus-utils";
 import { getActiveModalFocusScope } from "@/ui/modal-focus";
 import { Box } from "@/ui/primitives/box.tsx";
 import { HStack } from "@/ui/primitives/hstack.tsx";
@@ -80,25 +63,10 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
   useLayoutEffect(() => {
     liveState.current = state;
   }, [state]);
-  const presentationGeneration = useRef(0);
-  const drawerReturn = useRef<Renderable | null>(null);
-  const guardReturn = useRef<Renderable | null>(null);
-  const lastNavigatorControl = useRef<"filter" | "results">("results");
   function dispatch(action: ShellAction): void {
     const previous = liveState.current;
     const next = reduceShellState(previous, action);
-    if (!previous.navigatorOpen && next.navigatorOpen && renderer.width < 120) {
-      drawerReturn.current = renderer.currentFocusedRenderable;
-    }
-    if (
-      action.type === "dialog.open" ||
-      action.type === "navigator.toggle" ||
-      action.type === "navigator.hide" ||
-      action.type === "navigator.reveal" ||
-      action.type === "presentation.resize"
-    ) {
-      presentationGeneration.current += 1;
-    }
+    shellFocus.beforeDispatch(previous, next, action);
     liveState.current = next;
     renderDispatch(action);
   }
@@ -118,37 +86,32 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     routerStateRef.current = next;
     setRouterState(next);
   }
-  const [reactivatingPaneIds, setReactivatingPaneIds] = useState<ReadonlySet<string>>(new Set());
-  const reactivatingPaneIdsRef = useRef(
-    new Map<string, { epoch: string; revision: number | null }>(),
-  );
+  const commands = useShellCommands({
+    view: () => ({ ...environment, focus, focusedPaneId, terminalWidth: dimensions.width }),
+    read: readEnvironment,
+    workCraft,
+    entry: () => entry,
+    dispatch,
+    setFocus,
+    canReactivate,
+    nextRequestId: () => ++operationSequence.current,
+  });
+  const execute = commands.execute;
   const entry = useTerminalEntry({
     read: readEnvironment,
     rendered: () => environment,
     dispatch,
     nextRequestId: () => ++operationSequence.current,
-    run: (...args) => runCommand(...args),
+    run: commands.run,
     setFocus,
     canReceiveInput: canReceiveWorkbenchInput,
     canReactivate,
-    onNativeFocus(target) {
-      const focus = focusTargetFor(target);
-      if (focus?.region === "navigator") {
-        lastNavigatorControl.current = focus.control ?? "results";
-      }
-    },
+    onNativeFocus: (target) => shellFocus.observeNativeFocus(target),
   });
-  const completionContextRef = useRef<CompletionContext>({
-    key: "",
-    navigationKey: "",
-    dialog: null,
-  });
-  const submittingDialogRef = useRef<Exclude<DialogState, null> | null>(null);
   const snapshot = workCraft.snapshot;
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
   const operationSequence = useRef(0);
-  const sourceOperations = useRef(new Map<string, number>());
   const errors = useShellErrors({
     snapshot,
     connectionError: workCraft.connectionError,
@@ -219,7 +182,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     panes: snapshot?.panes,
     connected: workCraft.status === "connected",
   });
-  const { focusNodes, navigatorMode, navigatorVisible, navigatorWidth, resizeBlocked, undersized } =
+  const { navigatorMode, navigatorVisible, navigatorWidth, resizeBlocked, undersized } =
     shellLayout;
   const environment: ShellEnvironment = {
     snapshot,
@@ -299,7 +262,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
   function canReactivate(paneId: string): boolean {
     if (
       !canReceiveWorkbenchInput() ||
-      reactivatingPaneIdsRef.current.has(paneId) ||
+      commands.isReactivating(paneId) ||
       !workCraft.canReactivate(paneId, snapshotRef.current?.epoch ?? "")
     ) {
       return false;
@@ -324,142 +287,24 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     ).panes.find((node) => node.paneId === paneId);
     return !layout.undersized && node !== undefined && hasRecoveryViewport(node.rect);
   }
-  useLayoutEffect(() => {
-    const onResize = () => {
-      if (renderer.width < 80) {
-        guardReturn.current ??= renderer.currentFocusedRenderable;
-        entry.cancelInput();
-        updateRouterState({ ...routerStateRef.current, leaderStartedAt: null });
-        renderer.currentFocusedRenderable?.blur();
-      }
-      dispatch({ type: "presentation.resize", width: renderer.width });
-    };
-    renderer.on(CliRenderEvents.RESIZE, onResize);
-    return () => {
-      renderer.off(CliRenderEvents.RESIZE, onResize);
-    };
-  }, [renderer]);
-  const previousMode = useRef(shellLayout.navigatorMode);
-  useLayoutEffect(() => {
-    const previous = previousMode.current;
-    previousMode.current = navigatorMode;
-    if (resizeBlocked) {
-      return;
-    }
-    if (guardReturn.current) {
-      const target = guardReturn.current;
-      guardReturn.current = null;
-      if (isEligibleFocusTarget(target, renderer.root)) {
-        focusRenderable(renderer, target);
-      }
-    } else if (navigatorMode === "drawer" && previous !== "drawer" && state.dialog === null) {
-      focusShellTarget(renderer, { region: "navigator" });
-    } else if (previous === "drawer" && navigatorMode === "hidden" && !entry.isClosingDrawer()) {
-      const target = drawerReturn.current;
-      const generation = presentationGeneration.current;
-      queueMicrotask(() => {
-        if (
-          generation !== presentationGeneration.current ||
-          liveState.current.dialog ||
-          renderer.width < 80 ||
-          liveState.current.navigatorOpen
-        ) {
-          return;
-        }
-        if (target && isEligibleFocusTarget(target, renderer.root)) {
-          focusRenderable(renderer, target);
-        } else {
-          focusShellTarget(renderer, { region: "category" });
-        }
-      });
-    }
-  }, [navigatorMode, resizeBlocked, state.dialog]);
-
-  useEffect(() => {
-    if (
-      !navigatorVisible &&
-      state.focus.region === "navigator" &&
-      liveState.current.focus.region === "navigator" &&
-      !entry.isClosingDrawer()
-    ) {
-      dispatch({ type: "focus.set", focus: { region: "category" } });
-    }
-  }, [navigatorVisible, state.focus.region]);
-
-  const { focus: resolvedFocus, focusedPaneId } = resolveShellFocus({
-    focus: entry.focusFor(model, state.focus),
-    rememberedPaneId: state.lastPaneByTab[activeTab?.id ?? ""] ?? null,
-    paneIds: currentPaneIds,
-    runningPaneIds: currentPaneIds.filter((id) =>
-      snapshot?.panes.some((pane) => pane.id === id && pane.processStatus === "running"),
-    ),
-    reactivatePaneIds: currentPaneIds.filter(canReactivate),
-    undersized,
+  const shellFocus = useShellFocus({
+    environment,
+    read: readEnvironment,
+    nativeFocus,
+    entry,
+    dispatch,
+    canReceiveInput: canReceiveWorkbenchInput,
+    canReactivate,
+    clearLeader: () => updateRouterState({ ...routerStateRef.current, leaderStartedAt: null }),
+    rememberPane(tabId, paneId) {
+      lastPaneByTabRef.current = { ...lastPaneByTabRef.current, [tabId]: paneId };
+    },
   });
-  const nativeTarget = focusTargetFor(nativeFocus);
-  // A measured host needs another frame before a resize-restored terminal is focusable.
-  const transientWorkbenchProjection =
-    state.focus.region === "workbench" &&
-    nativeTarget?.region === "tabs" &&
-    (undersized ||
-      (resolvedFocus.region === "workbench" &&
-        !(
-          resolvedFocus.control === "reactivate"
-            ? renderer.root.findDescendantById(nativeFocusId(resolvedFocus))
-            : entry.terminal(resolvedFocus.paneId)
-        )?.focusable));
-  const focus =
-    state.dialog === null && !transientWorkbenchProjection
-      ? (nativeTarget ?? resolvedFocus)
-      : resolvedFocus;
-  const resolvedFocusKey = focusKey(resolvedFocus);
-
-  useLayoutEffect(() => {
-    if (
-      dialogKey === null &&
-      !resizeBlocked &&
-      !(
-        navigatorMode === "drawer" &&
-        (resolvedFocus.region === "workbench" || resolvedFocus.region === "tabs")
-      )
-    ) {
-      entry.projectFocus(resolvedFocus, () => focusShellTarget(renderer, resolvedFocus));
-    }
-  }, [renderer, resolvedFocusKey, dialogKey, resizeBlocked]);
-
-  useLayoutEffect(() => {
-    if (
-      state.dialog === null &&
-      nativeTarget !== null &&
-      (nativeTarget.region !== "workbench" || currentPaneIds.includes(nativeTarget.paneId)) &&
-      nativeFocus === renderer.currentFocusedRenderable &&
-      !transientWorkbenchProjection
-    ) {
-      dispatch({ type: "focus.set", focus: nativeTarget, tabId: activeTab?.id });
-    }
-  }, [nativeFocus, dialogKey, undersized, state.focus]);
+  const { focus, focusedPaneId } = shellFocus;
   const completionContext = completionContextFor(model, state.dialog);
 
-  function reconcileRestartProtection(): void {
-    const currentSnapshot = snapshotRef.current;
-    let changed = false;
-    for (const [paneId, restart] of reactivatingPaneIdsRef.current) {
-      if (
-        workCraft.status !== "connected" ||
-        currentSnapshot?.epoch !== restart.epoch ||
-        (restart.revision !== null && currentSnapshot.revision >= restart.revision)
-      ) {
-        reactivatingPaneIdsRef.current.delete(paneId);
-        changed = true;
-      }
-    }
-    if (changed) {
-      setReactivatingPaneIds(new Set(reactivatingPaneIdsRef.current.keys()));
-    }
-  }
-
   useLayoutEffect(() => {
-    reconcileRestartProtection();
+    commands.reconcileRestartProtection();
   }, [snapshot, workCraft.status]);
 
   useLayoutEffect(() => {
@@ -467,7 +312,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
   }, [completionContext.navigationKey, dialogKey, workCraft.status]);
 
   useLayoutEffect(() => {
-    completionContextRef.current = completionContext;
+    commands.observeCompletion(completionContext);
   }, [completionContext.key, completionContext.navigationKey, completionContext.dialog]);
   const structuralCommands = availableCommands({ model, state, snapshot, focus, focusedPaneId });
 
@@ -480,63 +325,6 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     resizeBlocked,
   };
 
-  const runCommand: ExecuteCommandInput["run"] = (
-    command,
-    region,
-    expected = completionContextRef.current,
-  ) => {
-    if (command.type === "surface.ensure" && expected.key === undefined) {
-      // Activation owns this navigation change before React commits its reducer action.
-      completionContextRef.current = expected;
-    }
-    const id =
-      "itemId" in command
-        ? command.itemId
-        : "paneId" in command
-          ? command.paneId
-          : "surfaceId" in command
-            ? command.surfaceId
-            : region;
-    const sourceKey = commandSourceKey(command, region);
-    const requestId = ++operationSequence.current;
-    const entryIsCurrent = entry.commandStarted(command);
-    sourceOperations.current.set(sourceKey, requestId);
-    const label =
-      snapshot?.items.find((item) => item.id === id)?.title ??
-      snapshot?.panes.find((pane) => pane.id === id)?.title ??
-      (state.dialog?.kind === "create" ? "Create" : (model.activeItem?.title ?? region));
-    return runDurableCommand({
-      command,
-      region,
-      expected,
-      current: () =>
-        completionContextFor(
-          deriveShellModel({ snapshot: snapshotRef.current, state: liveState.current }),
-          liveState.current.dialog,
-        ),
-      send: async (command) => {
-        const restart =
-          command.type === "process.restart"
-            ? reactivatingPaneIdsRef.current.get(command.paneId)
-            : undefined;
-        const response = await workCraft.command(command);
-        // RPC success owns protection even when newer input cancelled its focus handoff.
-        if (restart) {
-          restart.revision = response.revision;
-        }
-        return response;
-      },
-      dispatch,
-      source: {
-        key: sourceKey,
-        label,
-        requestId,
-        epoch: snapshot?.epoch ?? "",
-        isCurrent: () => sourceOperations.current.get(sourceKey) === requestId && entryIsCurrent(),
-      },
-    });
-  };
-
   function reconcile(): void {
     if (snapshot !== null) {
       dispatch({ type: "snapshot.reconcile", snapshot });
@@ -544,156 +332,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
   }
 
   function setFocus(target: FocusTarget): void {
-    if (target.region === "navigator" && target.control === undefined) {
-      target = { ...target, control: lastNavigatorControl.current };
-    }
-    if (
-      renderer.width < 80 ||
-      ((target.region === "workbench" || target.region === "tabs") && !canReceiveWorkbenchInput())
-    ) {
-      return;
-    }
-    if (target.region === "workbench") {
-      const currentModel = deriveShellModel({
-        snapshot: snapshotRef.current,
-        state: liveState.current,
-      });
-      if (
-        currentModel.activeItem?.archived ||
-        snapshotRef.current?.items.some(
-          (item) => item.id === currentModel.activeItem?.parentId && item.archived,
-        )
-      ) {
-        return;
-      }
-      if (activeTab) {
-        lastPaneByTabRef.current = { ...lastPaneByTabRef.current, [activeTab.id]: target.paneId };
-      }
-      if (
-        !(target.control === "reactivate"
-          ? canReactivate(target.paneId)
-          : canReceiveWorkbenchInput(target.paneId))
-      ) {
-        if (activeTab && currentModel.paneIds.includes(target.paneId)) {
-          // Logical selection remains available even when native terminal input is prohibited.
-          dispatch({ type: "focus.set", focus: target, tabId: activeTab.id });
-        }
-        target = { region: "tabs" };
-      }
-    }
-    if (state.dialog === null) {
-      focusShellTarget(renderer, target);
-    }
-    dispatch({ type: "focus.set", focus: target, tabId: activeTab?.id });
-  }
-
-  function execute(
-    command: CommandId,
-    overrides: Partial<
-      Pick<ExecuteCommandInput, "model" | "state" | "focus" | "focusedPaneId" | "onItemOpened">
-    > = {},
-  ): Promise<void> {
-    const currentState = liveState.current;
-    const currentModel = deriveShellModel({ snapshot, state: currentState });
-    const enteringPanes =
-      command === "focus.right" &&
-      (overrides.focus ?? focus).region === "navigator" &&
-      focusNodes.some(
-        ({ target, rect }) => target.region === "workbench" && hasTerminalViewport(rect),
-      );
-    // Navigator entry targets usable content; the strip remains reachable vertically.
-    const nodes = focusNodes.filter(
-      ({ target }) =>
-        (!enteringPanes || target.region !== "tabs") &&
-        (target.region !== "workbench" ||
-          target.control !== "reactivate" ||
-          canReactivate(target.paneId)),
-    );
-    for (const region of ["workspace", "session"] as const) {
-      const node = renderer.root.findDescendantById(`region:${region}`);
-      if (node && isEligibleFocusTarget(node, renderer.root)) {
-        nodes.push({
-          target: { region },
-          rect: { x: node.screenX, y: node.screenY, width: node.width, height: node.height },
-        });
-      }
-    }
-    const restartPaneId =
-      command === "pane.restart" ? (overrides.focusedPaneId ?? focusedPaneId) : null;
-    if (restartPaneId && reactivatingPaneIdsRef.current.has(restartPaneId)) {
-      return Promise.resolve();
-    }
-    if (
-      restartPaneId &&
-      focusTargetFor(renderer.currentFocusedRenderable)?.region === "workbench"
-    ) {
-      // Transfer our own origin before pending state disables the initiating action.
-      setFocus({ region: "tabs" });
-    }
-    const restartEntry = restartPaneId
-      ? entry.startPaneCommand("restart", restartPaneId)
-      : undefined;
-    let commandEntry: PaneEntryHandle | TabEntryHandle | undefined = restartEntry;
-    const restart = restartPaneId
-      ? {
-          epoch: snapshotRef.current?.epoch ?? "",
-          revision: null as number | null,
-        }
-      : null;
-    if (restartPaneId && restart) {
-      reactivatingPaneIdsRef.current.set(restartPaneId, restart);
-      setReactivatingPaneIds(new Set(reactivatingPaneIdsRef.current.keys()));
-    }
-    return executeCommand({
-      command,
-      model: currentModel,
-      state: currentState,
-      snapshot,
-      focus,
-      focusedPaneId,
-      focusNodes: nodes,
-      terminalWidth: dimensions.width,
-      dispatch,
-      setFocus,
-      onItemOpened: undefined,
-      onTabSelectionStarted: (id) => entry.startTabSelection(id).complete,
-      onTabCreateStarted: () => {
-        const handle = entry.startTabSelection(undefined, false, true);
-        commandEntry = handle;
-        return (tabId, paneId, revision) => handle.complete(revision, tabId, paneId);
-      },
-      onPaneRestarted: restartEntry?.complete,
-      onPaneSplitStarted: () => {
-        const handle = entry.startPaneCommand("split");
-        commandEntry = handle;
-        return handle.complete;
-      },
-      run: runCommand,
-      reload: workCraft.reload,
-      quit: () => renderer.destroy(),
-      ...overrides,
-    }).finally(() => {
-      if (restartPaneId) {
-        if (reactivatingPaneIdsRef.current.get(restartPaneId) === restart) {
-          if (restart?.revision === null) {
-            reactivatingPaneIdsRef.current.delete(restartPaneId);
-            setReactivatingPaneIds(new Set(reactivatingPaneIdsRef.current.keys()));
-          } else {
-            reconcileRestartProtection();
-          }
-        }
-      }
-      commandEntry?.finish();
-    });
-  }
-
-  function reactivatePane(paneId: string): void {
-    if (!canReactivate(paneId)) {
-      return;
-    }
-    const target: FocusTarget = { region: "workbench", paneId, control: "reactivate" };
-    setFocus(target);
-    void execute("pane.restart", { focus: target, focusedPaneId: paneId });
+    shellFocus.setFocus(target);
   }
 
   useTerminalEntryCompletion(entry, environment, focusedPaneId, nativeFocus);
@@ -703,8 +342,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
   useKeyboard((key) => {
     // Further input supersedes a deferred handoff; local activation can start a new one.
     const duplicateSubmit =
-      submittingDialogRef.current !== null &&
-      liveState.current.dialog === submittingDialogRef.current &&
+      commands.isSubmitting(liveState.current.dialog) &&
       ["return", "enter", "linefeed"].includes(key.name) &&
       !key.ctrl &&
       !key.meta &&
@@ -814,29 +452,6 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
       });
     }
   });
-
-  function handleCreate(value: string): Promise<void> {
-    const currentState = liveState.current;
-    if (
-      currentState.dialog?.kind !== "create" ||
-      submittingDialogRef.current === currentState.dialog
-    ) {
-      return Promise.resolve();
-    }
-    return submitCreate({
-      value,
-      model,
-      state: currentState,
-      snapshot,
-      getSubmittingDialog: () => submittingDialogRef.current,
-      setSubmittingDialog: (dialog) => {
-        submittingDialogRef.current = dialog;
-      },
-      dispatch,
-      run: runCommand,
-      onItemCreated: entry.createdItemHandler(currentState.dialog),
-    });
-  }
 
   const presentation = statusPresentation({
     leaderActive: routerState.leaderStartedAt !== null,
@@ -975,9 +590,9 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
   };
   const workbenchProps = {
     connected: workCraft.status === "connected",
-    reactivatingPaneIds,
+    reactivatingPaneIds: commands.reactivatingPaneIds,
     canReactivate,
-    onReactivatePane: reactivatePane,
+    onReactivatePane: commands.reactivate,
     inputEnabled: !resizeBlocked && navigatorMode !== "drawer" && state.dialog === null,
     canReceiveInput: canReceiveWorkbenchInput,
     canResize: () => renderer.width >= 80,
@@ -1044,35 +659,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
           sessions,
           promptValue: state.promptValue,
           error: state.fieldError,
-          onArchive: async () => {
-            if (renderer.width < 80) {
-              return;
-            }
-            const dialog = state.dialog;
-            if (dialog?.kind !== "archive" || submittingDialogRef.current === dialog) {
-              return;
-            }
-            const item = snapshot?.items.find((item) => item.id === dialog.itemId);
-            if (
-              !item ||
-              item.kind === "generic" ||
-              item.archived ||
-              item.data.availability !== "unavailable"
-            ) {
-              return;
-            }
-            submittingDialogRef.current = dialog;
-            const result = await runCommand(
-              { type: "item.setArchived", itemId: item.id, archived: true },
-              "navigator",
-            );
-            if (submittingDialogRef.current === dialog) {
-              submittingDialogRef.current = null;
-            }
-            if (result) {
-              dispatch({ type: "dialog.close" });
-            }
-          },
+          onArchive: commands.archive,
           onCreateSession: () => {
             if (renderer.width >= 80) {
               void execute("context.create");
@@ -1097,7 +684,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
           },
           onPromptSubmit: (value: string) => {
             if (renderer.width >= 80) {
-              void handleCreate(value);
+              void commands.submitCreate(value);
             }
           },
         };
