@@ -37,6 +37,8 @@ for (const form of ["value", "type"] as const) {
       : `import type { Thing } from "${path}"; export type Use = Thing;`;
   for (const [owner, path] of [
     ["ui/components", "@/shell/model"],
+    ["ui/interaction", "@/shell/model"],
+    ["ui/theming", "@/workbench/model"],
     ["ui", "@/client/store"],
     ["ui", "@/input/focus"],
     ["ui", "@/navigation/model"],
@@ -52,7 +54,7 @@ for (const form of ["value", "type"] as const) {
     ["shell", "@work-craft/server"],
     ["shell", "@work-craft/server/api/protocol"],
     ["shell", "@work-craft/server/client/private"],
-    ["ui/tests", "../theme"],
+    ["ui/tests", "../theming/theme"],
     ["tests/support", "@work-craft/server/persistence/database"],
   ]) {
     test(`TUI rejects ${form} import ${owner} -> ${path}`, async () => {
@@ -65,12 +67,14 @@ for (const form of ["value", "type"] as const) {
     ["shell", "@/navigation/model"],
     ["shell", "@/workbench/model"],
     ["shell", "@/client/store"],
-    ["shell", "@/ui/theme"],
-    ["ui/components", "@/ui/theme"],
+    ["shell", "@/ui/theming/theme"],
+    ["ui/components", "@/ui/theming/theme"],
     ["ui/components/tests", "@/shell/model"],
     ["client/tests", "@/client/store"],
     ["ui/components/tests", "@/tests/support/render"],
-    ["tests/support", "@/ui/theme"],
+    ["ui/interaction/tests", "@/tests/support/render"],
+    ["ui/theming/tests", "@/tests/support/render"],
+    ["tests/support", "@/ui/theming/theme"],
     ["client", "@work-craft/server/client"],
   ]) {
     test(`TUI accepts ${form} import ${owner} -> ${path}`, async () => {

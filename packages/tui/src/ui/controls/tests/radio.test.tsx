@@ -5,8 +5,8 @@ import { act, type Dispatch, type SetStateAction, useState } from "react";
 
 import { testRender } from "@/tests/support/render";
 import { Radio, RadioGroup } from "@/ui/controls/radio";
-import { ThemeProvider } from "@/ui/theme-provider";
-import { defaultTheme } from "@/ui/themes/default";
+import { ThemeProvider } from "@/ui/theming/theme-provider";
+import { defaultTheme } from "@/ui/theming/themes/default";
 
 test("RadioGroup previews enabled candidates without changing selection until the parent acknowledges", async () => {
   const changes: string[] = [];

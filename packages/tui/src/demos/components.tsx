@@ -1,22 +1,27 @@
 import type { ReactNode } from "react";
 
-import { CardsDemo } from "@/demos/cards-demo";
-import { CommandsDemo } from "@/demos/commands-demo";
+import { CardsDemo } from "@/demos/component-demos/cards-demo";
+import { CommandsDemo } from "@/demos/component-demos/commands-demo";
+import { DialogsDemo } from "@/demos/component-demos/dialogs-demo";
+import { DisclosureDemo } from "@/demos/component-demos/disclosure-demo";
+import { EmptyStateDemo } from "@/demos/component-demos/empty-state-demo";
+import {
+  AlertsDemo,
+  BadgesDemo,
+  ProgressDemo,
+  SpinnersDemo,
+} from "@/demos/component-demos/feedback-demo";
+import { FieldDemo } from "@/demos/component-demos/field-demo";
+import { HorizontalScrollerDemo } from "@/demos/component-demos/horizontal-scroller-demo";
+import { ListDemo } from "@/demos/component-demos/list-demo";
+import { MenusDemo } from "@/demos/component-demos/menus-demo";
+import { TableDemo } from "@/demos/component-demos/table-demo";
+import { TabsDemo } from "@/demos/component-demos/tabs-demo";
+import { ToastDemo } from "@/demos/component-demos/toast-demo";
 import { DemoPage } from "@/demos/demo-page";
-import { DialogsDemo } from "@/demos/dialogs-demo";
-import { DisclosureDemo } from "@/demos/disclosure-demo";
-import { EmptyStateDemo } from "@/demos/empty-state-demo";
-import { AlertsDemo, BadgesDemo, ProgressDemo, SpinnersDemo } from "@/demos/feedback-demo";
-import { FieldDemo } from "@/demos/field-demo";
-import { HorizontalScrollerDemo } from "@/demos/horizontal-scroller-demo";
-import { ListDemo } from "@/demos/list-demo";
-import { MenusDemo } from "@/demos/menus-demo";
-import { TableDemo } from "@/demos/table-demo";
-import { TabsDemo } from "@/demos/tabs-demo";
-import { ToastDemo } from "@/demos/toast-demo";
 import { useDemoTheme } from "@/demos/use-demo-theme";
 import { Text } from "@/ui/primitives/text";
-import { ThemeProvider, useTheme } from "@/ui/theme-provider";
+import { ThemeProvider, useTheme } from "@/ui/theming/theme-provider";
 
 export function ComponentsDemo() {
   const theme = useDemoTheme();

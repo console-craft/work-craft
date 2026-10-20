@@ -12,11 +12,15 @@ import {
 } from "@opentui/react";
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 
-import { useControlHints } from "@/ui/control-hints";
-import { isEligibleFocusTarget } from "@/ui/focus-utils";
-import { pointerPosition, recordPointerPosition, usePointerObservation } from "@/ui/pointer";
-import { resolveColor, type ThemeColor } from "@/ui/theme";
-import { useTheme } from "@/ui/theme-provider";
+import { useControlHints } from "@/ui/interaction/control-hints";
+import { isEligibleFocusTarget } from "@/ui/interaction/focus-utils";
+import {
+  pointerPosition,
+  recordPointerPosition,
+  usePointerObservation,
+} from "@/ui/interaction/pointer";
+import { resolveColor, type ThemeColor } from "@/ui/theming/theme";
+import { useTheme } from "@/ui/theming/theme-provider";
 import { assignRef } from "@/ui/utils";
 
 function nearestScrollBox(node: Renderable | null): ScrollBoxRenderable | null {

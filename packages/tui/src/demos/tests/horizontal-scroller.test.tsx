@@ -5,8 +5,8 @@ import { act } from "react";
 
 import { ComponentsDemo } from "@/demos/components";
 import { testRender } from "@/tests/support/render";
-import { getFocusableRenderables } from "@/ui/focus-utils";
-import { catppuccinTheme } from "@/ui/themes/catppuccin";
+import { getFocusableRenderables } from "@/ui/interaction/focus-utils";
+import { catppuccinTheme } from "@/ui/theming/themes/catppuccin";
 
 async function renderDemo() {
   const setup = await testRender(<ComponentsDemo />, {

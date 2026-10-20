@@ -5,14 +5,14 @@ import { act, createRef, type Dispatch, type SetStateAction, useState } from "re
 
 import { testRender } from "@/tests/support/render";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/ui/components/collapsible";
-import { getControlHints } from "@/ui/control-hints";
 import { Button } from "@/ui/controls/button";
 import { Input } from "@/ui/controls/input";
-import { FocusManager } from "@/ui/focus-manager";
+import { getControlHints } from "@/ui/interaction/control-hints";
+import { FocusManager } from "@/ui/interaction/focus-manager";
 import { Stack } from "@/ui/primitives/stack";
 import { Text } from "@/ui/primitives/text";
-import { ThemeProvider } from "@/ui/theme-provider";
-import { defaultTheme } from "@/ui/themes/default";
+import { ThemeProvider } from "@/ui/theming/theme-provider";
+import { defaultTheme } from "@/ui/theming/themes/default";
 
 test("collapsible trigger forwards native refs, hints, and keyboard focus", async () => {
   const ref = createRef<BoxRenderable>();

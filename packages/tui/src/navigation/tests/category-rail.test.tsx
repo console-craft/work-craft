@@ -6,11 +6,11 @@ import { act } from "react";
 import { CategoryRail } from "@/navigation/category-rail";
 import { snapshotFixture } from "@/tests/support/fixtures";
 import { testRender } from "@/tests/support/render";
-import { getFocusableRenderables } from "@/ui/focus-utils";
 import { icons } from "@/ui/icons/nerd";
+import { getFocusableRenderables } from "@/ui/interaction/focus-utils";
 import { Box } from "@/ui/primitives/box";
-import { ThemeProvider } from "@/ui/theme-provider";
-import { defaultTheme } from "@/ui/themes/default";
+import { ThemeProvider } from "@/ui/theming/theme-provider";
+import { defaultTheme } from "@/ui/theming/themes/default";
 
 async function renderRail() {
   const activated: string[] = [];

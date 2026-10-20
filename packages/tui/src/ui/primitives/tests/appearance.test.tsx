@@ -6,9 +6,9 @@ import { act, type Dispatch, type SetStateAction, useState } from "react";
 import { testRender } from "@/tests/support/render";
 import { Box } from "@/ui/primitives/box";
 import { Text, type TextVariant } from "@/ui/primitives/text";
-import type { ColorToken, Theme } from "@/ui/theme";
-import { ThemeProvider } from "@/ui/theme-provider";
-import { defaultTheme } from "@/ui/themes/default";
+import type { ColorToken, Theme } from "@/ui/theming/theme";
+import { ThemeProvider } from "@/ui/theming/theme-provider";
+import { defaultTheme } from "@/ui/theming/themes/default";
 
 test("Box and Text adopt live theme tokens while preserving explicit colors and native identity", async () => {
   let changeTheme!: Dispatch<SetStateAction<Theme>>;

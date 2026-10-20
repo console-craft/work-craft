@@ -5,8 +5,8 @@ import { act, type Dispatch, type SetStateAction, useState } from "react";
 
 import { testRender } from "@/tests/support/render";
 import { NumberInput } from "@/ui/controls/number";
-import { ThemeProvider } from "@/ui/theme-provider";
-import { defaultTheme } from "@/ui/themes/default";
+import { ThemeProvider } from "@/ui/theming/theme-provider";
+import { defaultTheme } from "@/ui/theming/themes/default";
 
 test("number input preserves value precision across commits, steps, and prop updates", async () => {
   const changes: (number | undefined)[] = [];

@@ -4,7 +4,7 @@ import type { ConnectionStatus } from "@/client/store.ts";
 import { Button } from "@/ui/controls/button.tsx";
 import { Icon } from "@/ui/primitives/icon.tsx";
 import { Text } from "@/ui/primitives/text.tsx";
-import type { ThemeColor } from "@/ui/theme";
+import type { ThemeColor } from "@/ui/theming/theme";
 
 const statusColors = {
   connected: "success",

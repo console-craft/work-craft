@@ -11,11 +11,11 @@ import { act, type Dispatch, type SetStateAction, useState } from "react";
 
 import { StatusBar, type StatusBarProps } from "@/shell/status-bar";
 import { testRender } from "@/tests/support/render";
-import { getFocusableRenderables } from "@/ui/focus-utils";
 import { icons } from "@/ui/icons/nerd";
+import { getFocusableRenderables } from "@/ui/interaction/focus-utils";
 import { Box } from "@/ui/primitives/box";
-import { ThemeProvider } from "@/ui/theme-provider";
-import { defaultTheme } from "@/ui/themes/default";
+import { ThemeProvider } from "@/ui/theming/theme-provider";
+import { defaultTheme } from "@/ui/theming/themes/default";
 
 function textDescendants(node: Renderable): TextRenderable[] {
   return node instanceof TextRenderable ? [node] : node.getChildren().flatMap(textDescendants);

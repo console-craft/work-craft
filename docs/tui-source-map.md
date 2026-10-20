@@ -17,9 +17,11 @@ All paths below are relative to `packages/tui/src/`.
 | Shell lifecycles      | `use-terminal-entry.ts`: request/origin ownership, cancellation, exact destination and native readiness. `terminal-entry.ts`: pure request rules. `use-shell-focus.ts`: native/logical focus, drawer/guard restoration and control memory. `use-shell-commands.ts`: RPC identity, submission and restart protection. `errors.ts` and `use-shell-errors.ts`: source retention, observation, deduplication and expiry. |
 | `navigation/`         | Root/child rows, filtering, expansion presentation, path labels and ordered navigation projections. Discovery remains daemon-owned.                                                                                                                                                                                                                                                                                  |
 | `workbench/`          | `model.ts`: exact surface/tab projections. `layout.ts`: split rectangles, viewport/recovery dimensions. `surface-view.tsx`: stable keyed sibling leaves. `terminal-pane.tsx`: native terminal replay/input/resize and unavailable-pane action.                                                                                                                                                                       |
-| `ui/`                 | Theme contracts/providers, native focus/hints, `pointer.ts` renderer-scoped gesture observation, `collection.ts` rendered ordering/paging. No application imports.                                                                                                                                                                                                                                                   |
+| `ui/`                 | Reusable UI only, with no application imports. `notifications.ts`: notification store/delivery. `renderer.ts`: explicitly invoked listener configuration. `utils.ts`: small rendering helpers.                                                                                                                                                                                                                       |
+| `ui/interaction/`     | Native focus scopes/eligibility, modal ownership, control hints, renderer-scoped pointer observation and rendered collection ordering/paging. Application keyboard routing, terminal-entry gates and status-row policy stay with their application owners.                                                                                                                                                           |
+| `ui/theming/`         | `theme.ts`: contracts and token resolution. `theme-provider.tsx`: React context. `themes/`: bundled presets. Application composition chooses the theme.                                                                                                                                                                                                                                                              |
 | `ui/components/`      | Public compound views remain in their named files. `list-cursor.ts`/`list-reveal.ts`, `command-state.ts`, `tabs-state.ts`/`tab-measurement.ts` own concrete internal mechanisms, not a generic collection engine.                                                                                                                                                                                                    |
-| `demos/`              | `components.tsx` composes named `*-demo.tsx` sections. `controls.tsx`, `demo-page.tsx` and theme shortcuts retain standalone demo behavior.                                                                                                                                                                                                                                                                          |
+| `demos/`              | `components.tsx` composes named `component-demos/*-demo.tsx` sections. `controls.tsx`, `demo-page.tsx` and theme shortcuts retain standalone demo behavior.                                                                                                                                                                                                                                                          |
 
 Shell composes capabilities; client, input, navigation and workbench never import
 shell. Reusable UI never imports application capabilities. Use direct `@/`
@@ -64,8 +66,10 @@ epochs/revisions and recovers output, including same-revision reconnect history.
 ## Tests And Verification
 
 Each capability has one local `tests/` directory. UI tests follow the existing
-owners (`ui/tests/`, `ui/components/tests/`, `ui/controls/tests/`,
-`ui/primitives/tests/`). Do not make a wrapper directory for each source/test pair.
+owners (`ui/tests/`, `ui/interaction/tests/`, `ui/theming/tests/`,
+`ui/components/tests/`, `ui/controls/tests/`, `ui/primitives/tests/`). Demo sections
+live in `demos/component-demos/`, while showcase integration stays in
+`demos/tests/`. Do not make a wrapper directory for each source/test pair.
 Fixtures live with their narrowest consumer, such as `shell/tests/fixtures.tsx`.
 Package-wide acceptance is `tests/entrypoint.test.ts`; genuinely shared rendering
 and snapshot support live in `tests/support/`.
@@ -82,6 +86,7 @@ Run from the repository root:
 bun test packages/tui/src/shell/tests
 bun test packages/tui/src/client/tests
 bun test packages/tui/src/ui/components/tests
+bun test packages/tui/src/ui/interaction/tests packages/tui/src/ui/theming/tests
 bun test packages/tui/src/demos/tests
 bun test packages/tui/src/tests/entrypoint.test.ts
 bun run check
@@ -100,6 +105,7 @@ remains; intentional TUI control-byte sanitizers have expression-local explanati
 - [Architecture](superpowers/specs/2026-09-16-work-craft-architecture-design.md)
 - [Original source organization](superpowers/specs/2026-09-21-tui-source-organization-design.md)
 - [Current maintainability/test-placement amendment](superpowers/specs/2026-10-20-tui-maintainability-design.md)
+- [Interaction/theming and demo grouping follow-up](superpowers/specs/2026-10-20-tui-library-organization-design.md)
 - [Component adoption and intentional native boundaries](superpowers/specs/2026-10-13-tui-component-adoption-design.md#adopted-components-and-intentional-native-boundaries)
 
 Older dated checkpoints and sibling-test trees are historical, not the current

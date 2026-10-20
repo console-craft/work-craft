@@ -4,10 +4,10 @@ import { MouseButton, parseColor, type SelectRenderable } from "@opentui/core";
 import { act, type Dispatch, type SetStateAction, useState } from "react";
 
 import { testRender } from "@/tests/support/render";
-import { getControlHints } from "@/ui/control-hints";
 import { Select, type SelectProps } from "@/ui/controls/select";
-import { ThemeProvider } from "@/ui/theme-provider";
-import { defaultTheme } from "@/ui/themes/default";
+import { getControlHints } from "@/ui/interaction/control-hints";
+import { ThemeProvider } from "@/ui/theming/theme-provider";
+import { defaultTheme } from "@/ui/theming/themes/default";
 
 const options = [
   { name: "Unavailable first", description: "First description", disabled: true },

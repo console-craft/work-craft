@@ -5,8 +5,8 @@ import { act } from "react";
 import { ArchivePrompt } from "@/shell/archive-prompt.tsx";
 import { testRender } from "@/tests/support/render";
 import { Dialog, DialogContent } from "@/ui/components/dialog";
-import { ThemeProvider } from "@/ui/theme-provider";
-import { defaultTheme } from "@/ui/themes/default";
+import { ThemeProvider } from "@/ui/theming/theme-provider";
+import { defaultTheme } from "@/ui/theming/themes/default";
 
 test("Archive identifies the captured directory and confirms without closing on a failed operation", async () => {
   let confirmations = 0;

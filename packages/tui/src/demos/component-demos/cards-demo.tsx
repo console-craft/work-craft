@@ -14,7 +14,7 @@ import { HStack } from "@/ui/primitives/hstack";
 import { Icon } from "@/ui/primitives/icon";
 import { Stack } from "@/ui/primitives/stack";
 import { Text } from "@/ui/primitives/text";
-import { useTheme } from "@/ui/theme-provider";
+import { useTheme } from "@/ui/theming/theme-provider";
 
 export function CardsDemo(): ReactNode {
   const theme = useTheme();

@@ -17,8 +17,8 @@ import {
   useState,
 } from "react";
 
-import { cyclicIndex, renderedOrder } from "@/ui/collection";
-import { useControlHints } from "@/ui/control-hints";
+import { cyclicIndex, renderedOrder } from "@/ui/interaction/collection";
+import { useControlHints } from "@/ui/interaction/control-hints";
 import { Box, type BoxProps } from "@/ui/primitives/box";
 import { HStack, type HStackProps } from "@/ui/primitives/hstack";
 import { Text, type TextProps } from "@/ui/primitives/text";

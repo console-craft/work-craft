@@ -12,9 +12,9 @@ import { act } from "react";
 
 import { ComponentsDemo } from "@/demos/components";
 import { testRender } from "@/tests/support/render";
-import { getFocusableRenderables } from "@/ui/focus-utils";
+import { getFocusableRenderables } from "@/ui/interaction/focus-utils";
 import * as notifications from "@/ui/notifications";
-import { defaultTheme } from "@/ui/themes/default";
+import { defaultTheme } from "@/ui/theming/themes/default";
 
 function findText(node: Renderable, text: string): TextRenderable | undefined {
   if (node instanceof TextRenderable && node.plainText === text) {

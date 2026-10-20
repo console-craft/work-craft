@@ -6,8 +6,8 @@ import {
 } from "@opentui/core";
 import { useLayoutEffect, useRef } from "react";
 
-import { isVisible } from "@/ui/focus-utils";
-import { isPrimaryPointerPressed } from "@/ui/pointer";
+import { isVisible } from "@/ui/interaction/focus-utils";
+import { isPrimaryPointerPressed } from "@/ui/interaction/pointer";
 
 type ListRevealOptions = {
   renderer: CliRenderer;

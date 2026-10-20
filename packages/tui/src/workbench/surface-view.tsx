@@ -7,7 +7,7 @@ import { EmptyState, EmptyStateDescription, EmptyStateTitle } from "@/ui/compone
 import { Box } from "@/ui/primitives/box.tsx";
 import { Divider } from "@/ui/primitives/divider.tsx";
 import { Text } from "@/ui/primitives/text.tsx";
-import { useTheme } from "@/ui/theme-provider.tsx";
+import { useTheme } from "@/ui/theming/theme-provider.tsx";
 import {
   hasTerminalViewport,
   paneIds,

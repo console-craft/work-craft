@@ -5,7 +5,7 @@ import { act } from "react";
 
 import { ControlsDemo } from "@/demos/controls";
 import { testRender } from "@/tests/support/render";
-import { getFocusableRenderables } from "@/ui/focus-utils";
+import { getFocusableRenderables } from "@/ui/interaction/focus-utils";
 
 for (const [name, index, text] of [
   ["input", 0, "a"],

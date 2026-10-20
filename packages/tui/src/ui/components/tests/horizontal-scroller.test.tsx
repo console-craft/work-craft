@@ -12,12 +12,12 @@ import { act, createRef, type Dispatch, type SetStateAction, useState } from "re
 
 import { testRender } from "@/tests/support/render";
 import { HorizontalScroller } from "@/ui/components/horizontal-scroller";
-import { getFocusableRenderables } from "@/ui/focus-utils";
+import { getFocusableRenderables } from "@/ui/interaction/focus-utils";
 import { Box } from "@/ui/primitives/box";
 import { ScrollArea } from "@/ui/primitives/scroll-area";
 import { Text } from "@/ui/primitives/text";
-import { ThemeProvider } from "@/ui/theme-provider";
-import { defaultTheme } from "@/ui/themes/default";
+import { ThemeProvider } from "@/ui/theming/theme-provider";
+import { defaultTheme } from "@/ui/theming/themes/default";
 
 const rows = [
   { id: "a", width: 20, label: "Alpha" },

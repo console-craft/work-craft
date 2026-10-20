@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { BoxRenderable, type Renderable } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 
-import { cyclicIndex, pageIndex, renderedOrder } from "@/ui/collection";
+import { cyclicIndex, pageIndex, renderedOrder } from "@/ui/interaction/collection";
 
 test("collection order follows the rendered tree after keyed reorder, leaving visibility to callers", async () => {
   const { renderer } = await createTestRenderer({ width: 40, height: 10 });

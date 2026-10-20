@@ -1,4 +1,4 @@
-import { defineTheme } from "@/ui/theme";
+import { defineTheme } from "@/ui/theming/theme";
 
 export const tokyoNightTheme = defineTheme({
   name: "tokyo-night",

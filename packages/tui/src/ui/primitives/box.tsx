@@ -1,7 +1,7 @@
 import type { BoxProps as OpenTUIBoxProps } from "@opentui/react";
 
-import { resolveColor, type ThemeColor } from "@/ui/theme";
-import { useTheme } from "@/ui/theme-provider";
+import { resolveColor, type ThemeColor } from "@/ui/theming/theme";
+import { useTheme } from "@/ui/theming/theme-provider";
 
 type ThemedColorProps = {
   bg?: ThemeColor;

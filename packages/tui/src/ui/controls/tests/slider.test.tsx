@@ -5,8 +5,8 @@ import { act, type Dispatch, type SetStateAction, useState } from "react";
 
 import { testRender } from "@/tests/support/render";
 import { Slider, type SliderProps } from "@/ui/controls/slider";
-import { ThemeProvider } from "@/ui/theme-provider";
-import { defaultTheme } from "@/ui/themes/default";
+import { ThemeProvider } from "@/ui/theming/theme-provider";
+import { defaultTheme } from "@/ui/theming/themes/default";
 
 test("Slider requests decimal steps and endpoints without taking ownership of its value", async () => {
   const changes: number[] = [];

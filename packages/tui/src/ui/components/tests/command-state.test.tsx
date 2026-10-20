@@ -11,8 +11,8 @@ import {
   type CommandProps,
 } from "@/ui/components/command";
 import { Box } from "@/ui/primitives/box";
-import { ThemeProvider } from "@/ui/theme-provider";
-import { defaultTheme } from "@/ui/themes/default";
+import { ThemeProvider } from "@/ui/theming/theme-provider";
+import { defaultTheme } from "@/ui/theming/themes/default";
 
 for (const [name, filter, expected] of [
   ["disabled filtering", false, "Alpha"],

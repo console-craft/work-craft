@@ -1,7 +1,7 @@
 import type { BoxRenderable } from "@opentui/core";
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 
-import { isVisible } from "@/ui/focus-utils";
+import { isVisible } from "@/ui/interaction/focus-utils";
 
 export type ListItemRecord = { id: string; value: string; disabled: boolean; node: BoxRenderable };
 type ListCursorOptions = {

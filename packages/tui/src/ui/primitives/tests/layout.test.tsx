@@ -9,8 +9,8 @@ import { Divider } from "@/ui/primitives/divider";
 import { Grid } from "@/ui/primitives/grid";
 import { Text } from "@/ui/primitives/text";
 import { Wrap } from "@/ui/primitives/wrap";
-import { ThemeProvider } from "@/ui/theme-provider";
-import { defaultTheme } from "@/ui/themes/default";
+import { ThemeProvider } from "@/ui/theming/theme-provider";
+import { defaultTheme } from "@/ui/theming/themes/default";
 
 test("Grid preserves equal columns and separate gaps in a partial final row through resize", async () => {
   const setup = await testRender(

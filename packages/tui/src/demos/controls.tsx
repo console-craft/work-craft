@@ -15,7 +15,7 @@ import { Toggle, ToggleGroup } from "@/ui/controls/toggle";
 import { HStack } from "@/ui/primitives/hstack";
 import { Stack } from "@/ui/primitives/stack";
 import { Text } from "@/ui/primitives/text";
-import { ThemeProvider } from "@/ui/theme-provider.tsx";
+import { ThemeProvider } from "@/ui/theming/theme-provider.tsx";
 
 export function ControlsDemo() {
   const theme = useDemoTheme();

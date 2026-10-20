@@ -1,4 +1,4 @@
-import { defineTheme } from "@/ui/theme";
+import { defineTheme } from "@/ui/theming/theme";
 
 export const defaultTheme = defineTheme({
   name: "default",

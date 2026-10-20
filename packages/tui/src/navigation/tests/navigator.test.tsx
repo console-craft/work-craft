@@ -7,8 +7,8 @@ import { navigatorEntries } from "@/navigation/model.ts";
 import { Navigator } from "@/navigation/navigator.tsx";
 import { snapshotFixture } from "@/tests/support/fixtures.ts";
 import { testRender } from "@/tests/support/render";
-import { ThemeProvider } from "@/ui/theme-provider";
-import { defaultTheme } from "@/ui/themes/default";
+import { ThemeProvider } from "@/ui/theming/theme-provider";
+import { defaultTheme } from "@/ui/theming/themes/default";
 
 async function fixture() {
   const opened: string[] = [];

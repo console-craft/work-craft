@@ -13,7 +13,7 @@ import {
 } from "@work-craft/server/client";
 
 import { calculateShellLayout } from "@/shell/layout.ts";
-import { defaultTheme } from "@/ui/themes/default.ts";
+import { defaultTheme } from "@/ui/theming/themes/default.ts";
 import { type PaneRect, projectPaneLayout, terminalRect } from "@/workbench/layout.ts";
 
 const ROOT = resolve(import.meta.dir, "../../../..");

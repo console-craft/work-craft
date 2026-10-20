@@ -9,8 +9,8 @@ import { snapshotFixture } from "@/tests/support/fixtures.ts";
 import { flushMeasured } from "@/tests/support/measured-render";
 import { testRender as renderWithoutTheme } from "@/tests/support/render";
 import { Box } from "@/ui/primitives/box.tsx";
-import { ThemeProvider } from "@/ui/theme-provider.tsx";
-import { defaultTheme } from "@/ui/themes/default.ts";
+import { ThemeProvider } from "@/ui/theming/theme-provider.tsx";
+import { defaultTheme } from "@/ui/theming/themes/default.ts";
 import { SurfaceView, terminalPaneKey } from "@/workbench/surface-view.tsx";
 import { Workbench } from "@/workbench/workbench.tsx";
 

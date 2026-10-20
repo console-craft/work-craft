@@ -1,12 +1,12 @@
 import { useKeyboard } from "@opentui/react";
 import { useState } from "react";
 
-import type { Theme } from "@/ui/theme";
-import { catppuccinTheme } from "@/ui/themes/catppuccin";
-import { defaultTheme } from "@/ui/themes/default";
-import { draculaTheme } from "@/ui/themes/dracula";
-import { nordTheme } from "@/ui/themes/nord";
-import { tokyoNightTheme } from "@/ui/themes/tokyo-night";
+import type { Theme } from "@/ui/theming/theme";
+import { catppuccinTheme } from "@/ui/theming/themes/catppuccin";
+import { defaultTheme } from "@/ui/theming/themes/default";
+import { draculaTheme } from "@/ui/theming/themes/dracula";
+import { nordTheme } from "@/ui/theming/themes/nord";
+import { tokyoNightTheme } from "@/ui/theming/themes/tokyo-night";
 
 const themes = [defaultTheme, catppuccinTheme, draculaTheme, nordTheme, tokyoNightTheme];
 

@@ -8,7 +8,7 @@ import {
   isPrimaryPointerPressed,
   observePointer,
   pointerPosition,
-} from "@/ui/pointer";
+} from "@/ui/interaction/pointer";
 
 function mouse(type: "down" | "up", x: number, y: number): MouseEvent {
   return new MouseEvent(null, {

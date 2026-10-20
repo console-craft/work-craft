@@ -3,10 +3,10 @@ import { expect, test } from "bun:test";
 import { act, useState } from "react";
 
 import { testRender } from "@/tests/support/render";
-import { getControlHints } from "@/ui/control-hints";
+import { getControlHints } from "@/ui/interaction/control-hints";
 import { Box } from "@/ui/primitives/box";
-import { ThemeProvider } from "@/ui/theme-provider";
-import { defaultTheme } from "@/ui/themes/default";
+import { ThemeProvider } from "@/ui/theming/theme-provider";
+import { defaultTheme } from "@/ui/theming/themes/default";
 import { TabBar } from "@/workbench/tab-bar";
 
 async function renderTabs(failed = false) {

@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import type { HStackProps } from "@/ui/primitives/hstack";
 import { HStack } from "@/ui/primitives/hstack";
 import { Text } from "@/ui/primitives/text";
-import type { ThemeColor } from "@/ui/theme";
+import type { ThemeColor } from "@/ui/theming/theme";
 import { isTextContent, textTransform, type TextTransform } from "@/ui/utils";
 
 export type BadgeColor =

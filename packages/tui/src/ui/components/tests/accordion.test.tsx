@@ -12,12 +12,12 @@ import {
   AccordionTrigger,
   type AccordionTriggerProps,
 } from "@/ui/components/accordion";
-import { getControlHints } from "@/ui/control-hints";
 import { Input } from "@/ui/controls/input";
-import { FocusManager } from "@/ui/focus-manager";
+import { getControlHints } from "@/ui/interaction/control-hints";
+import { FocusManager } from "@/ui/interaction/focus-manager";
 import { Stack } from "@/ui/primitives/stack";
-import { ThemeProvider } from "@/ui/theme-provider";
-import { defaultTheme } from "@/ui/themes/default";
+import { ThemeProvider } from "@/ui/theming/theme-provider";
+import { defaultTheme } from "@/ui/theming/themes/default";
 
 function Item({
   value,

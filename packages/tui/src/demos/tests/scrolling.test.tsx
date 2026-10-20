@@ -14,10 +14,10 @@ import { ComponentsDemo } from "@/demos/components";
 import { ControlsDemo } from "@/demos/controls";
 import { DemoPage } from "@/demos/demo-page";
 import { testRender } from "@/tests/support/render";
-import { getFocusableRenderables } from "@/ui/focus-utils";
+import { getFocusableRenderables } from "@/ui/interaction/focus-utils";
 import { Text } from "@/ui/primitives/text";
-import { ThemeProvider } from "@/ui/theme-provider";
-import { defaultTheme } from "@/ui/themes/default";
+import { ThemeProvider } from "@/ui/theming/theme-provider";
+import { defaultTheme } from "@/ui/theming/themes/default";
 
 for (const [name, Demo] of [
   ["components", ComponentsDemo],

@@ -14,8 +14,8 @@ import {
 import { Badge } from "@/ui/components/badge";
 import { Progress, type ProgressProps } from "@/ui/components/progress";
 import { Text } from "@/ui/primitives/text";
-import { ThemeProvider } from "@/ui/theme-provider";
-import { defaultTheme } from "@/ui/themes/default";
+import { ThemeProvider } from "@/ui/theming/theme-provider";
+import { defaultTheme } from "@/ui/theming/themes/default";
 
 test("Badge styles transformed plain content including zero while preserving composed content", async () => {
   const setup = await testRender(

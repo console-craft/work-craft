@@ -5,8 +5,8 @@ import { act } from "react";
 import { testRender } from "@/tests/support/render";
 import { Switch } from "@/ui/controls/switch.tsx";
 import { Box } from "@/ui/primitives/box.tsx";
-import { ThemeProvider } from "@/ui/theme-provider.tsx";
-import { defaultTheme } from "@/ui/themes/default.ts";
+import { ThemeProvider } from "@/ui/theming/theme-provider.tsx";
+import { defaultTheme } from "@/ui/theming/themes/default.ts";
 
 test("switch layout follows indicator position unless alignment is explicit", async () => {
   const cases = [

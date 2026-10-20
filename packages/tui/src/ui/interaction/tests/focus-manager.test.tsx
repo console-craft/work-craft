@@ -5,15 +5,15 @@ import { useRenderer } from "@opentui/react";
 import { act, type Dispatch, type SetStateAction, useLayoutEffect, useState } from "react";
 
 import { testRender } from "@/tests/support/render";
-import { getControlHints } from "@/ui/control-hints";
 import { Button } from "@/ui/controls/button";
 import { Radio, RadioGroup } from "@/ui/controls/radio";
 import { Toggle, ToggleGroup } from "@/ui/controls/toggle";
-import { FocusManager, useFocusScope, useNativeFocus } from "@/ui/focus-manager";
-import type { FocusScopeController } from "@/ui/focus-utils";
+import { getControlHints } from "@/ui/interaction/control-hints";
+import { FocusManager, useFocusScope, useNativeFocus } from "@/ui/interaction/focus-manager";
+import type { FocusScopeController } from "@/ui/interaction/focus-utils";
 import { Box } from "@/ui/primitives/box";
-import { ThemeProvider } from "@/ui/theme-provider";
-import { defaultTheme } from "@/ui/themes/default";
+import { ThemeProvider } from "@/ui/theming/theme-provider";
+import { defaultTheme } from "@/ui/theming/themes/default";
 
 for (const kind of ["radio", "toggle"] as const) {
   test(`${kind} mouse entry keeps keyboard activation on the clicked option`, async () => {

@@ -4,7 +4,7 @@ import type { StackProps } from "@/ui/primitives/stack";
 import { Stack } from "@/ui/primitives/stack";
 import type { TextProps } from "@/ui/primitives/text";
 import { Text } from "@/ui/primitives/text";
-import type { ThemeColor } from "@/ui/theme";
+import type { ThemeColor } from "@/ui/theming/theme";
 
 export interface CardProps extends StackProps {}
 

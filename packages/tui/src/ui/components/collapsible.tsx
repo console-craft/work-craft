@@ -1,9 +1,9 @@
 import { type BoxRenderable, type KeyEvent, MouseButton, type MouseEvent } from "@opentui/core";
 import { createContext, useCallback, useContext, useMemo, useRef, useState } from "react";
 
-import { useControlHints } from "@/ui/control-hints";
-import { useNativeFocus } from "@/ui/focus-manager";
 import { symbols } from "@/ui/icons/symbols";
+import { useControlHints } from "@/ui/interaction/control-hints";
+import { useNativeFocus } from "@/ui/interaction/focus-manager";
 import type { HStackProps } from "@/ui/primitives/hstack";
 import { HStack } from "@/ui/primitives/hstack";
 import type { StackProps } from "@/ui/primitives/stack";

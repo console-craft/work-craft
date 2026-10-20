@@ -4,7 +4,7 @@ import { chmod, copyFile, mkdir, mkdtemp, realpath, rm } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { defaultTheme } from "@/ui/themes/default.ts";
+import { defaultTheme } from "@/ui/theming/themes/default.ts";
 
 import { createClient, decodeBytes } from "../packages/server/src/client.ts";
 

@@ -10,8 +10,8 @@ import { WorkCraftShell } from "@/shell/shell.tsx";
 import { snapshotFixture } from "@/tests/support/fixtures.ts";
 import { flushMeasured } from "@/tests/support/measured-render";
 import { testRender as renderWithoutTheme } from "@/tests/support/render";
-import { ThemeProvider } from "@/ui/theme-provider.tsx";
-import { defaultTheme } from "@/ui/themes/default.ts";
+import { ThemeProvider } from "@/ui/theming/theme-provider.tsx";
+import { defaultTheme } from "@/ui/theming/themes/default.ts";
 import { paneIds } from "@/workbench/layout.ts";
 
 extend({ terminal: EmbeddedTerminalRenderable });

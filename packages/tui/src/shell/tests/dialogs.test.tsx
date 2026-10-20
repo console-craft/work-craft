@@ -28,12 +28,12 @@ import {
 } from "@/shell/tests/fixtures";
 import { snapshotFixture } from "@/tests/support/fixtures.ts";
 import { Dialog } from "@/ui/components/dialog";
-import { getControlHints } from "@/ui/control-hints";
-import { isEligibleFocusTarget } from "@/ui/focus-utils";
 import { icons } from "@/ui/icons/nerd";
+import { getControlHints } from "@/ui/interaction/control-hints";
+import { isEligibleFocusTarget } from "@/ui/interaction/focus-utils";
 import { Box } from "@/ui/primitives/box.tsx";
 import { Stack } from "@/ui/primitives/stack";
-import { defaultTheme } from "@/ui/themes/default.ts";
+import { defaultTheme } from "@/ui/theming/themes/default.ts";
 
 test("a dialog above narrow navigation retains dialog HINTS", async () => {
   const setup = await testRender(<WorkCraftShell workCraft={workCraftStateFixture()} />, {

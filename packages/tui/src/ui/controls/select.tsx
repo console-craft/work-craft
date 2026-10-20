@@ -17,9 +17,9 @@ import {
 import { extend, type SelectProps as OpenTUISelectProps } from "@opentui/react";
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 
-import { nativeActionHints, useControlHints } from "@/ui/control-hints";
-import { resolveColor, type ThemeColor } from "@/ui/theme";
-import { useTheme } from "@/ui/theme-provider";
+import { nativeActionHints, useControlHints } from "@/ui/interaction/control-hints";
+import { resolveColor, type ThemeColor } from "@/ui/theming/theme";
+import { useTheme } from "@/ui/theming/theme-provider";
 import { assignRef, consumeNativeKey, setDisabled } from "@/ui/utils";
 
 export interface SelectOption extends NativeSelectOption {

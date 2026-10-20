@@ -1,6 +1,6 @@
 import type { Renderable } from "@opentui/core";
 
-import type { FocusScopeController } from "@/ui/focus-utils";
+import type { FocusScopeController } from "@/ui/interaction/focus-utils";
 
 export type ModalFocusScope = {
   root: Renderable;

@@ -20,7 +20,7 @@ import {
   twoTabSnapshot,
   workCraftStateFixture,
 } from "@/shell/tests/fixtures";
-import { getControlHints } from "@/ui/control-hints";
+import { getControlHints } from "@/ui/interaction/control-hints";
 
 test("tab entry waits across a frame before the new terminal has native layout", async () => {
   const setup = await localTabFixture(false);

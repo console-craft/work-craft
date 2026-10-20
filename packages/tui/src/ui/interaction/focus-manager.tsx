@@ -2,8 +2,12 @@ import { CliRenderEvents, isRenderable, type KeyEvent, type Renderable } from "@
 import { useKeyboard, useRenderer } from "@opentui/react";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 
-import { createFocusScope, type FocusScopeController, isWithinScope } from "@/ui/focus-utils";
-import { getActiveModalFocusScope } from "@/ui/modal-focus";
+import {
+  createFocusScope,
+  type FocusScopeController,
+  isWithinScope,
+} from "@/ui/interaction/focus-utils";
+import { getActiveModalFocusScope } from "@/ui/interaction/modal-focus";
 
 /** A missing scope is inert, including during buffered input and scope replacement. */
 export function useFocusScope(

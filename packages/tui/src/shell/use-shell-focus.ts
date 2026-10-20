@@ -8,7 +8,7 @@ import { focusShellTarget, focusTargetFor, nativeFocusId } from "@/shell/focus";
 import { resolveShellFocus } from "@/shell/model";
 import type { ShellAction, ShellState } from "@/shell/state";
 import type { TerminalEntryCoordinator } from "@/shell/use-terminal-entry";
-import { focusRenderable, isEligibleFocusTarget } from "@/ui/focus-utils";
+import { focusRenderable, isEligibleFocusTarget } from "@/ui/interaction/focus-utils";
 
 type ShellFocusOptions = {
   environment: ShellEnvironment;

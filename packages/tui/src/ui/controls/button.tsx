@@ -6,11 +6,11 @@ import {
 } from "@opentui/core";
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 
-import { type ControlHintSource, useControlHints } from "@/ui/control-hints";
-import { observeControlFocus } from "@/ui/focus-utils";
+import { type ControlHintSource, useControlHints } from "@/ui/interaction/control-hints";
+import { observeControlFocus } from "@/ui/interaction/focus-utils";
 import { Box, type BoxProps } from "@/ui/primitives/box";
 import { Text } from "@/ui/primitives/text";
-import type { ThemeColor } from "@/ui/theme";
+import type { ThemeColor } from "@/ui/theming/theme";
 import { assignRef, isTextContent, setDisabled } from "@/ui/utils";
 
 export type ButtonVariant = "primary" | "secondary" | "ghost" | "destructive";

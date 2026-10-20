@@ -6,8 +6,8 @@ import { act, type Dispatch, type SetStateAction, useState } from "react";
 import { testRender } from "@/tests/support/render";
 import { Input } from "@/ui/controls/input";
 import { Textarea } from "@/ui/controls/textarea";
-import { ThemeProvider } from "@/ui/theme-provider";
-import { defaultTheme } from "@/ui/themes/default";
+import { ThemeProvider } from "@/ui/theming/theme-provider";
+import { defaultTheme } from "@/ui/theming/themes/default";
 
 for (const { kind, selectable } of [
   { kind: "input", selectable: true },

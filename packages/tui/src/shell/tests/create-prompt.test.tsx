@@ -7,10 +7,10 @@ import { CreatePrompt } from "@/shell/create-prompt";
 import type { CreateKind } from "@/shell/model";
 import { testRender } from "@/tests/support/render";
 import { Dialog, DialogContent } from "@/ui/components/dialog";
-import { FocusManager } from "@/ui/focus-manager";
+import { FocusManager } from "@/ui/interaction/focus-manager";
 import { Box } from "@/ui/primitives/box";
-import { ThemeProvider } from "@/ui/theme-provider";
-import { defaultTheme } from "@/ui/themes/default";
+import { ThemeProvider } from "@/ui/theming/theme-provider";
+import { defaultTheme } from "@/ui/theming/themes/default";
 
 async function renderPrompt(kind: CreateKind, submitted: string[], error: string | null = null) {
   const setup = await testRender(

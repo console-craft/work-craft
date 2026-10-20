@@ -5,8 +5,8 @@ import { act, useState } from "react";
 import { testRender } from "@/tests/support/render";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/ui/components/tabs";
 import { Button } from "@/ui/controls/button";
-import { ThemeProvider } from "@/ui/theme-provider";
-import { defaultTheme } from "@/ui/themes/default";
+import { ThemeProvider } from "@/ui/theming/theme-provider";
+import { defaultTheme } from "@/ui/theming/themes/default";
 
 test("stale deferred panel activation cannot survive trigger replacement at the same value", async () => {
   let replace = () => {};

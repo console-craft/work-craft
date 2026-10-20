@@ -9,19 +9,19 @@ import {
 import { act, createRef, type Dispatch, type SetStateAction, useState } from "react";
 
 import { testRender } from "@/tests/support/render";
-import { getControlHints } from "@/ui/control-hints";
 import { Button } from "@/ui/controls/button";
 import { Input } from "@/ui/controls/input";
+import { getControlHints } from "@/ui/interaction/control-hints";
 import { Box } from "@/ui/primitives/box";
 import { Container } from "@/ui/primitives/container";
 import { HStack } from "@/ui/primitives/hstack";
 import { ScrollArea } from "@/ui/primitives/scroll-area";
 import { Stack } from "@/ui/primitives/stack";
 import { Text } from "@/ui/primitives/text";
-import type { Theme } from "@/ui/theme";
-import { ThemeProvider } from "@/ui/theme-provider";
-import { catppuccinTheme } from "@/ui/themes/catppuccin";
-import { defaultTheme } from "@/ui/themes/default";
+import type { Theme } from "@/ui/theming/theme";
+import { ThemeProvider } from "@/ui/theming/theme-provider";
+import { catppuccinTheme } from "@/ui/theming/themes/catppuccin";
+import { defaultTheme } from "@/ui/theming/themes/default";
 
 test("horizontal overflow does not create vertical overflow for short content", async () => {
   const ref = createRef<ScrollBoxRenderable>();

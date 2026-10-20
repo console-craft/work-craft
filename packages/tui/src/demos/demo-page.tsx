@@ -8,9 +8,9 @@ import {
 import { useKeyboard, useRenderer } from "@opentui/react";
 import { type ReactNode, useRef, useState } from "react";
 
-import { useControlHints } from "@/ui/control-hints";
-import { FocusManager } from "@/ui/focus-manager";
-import { focusRenderable } from "@/ui/focus-utils";
+import { useControlHints } from "@/ui/interaction/control-hints";
+import { FocusManager } from "@/ui/interaction/focus-manager";
+import { focusRenderable } from "@/ui/interaction/focus-utils";
 import { Container, type ContainerSize } from "@/ui/primitives/container";
 import { ScrollArea } from "@/ui/primitives/scroll-area";
 import { Text } from "@/ui/primitives/text";

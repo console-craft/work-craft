@@ -2,9 +2,13 @@ import { type BoxRenderable, CliRenderEvents, type Renderable } from "@opentui/c
 import { useRenderer } from "@opentui/react";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 
-import { cyclicIndex, renderedOrder } from "@/ui/collection";
 import type { TabsProps } from "@/ui/components/tabs";
-import { focusRenderable, getFocusableRenderables, isEligibleFocusTarget } from "@/ui/focus-utils";
+import { cyclicIndex, renderedOrder } from "@/ui/interaction/collection";
+import {
+  focusRenderable,
+  getFocusableRenderables,
+  isEligibleFocusTarget,
+} from "@/ui/interaction/focus-utils";
 
 interface TabsTriggerRecord {
   disabled: boolean;

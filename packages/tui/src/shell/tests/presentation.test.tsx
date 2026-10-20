@@ -26,10 +26,10 @@ import {
 import { WorkspaceBar } from "@/shell/workspace-bar.tsx";
 import { snapshotFixture } from "@/tests/support/fixtures.ts";
 import { Box } from "@/ui/primitives/box.tsx";
-import type { Theme } from "@/ui/theme";
-import { ThemeProvider } from "@/ui/theme-provider.tsx";
-import { defaultTheme } from "@/ui/themes/default.ts";
-import { draculaTheme } from "@/ui/themes/dracula.ts";
+import type { Theme } from "@/ui/theming/theme";
+import { ThemeProvider } from "@/ui/theming/theme-provider.tsx";
+import { defaultTheme } from "@/ui/theming/themes/default.ts";
+import { draculaTheme } from "@/ui/theming/themes/dracula.ts";
 import { paneIds } from "@/workbench/layout.ts";
 
 for (const direction of ["single", "horizontal", "vertical"] as const) {

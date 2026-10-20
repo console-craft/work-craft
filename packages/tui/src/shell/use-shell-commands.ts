@@ -22,7 +22,7 @@ import type {
   TabEntryHandle,
   TerminalEntryCoordinator,
 } from "@/shell/use-terminal-entry";
-import { isEligibleFocusTarget } from "@/ui/focus-utils";
+import { isEligibleFocusTarget } from "@/ui/interaction/focus-utils";
 import { hasTerminalViewport } from "@/workbench/layout";
 
 type ShellCommandView = ShellEnvironment & {

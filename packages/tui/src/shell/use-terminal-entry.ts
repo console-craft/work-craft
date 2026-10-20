@@ -21,7 +21,7 @@ import {
   entryRevisionReady,
   type PendingTerminalEntry,
 } from "@/shell/terminal-entry";
-import { isEligibleFocusTarget } from "@/ui/focus-utils";
+import { isEligibleFocusTarget } from "@/ui/interaction/focus-utils";
 import { hasTerminalViewport } from "@/workbench/layout";
 
 export type TabEntryHandle = {

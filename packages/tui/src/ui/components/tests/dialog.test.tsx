@@ -19,12 +19,12 @@ import {
 } from "@/ui/components/dialog";
 import { Button } from "@/ui/controls/button";
 import { Input } from "@/ui/controls/input";
-import { FocusManager } from "@/ui/focus-manager";
-import { getActiveModalFocusScope } from "@/ui/modal-focus";
+import { FocusManager } from "@/ui/interaction/focus-manager";
+import { getActiveModalFocusScope } from "@/ui/interaction/modal-focus";
 import { Box } from "@/ui/primitives/box";
 import { Text } from "@/ui/primitives/text";
-import { ThemeProvider } from "@/ui/theme-provider";
-import { defaultTheme } from "@/ui/themes/default";
+import { ThemeProvider } from "@/ui/theming/theme-provider";
+import { defaultTheme } from "@/ui/theming/themes/default";
 
 test("undefined open preserves uncontrolled dismissal and focus restoration", async () => {
   const setup = await testRender(

@@ -3,7 +3,7 @@ import { type ReactNode, useState } from "react";
 import { List, ListItem } from "@/ui/components/list";
 import { Button } from "@/ui/controls/button";
 import { Input } from "@/ui/controls/input";
-import { useNativeFocus } from "@/ui/focus-manager";
+import { useNativeFocus } from "@/ui/interaction/focus-manager";
 import { HStack } from "@/ui/primitives/hstack";
 import { Icon } from "@/ui/primitives/icon";
 import { Stack } from "@/ui/primitives/stack";

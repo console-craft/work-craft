@@ -5,8 +5,8 @@ import { act, type Dispatch, type SetStateAction, useState } from "react";
 import { testRender } from "@/tests/support/render";
 import { CardFooter } from "@/ui/components/card";
 import { Text } from "@/ui/primitives/text";
-import { ThemeProvider } from "@/ui/theme-provider";
-import { defaultTheme } from "@/ui/themes/default";
+import { ThemeProvider } from "@/ui/theming/theme-provider";
+import { defaultTheme } from "@/ui/theming/themes/default";
 
 test("footer visibility and width include its divider", async () => {
   let setVisible!: Dispatch<SetStateAction<boolean>>;

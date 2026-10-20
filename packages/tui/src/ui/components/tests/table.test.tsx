@@ -14,12 +14,12 @@ import {
   TableRow,
 } from "@/ui/components/table";
 import { Button } from "@/ui/controls/button";
-import { FocusManager } from "@/ui/focus-manager";
+import { FocusManager } from "@/ui/interaction/focus-manager";
 import { ScrollArea } from "@/ui/primitives/scroll-area";
 import { Stack } from "@/ui/primitives/stack";
 import { Text } from "@/ui/primitives/text";
-import { ThemeProvider } from "@/ui/theme-provider";
-import { defaultTheme } from "@/ui/themes/default";
+import { ThemeProvider } from "@/ui/theming/theme-provider";
+import { defaultTheme } from "@/ui/theming/themes/default";
 
 test("table sizes rows from wrapped content and reflows on resize without a fixed height", async () => {
   const setup = await testRender(

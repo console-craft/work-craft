@@ -4,13 +4,13 @@ import { type BoxRenderable, parseColor, type TextRenderable } from "@opentui/co
 import { act, type Dispatch, type SetStateAction, useState } from "react";
 
 import { testRender } from "@/tests/support/render";
-import { getControlHints } from "@/ui/control-hints";
 import { Button } from "@/ui/controls/button";
 import { Checkbox, type CheckboxProps } from "@/ui/controls/checkbox";
 import { Switch } from "@/ui/controls/switch";
 import { Toggle } from "@/ui/controls/toggle";
-import { ThemeProvider } from "@/ui/theme-provider";
-import { defaultTheme } from "@/ui/themes/default";
+import { getControlHints } from "@/ui/interaction/control-hints";
+import { ThemeProvider } from "@/ui/theming/theme-provider";
+import { defaultTheme } from "@/ui/theming/themes/default";
 
 // These controls deliberately share completed-click and caller-cancellation contracts.
 for (const kind of ["button", "checkbox", "switch", "toggle"] as const) {

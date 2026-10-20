@@ -19,12 +19,6 @@ import {
 } from "react";
 
 import { testRender } from "@/tests/support/render";
-import {
-  type ControlHint,
-  getControlHints,
-  useControlHints,
-  useFocusedControlHints,
-} from "@/ui/control-hints";
 import { Button } from "@/ui/controls/button";
 import { Input, type InputProps } from "@/ui/controls/input";
 import { NumberInput } from "@/ui/controls/number";
@@ -32,9 +26,15 @@ import { Radio, RadioGroup } from "@/ui/controls/radio";
 import { Select, type SelectProps } from "@/ui/controls/select";
 import { Textarea, type TextareaProps } from "@/ui/controls/textarea";
 import { Toggle, ToggleGroup } from "@/ui/controls/toggle";
+import {
+  type ControlHint,
+  getControlHints,
+  useControlHints,
+  useFocusedControlHints,
+} from "@/ui/interaction/control-hints";
 import { Box } from "@/ui/primitives/box";
-import { ThemeProvider } from "@/ui/theme-provider";
-import { defaultTheme } from "@/ui/themes/default";
+import { ThemeProvider } from "@/ui/theming/theme-provider";
+import { defaultTheme } from "@/ui/theming/themes/default";
 
 test("focused metadata updates callbacks and visibility without rerendering on ordinary frames", async () => {
   type State = {

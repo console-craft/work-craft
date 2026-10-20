@@ -15,9 +15,9 @@ import {
   workCraftStateFixture,
 } from "@/shell/tests/fixtures";
 import { snapshotFixture } from "@/tests/support/fixtures.ts";
-import { getControlHints } from "@/ui/control-hints";
 import { icons } from "@/ui/icons/nerd";
-import { defaultTheme } from "@/ui/themes/default.ts";
+import { getControlHints } from "@/ui/interaction/control-hints";
+import { defaultTheme } from "@/ui/theming/themes/default.ts";
 
 test("status acceptance hints follow list, Tab, button and creation input focus", async () => {
   const setup = await testRender(<WorkCraftShell workCraft={workCraftStateFixture()} />, {

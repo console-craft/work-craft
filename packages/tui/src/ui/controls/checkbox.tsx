@@ -6,9 +6,9 @@ import {
 } from "@opentui/core";
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 
-import { useControlHints } from "@/ui/control-hints";
-import { observeControlFocus } from "@/ui/focus-utils";
 import { symbols } from "@/ui/icons/symbols";
+import { useControlHints } from "@/ui/interaction/control-hints";
+import { observeControlFocus } from "@/ui/interaction/focus-utils";
 import { HStack, type HStackProps } from "@/ui/primitives/hstack";
 import { Text, type TextProps } from "@/ui/primitives/text";
 import { assignRef, setDisabled } from "@/ui/utils";

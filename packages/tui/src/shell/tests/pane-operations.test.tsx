@@ -21,7 +21,7 @@ import {
   twoSurfaceSnapshot,
   workCraftStateFixture,
 } from "@/shell/tests/fixtures";
-import { isEligibleFocusTarget } from "@/ui/focus-utils";
+import { isEligibleFocusTarget } from "@/ui/interaction/focus-utils";
 
 for (const order of ["response first", "snapshot first"] as const) {
   for (const activation of ["return", "space", "mouse"] as const) {

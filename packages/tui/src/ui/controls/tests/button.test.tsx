@@ -5,14 +5,14 @@ import { act, type Dispatch, type SetStateAction, useState } from "react";
 
 import { testRender } from "@/tests/support/render";
 import { Spinner } from "@/ui/components/spinner";
-import { getControlHints } from "@/ui/control-hints";
 import { Button } from "@/ui/controls/button";
+import { getControlHints } from "@/ui/interaction/control-hints";
 import { HStack } from "@/ui/primitives/hstack";
 import { Icon } from "@/ui/primitives/icon";
 import { Stack } from "@/ui/primitives/stack";
 import { Text } from "@/ui/primitives/text";
-import { ThemeProvider } from "@/ui/theme-provider";
-import { defaultTheme } from "@/ui/themes/default";
+import { ThemeProvider } from "@/ui/theming/theme-provider";
+import { defaultTheme } from "@/ui/theming/themes/default";
 
 test("button accepts composed content while owning activation and disabled behavior", async () => {
   let presses = 0;

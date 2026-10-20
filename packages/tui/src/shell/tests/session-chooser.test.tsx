@@ -7,8 +7,8 @@ import { act } from "react";
 import { SessionChooser } from "@/shell/session-chooser";
 import { testRender } from "@/tests/support/render";
 import { Dialog, DialogContent } from "@/ui/components/dialog";
-import { ThemeProvider } from "@/ui/theme-provider";
-import { defaultTheme } from "@/ui/themes/default";
+import { ThemeProvider } from "@/ui/theming/theme-provider";
+import { defaultTheme } from "@/ui/theming/themes/default";
 
 async function renderChooser(sessions: Snapshot["sessions"], selected: string[]) {
   return testRender(

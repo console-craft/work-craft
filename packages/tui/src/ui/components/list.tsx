@@ -21,13 +21,13 @@ import {
   useState,
 } from "react";
 
-import { cyclicIndex, pageIndex, renderedOrder } from "@/ui/collection";
 import { type ListItemRecord, useListCursor } from "@/ui/components/list-cursor";
 import { useListReveal } from "@/ui/components/list-reveal";
-import { type ControlHintSource, useControlHints } from "@/ui/control-hints";
-import { useNativeFocus } from "@/ui/focus-manager";
-import { focusRenderable, isEligibleFocusTarget, isVisible } from "@/ui/focus-utils";
-import { consumePrimaryPointerPress, usePointerObservation } from "@/ui/pointer";
+import { cyclicIndex, pageIndex, renderedOrder } from "@/ui/interaction/collection";
+import { type ControlHintSource, useControlHints } from "@/ui/interaction/control-hints";
+import { useNativeFocus } from "@/ui/interaction/focus-manager";
+import { focusRenderable, isEligibleFocusTarget, isVisible } from "@/ui/interaction/focus-utils";
+import { consumePrimaryPointerPress, usePointerObservation } from "@/ui/interaction/pointer";
 import { Box, type BoxProps } from "@/ui/primitives/box";
 import { ScrollArea } from "@/ui/primitives/scroll-area";
 import { Text } from "@/ui/primitives/text";

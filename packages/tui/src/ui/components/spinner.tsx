@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 import type { TextProps } from "@/ui/primitives/text";
 import { Text } from "@/ui/primitives/text";
-import type { ThemeColor } from "@/ui/theme";
+import type { ThemeColor } from "@/ui/theming/theme";
 
 const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const;
 

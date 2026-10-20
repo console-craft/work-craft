@@ -14,7 +14,7 @@ import { act, type Dispatch, type SetStateAction, useState } from "react";
 import { testRender } from "@/tests/support/render";
 import { Toaster, type ToasterPosition, type ToasterProps } from "@/ui/components/toast";
 import { Button } from "@/ui/controls/button";
-import { FocusManager } from "@/ui/focus-manager";
+import { FocusManager } from "@/ui/interaction/focus-manager";
 import {
   createNotificationStore,
   getNotificationStoreController,
@@ -23,8 +23,8 @@ import {
 } from "@/ui/notifications";
 import { Box } from "@/ui/primitives/box";
 import { Text } from "@/ui/primitives/text";
-import { ThemeProvider } from "@/ui/theme-provider";
-import { defaultTheme } from "@/ui/themes/default";
+import { ThemeProvider } from "@/ui/theming/theme-provider";
+import { defaultTheme } from "@/ui/theming/themes/default";
 
 async function renderToaster(notify: NotificationStore, position?: ToasterPosition) {
   const setup = await testRender(

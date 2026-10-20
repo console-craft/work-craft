@@ -22,10 +22,10 @@ import {
 } from "react";
 
 import { type CommandContextValue, useCommandState } from "@/ui/components/command-state";
-import { nativeActionHints, useControlHints } from "@/ui/control-hints";
 import { Input, type InputProps, inputSubmitBindings } from "@/ui/controls/input";
-import { focusRenderable, isEligibleFocusTarget } from "@/ui/focus-utils";
 import { symbols } from "@/ui/icons/symbols";
+import { nativeActionHints, useControlHints } from "@/ui/interaction/control-hints";
+import { focusRenderable, isEligibleFocusTarget } from "@/ui/interaction/focus-utils";
 import { Box, type BoxProps } from "@/ui/primitives/box";
 import { HStack } from "@/ui/primitives/hstack";
 import { ScrollArea, type ScrollAreaProps } from "@/ui/primitives/scroll-area";

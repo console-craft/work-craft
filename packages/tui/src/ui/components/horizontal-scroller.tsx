@@ -9,7 +9,7 @@ import {
 import { useRenderer } from "@opentui/react";
 import { type ReactNode, type RefObject, useId, useLayoutEffect, useRef, useState } from "react";
 
-import { consumePrimaryPointerPress, usePointerObservation } from "@/ui/pointer";
+import { consumePrimaryPointerPress, usePointerObservation } from "@/ui/interaction/pointer";
 import { Box } from "@/ui/primitives/box";
 import { HStack, type HStackProps } from "@/ui/primitives/hstack";
 import { ScrollArea } from "@/ui/primitives/scroll-area";

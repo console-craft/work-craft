@@ -5,9 +5,9 @@ import { act } from "react";
 
 import { ComponentsDemo } from "@/demos/components";
 import { testRender } from "@/tests/support/render";
-import { getFocusableRenderables } from "@/ui/focus-utils";
-import { getActiveModalFocusScope } from "@/ui/modal-focus";
-import { defaultTheme } from "@/ui/themes/default";
+import { getFocusableRenderables } from "@/ui/interaction/focus-utils";
+import { getActiveModalFocusScope } from "@/ui/interaction/modal-focus";
+import { defaultTheme } from "@/ui/theming/themes/default";
 
 test("destructive demo initially focuses Cancel", async () => {
   const setup = await testRender(<ComponentsDemo />, {

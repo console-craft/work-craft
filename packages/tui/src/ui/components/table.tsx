@@ -16,7 +16,7 @@ import {
 
 import { Box, type BoxProps } from "@/ui/primitives/box";
 import { Text, type TextProps } from "@/ui/primitives/text";
-import type { ThemeColor } from "@/ui/theme";
+import type { ThemeColor } from "@/ui/theming/theme";
 import { getContentWidth, isTextContent } from "@/ui/utils";
 
 export type TableBorder = "none" | "minimal" | "full";

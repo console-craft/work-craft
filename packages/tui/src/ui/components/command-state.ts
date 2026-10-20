@@ -9,8 +9,8 @@ import {
 import { useRenderer } from "@opentui/react";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 
-import { cyclicIndex, pageIndex, renderedOrder } from "@/ui/collection";
 import type { CommandProps } from "@/ui/components/command";
+import { cyclicIndex, pageIndex, renderedOrder } from "@/ui/interaction/collection";
 
 export type CommandItemRegistration = {
   id: string;

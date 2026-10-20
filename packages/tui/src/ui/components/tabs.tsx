@@ -20,16 +20,16 @@ import {
 import { HorizontalScroller } from "@/ui/components/horizontal-scroller";
 import { useTabLabelWidth } from "@/ui/components/tab-measurement";
 import { type TabsContextValue, useTabsState } from "@/ui/components/tabs-state";
-import { type ControlHintSource, useControlHints } from "@/ui/control-hints";
-import { useNativeFocus } from "@/ui/focus-manager";
-import { consumePrimaryPointerPress, usePointerObservation } from "@/ui/pointer";
+import { type ControlHintSource, useControlHints } from "@/ui/interaction/control-hints";
+import { useNativeFocus } from "@/ui/interaction/focus-manager";
+import { consumePrimaryPointerPress, usePointerObservation } from "@/ui/interaction/pointer";
 import { Box } from "@/ui/primitives/box";
 import type { HStackProps } from "@/ui/primitives/hstack";
 import { HStack } from "@/ui/primitives/hstack";
 import type { StackProps } from "@/ui/primitives/stack";
 import { Stack } from "@/ui/primitives/stack";
 import { Text } from "@/ui/primitives/text";
-import type { ThemeColor } from "@/ui/theme";
+import type { ThemeColor } from "@/ui/theming/theme";
 import { assignRef, isTextContent } from "@/ui/utils";
 
 const TabsContext = createContext<TabsContextValue | null>(null);

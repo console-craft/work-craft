@@ -2,7 +2,7 @@ import { CliRenderEvents, type Renderable } from "@opentui/core";
 import { useRenderer } from "@opentui/react";
 import { type RefObject, useLayoutEffect, useRef, useState } from "react";
 
-import { isEligibleFocusTarget } from "@/ui/focus-utils";
+import { isEligibleFocusTarget } from "@/ui/interaction/focus-utils";
 
 export type ControlHint = { keys: string; label: string };
 

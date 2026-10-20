@@ -10,7 +10,7 @@ import {
   isWithinScope,
   moveFocus,
   observeControlFocus,
-} from "@/ui/focus-utils";
+} from "@/ui/interaction/focus-utils";
 import { setDisabled } from "@/ui/utils";
 
 test("control focus observation initializes native focus and releases replaced-node listeners", async () => {

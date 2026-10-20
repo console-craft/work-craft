@@ -6,8 +6,8 @@ import { act, type Dispatch, type SetStateAction, useState } from "react";
 import { testRender } from "@/tests/support/render";
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/ui/components/field";
 import { Text } from "@/ui/primitives/text";
-import { ThemeProvider } from "@/ui/theme-provider";
-import { defaultTheme } from "@/ui/themes/default";
+import { ThemeProvider } from "@/ui/theming/theme-provider";
+import { defaultTheme } from "@/ui/theming/themes/default";
 
 test.each([
   ["label", FieldLabel],

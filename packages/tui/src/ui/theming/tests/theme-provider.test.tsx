@@ -4,8 +4,8 @@ import { act } from "react";
 
 import { testRender } from "@/tests/support/render";
 import { Text } from "@/ui/primitives/text.tsx";
-import { ThemeProvider, useTheme } from "@/ui/theme-provider.tsx";
-import { defaultTheme } from "@/ui/themes/default.ts";
+import { ThemeProvider, useTheme } from "@/ui/theming/theme-provider.tsx";
+import { defaultTheme } from "@/ui/theming/themes/default.ts";
 
 function ThemeName() {
   return <Text>{useTheme().name}</Text>;

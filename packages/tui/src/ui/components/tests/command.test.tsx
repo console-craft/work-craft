@@ -18,14 +18,14 @@ import {
   CommandList,
   type CommandProps,
 } from "@/ui/components/command";
-import { getControlHints } from "@/ui/control-hints";
 import { Button } from "@/ui/controls/button";
-import { FocusManager } from "@/ui/focus-manager";
-import { getFocusableRenderables } from "@/ui/focus-utils";
+import { getControlHints } from "@/ui/interaction/control-hints";
+import { FocusManager } from "@/ui/interaction/focus-manager";
+import { getFocusableRenderables } from "@/ui/interaction/focus-utils";
 import { Box } from "@/ui/primitives/box";
 import { Text } from "@/ui/primitives/text";
-import { ThemeProvider } from "@/ui/theme-provider";
-import { defaultTheme } from "@/ui/themes/default";
+import { ThemeProvider } from "@/ui/theming/theme-provider";
+import { defaultTheme } from "@/ui/theming/themes/default";
 
 function Fixture({ children, ...props }: CommandProps) {
   return (

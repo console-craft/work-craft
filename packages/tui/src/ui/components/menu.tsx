@@ -20,7 +20,7 @@ import {
 } from "react";
 
 import { Button, type ButtonProps } from "@/ui/controls/button";
-import { isVisible } from "@/ui/focus-utils";
+import { isVisible } from "@/ui/interaction/focus-utils";
 import { Box, type BoxProps } from "@/ui/primitives/box";
 import { Divider, type DividerProps } from "@/ui/primitives/divider";
 import { Text } from "@/ui/primitives/text";
