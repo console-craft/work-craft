@@ -1,7 +1,7 @@
 import { useRenderer } from "@opentui/react";
 import { useRef, useState } from "react";
 
-import type { WorkCraftState } from "@/client/use-work-craft";
+import type { WorkCraftState } from "@/client/store";
 import type { CommandId } from "@/input/command-router";
 import type { FocusTarget } from "@/input/focus";
 import {

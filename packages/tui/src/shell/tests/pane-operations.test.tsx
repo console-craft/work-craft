@@ -9,7 +9,7 @@ import {
 import { type Snapshot } from "@work-craft/server/client";
 import { act, type ReactNode, useState } from "react";
 
-import { type WorkCraftState } from "@/client/use-work-craft.ts";
+import type { WorkCraftState } from "@/client/store.ts";
 import { WorkCraftShell } from "@/shell/shell.tsx";
 import {
   liveInputFixture,

@@ -5,7 +5,7 @@ import { useKeyboard, usePaste, useRenderer, useTerminalDimensions } from "@open
 import type { CategoryKind } from "@work-craft/server/client";
 import { type ReactNode, useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 
-import type { WorkCraftState } from "@/client/use-work-craft.ts";
+import type { WorkCraftState } from "@/client/store.ts";
 import {
   type CommandContext,
   commandHints,

@@ -5,7 +5,7 @@ import { extend } from "@opentui/react";
 import { type Command, type CommandResponse, type Snapshot } from "@work-craft/server/client";
 import { act, type Dispatch, type ReactNode, type SetStateAction, useState } from "react";
 
-import { createWorkCraftStore, type WorkCraftState } from "@/client/use-work-craft.ts";
+import { createWorkCraftStore, type WorkCraftState } from "@/client/store.ts";
 import { WorkCraftShell } from "@/shell/shell.tsx";
 import { snapshotFixture } from "@/tests/support/fixtures.ts";
 import { flushMeasured } from "@/tests/support/measured-render";

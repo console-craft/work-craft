@@ -2,8 +2,60 @@ import { expect, test } from "bun:test";
 
 import type { Snapshot, StreamHandlers, WorkCraftClient } from "@work-craft/server/client";
 
-import { createWorkCraftStore } from "@/client/use-work-craft.ts";
+import { createWorkCraftStore } from "@/client/store.ts";
 import { snapshotFixture } from "@/tests/support/fixtures.ts";
+
+for (const lifecycle of ["reload", "stop and start"] as const) {
+  test(`a delayed stream gap refresh cannot replace a newer epoch after ${lifecycle}`, async () => {
+    const old = snapshotFixture({ epoch: "old", revision: 4 });
+    const fresh = snapshotFixture({ epoch: "fresh", revision: 1 });
+    const entered = deferred<void>();
+    const refresh = deferred<Snapshot>();
+    const handlers: StreamHandlers[] = [];
+    let snapshots = 0;
+    const client = fakeClient(old);
+    client.snapshot = async () => {
+      if (++snapshots === 1) {
+        return old;
+      }
+      if (snapshots === 2) {
+        entered.resolve();
+        return refresh.promise;
+      }
+      return fresh;
+    };
+    client.stream = async (next) => {
+      handlers.push(next);
+      return { close() {}, sendInput() {}, resize() {} };
+    };
+    const store = createWorkCraftStore(client);
+    try {
+      await store.start();
+      handlers[0]!.onMessage({ type: "snapshot", snapshot: { ...old, revision: 6 } });
+      await entered.promise;
+      if (lifecycle === "reload") {
+        await store.reload();
+      } else {
+        store.stop();
+        await store.start();
+      }
+      refresh.resolve({ ...old, revision: 6 });
+      await store.apply({
+        type: "terminal.output",
+        epoch: "never",
+        paneId: "p",
+        cursor: 1,
+        data: "",
+      });
+      expect(store.snapshot()).toBe(fresh);
+      expect(store.getState().status).toBe("connected");
+      expect(handlers).toHaveLength(2);
+    } finally {
+      refresh.resolve(old);
+      store.stop();
+    }
+  });
+}
 
 function fakeClient(replacement: Snapshot): WorkCraftClient & { refreshCount(): number } {
   let refreshes = 0;

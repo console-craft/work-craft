@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-import type { ConnectionStatus } from "@/client/use-work-craft.ts";
+import type { ConnectionStatus } from "@/client/store.ts";
 import { Button } from "@/ui/controls/button.tsx";
 import { Icon } from "@/ui/primitives/icon.tsx";
 import { Text } from "@/ui/primitives/text.tsx";

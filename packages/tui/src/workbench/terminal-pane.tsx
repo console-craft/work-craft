@@ -2,7 +2,7 @@ import type { EmbeddedTerminalRenderable } from "@opentui/core";
 import type { Snapshot, StreamConnection } from "@work-craft/server/client";
 import { useEffect, useLayoutEffect, useRef } from "react";
 
-import type { TerminalBuffer } from "@/client/use-work-craft.ts";
+import type { TerminalBuffer } from "@/client/terminal-buffer.ts";
 import { Alert, AlertContent, AlertTitle } from "@/ui/components/alert.tsx";
 import { Button } from "@/ui/controls/button.tsx";
 import { Box } from "@/ui/primitives/box.tsx";
