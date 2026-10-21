@@ -124,6 +124,36 @@ test("live cwd follows shell cd, not foreground child cd", async () => {
   }
 });
 
+test("resizing a shell PTY notifies its nested application without requiring input", async () => {
+  let output = "";
+  const registry = runtime({
+    onOutput: (_id, bytes) => {
+      output += new TextDecoder().decode(bytes);
+    },
+  });
+  const code = `process.on("SIGWINCH", () => {
+    const size = Bun.spawnSync(["stty", "size"], { stdin: "inherit" });
+    console.log("child-resized=" + new TextDecoder().decode(size.stdout).trim());
+  }); console.log("child-ready"); setInterval(() => {}, 1000);`;
+  const quote = (text: string) => `'${text.replaceAll("'", "'\\''")}'`;
+  await registry.start(
+    shellPane("pane-1", process.cwd(), "/bin/sh", [
+      "-c",
+      `${quote(process.execPath)} -e ${quote(code)}; :`,
+    ]),
+  );
+  async function waitFor(text: string): Promise<void> {
+    const deadline = Date.now() + 2000;
+    while (!output.includes(text) && Date.now() < deadline) {
+      await Bun.sleep(10);
+    }
+    expect(output).toContain(text);
+  }
+  await waitFor("child-ready");
+  registry.resize("pane-1", 100, 30);
+  await waitFor("child-resized=30 100");
+});
+
 test("current directory rejects missing and exited runtimes", async () => {
   const registry = runtime();
   await expect(registry.currentDirectory("missing")).rejects.toThrow("no live runtime");

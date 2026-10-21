@@ -119,6 +119,7 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
   }
 
   useLayoutEffect(drain);
+  useLayoutEffect(followCursor, [viewport.width, viewport.height]);
   useLayoutEffect(() => {
     renderer.on(CliRenderEvents.FRAME, drain);
     return () => {
@@ -153,7 +154,7 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
 
   function followCursor(): void {
     const screen = terminal.current?.screen();
-    if (!screen) {
+    if (!screen || !(viewport.width > 0 && viewport.height > 0)) {
       return;
     }
     const x = Math.max(
@@ -207,7 +208,10 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
           const current = latest.current;
           if (source === "response") {
             if (!suppressResponse.current && !resizing.current && current.canRespond()) {
-              current.onData(bytes, source);
+              // shortcut: native mode 2048 advertises reports it never emits; remove when native resize reports work.
+              const text = new TextDecoder().decode(bytes);
+              const reply = text.replaceAll("\x1b[?2048;2$y", "\x1b[?2048;0$y");
+              current.onData(reply === text ? bytes : new TextEncoder().encode(reply), source);
             }
           } else if (inputReady.current && current.inputEnabled && current.canInput()) {
             current.onData(bytes, source);

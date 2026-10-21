@@ -34,14 +34,24 @@ function buffer(text = "", overrides: Partial<TerminalBuffer> = {}): TerminalBuf
 async function viewport(initial: TerminalBuffer, width: number, height: number, responds = true) {
   const emitted: { source: string; text: string }[] = [];
   let update!: (next: TerminalBuffer) => void;
+  let resizeLocal!: (width: number, height: number) => void;
   let resyncs = 0;
   function Fixture() {
+    const [viewport, setViewport] = useState({ width, height });
+    resizeLocal = (width, height) => setViewport({ width, height });
     const [current, setCurrent] = useState(initial);
     update = setCurrent;
     const lastGrid = current.resizes.at(-1) ?? current.initialSize ?? { cols: 100, rows: 30 };
     return (
       <ThemeProvider theme={defaultTheme}>
-        <Box position="absolute" left={2} top={2} width={width} height={height} overflow="hidden">
+        <Box
+          position="absolute"
+          left={2}
+          top={2}
+          width={viewport.width}
+          height={viewport.height}
+          overflow="hidden"
+        >
           <TerminalViewport
             paneId="p"
             buffer={current}
@@ -76,7 +86,7 @@ async function viewport(initial: TerminalBuffer, width: number, height: number, 
   function terminal() {
     return setup.renderer.root.findDescendantById("terminal:p") as EmbeddedTerminalRenderable;
   }
-  return { ...setup, update, emitted, terminal, resyncs: () => resyncs };
+  return { ...setup, update, resizeLocal, emitted, terminal, resyncs: () => resyncs };
 }
 
 test("two canonical native viewports agree through ordered history resizes and cursor clipping", async () => {
@@ -132,6 +142,40 @@ test("two canonical native viewports agree through ordered history resizes and c
     act(() => small.renderer.destroy());
     act(() => large.renderer.destroy());
     writes.mockRestore();
+  }
+});
+
+test("a passive viewport shrink follows the existing cursor without requiring new output", async () => {
+  const setup = await viewport(buffer("\x1b[25;90H@\x1b[25;90H"), 100, 30);
+  try {
+    act(() => setup.resizeLocal(40, 10));
+    await flushMeasured(setup);
+    expect(setup.terminal().screen()).toMatchObject({
+      columns: 100,
+      rows: 30,
+      cursor: { x: 89, y: 24 },
+    });
+    expect(setup.captureCharFrame()).toContain("@");
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
+test("the native viewport does not advertise in-band resize reports it cannot deliver", async () => {
+  const setup = await viewport(buffer(), 60, 12);
+  try {
+    const query = encode("\x1b[?2048$p");
+    act(() =>
+      setup.update(
+        buffer("", {
+          chunks: [{ cursor: query.length, data: query, geometrySequence: 1, origin: "live" }],
+        }),
+      ),
+    );
+    await flushMeasured(setup);
+    expect(setup.emitted).toEqual([{ source: "response", text: "\x1b[?2048;0$y" }]);
+  } finally {
+    act(() => setup.renderer.destroy());
   }
 });
 

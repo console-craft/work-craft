@@ -205,6 +205,22 @@ async function smokeCoding(): Promise<void> {
   const opened = JSON.parse(
     await run(["surface", "ensure", "--item", registered.id, "--json"]),
   ) as { surfaceId: string; paneId: string };
+  const selected = JSON.parse(
+    await run(["session", "open-item", session.id, "--item", registered.id, "--json"]),
+  );
+  assert.equal(selected.paneId, opened.paneId, "compiled Open duplicated the runtime");
+  const selectedPane = JSON.parse(
+    await run(["session", "select", session.id, "--pane", opened.paneId, "--json"]),
+  );
+  assert.equal(selectedPane.navigation.paneId, opened.paneId);
+  const stepped = JSON.parse(
+    await run(["session", "step", session.id, "--level", "tab", "--direction", "next", "--json"]),
+  );
+  assert.deepEqual(
+    stepped.navigation,
+    selectedPane.navigation,
+    "compiled single-tab step changed selection",
+  );
   const stream = await client.stream({ onMessage() {} });
   try {
     await sendTerminalInput(

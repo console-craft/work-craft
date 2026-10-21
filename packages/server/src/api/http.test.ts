@@ -91,6 +91,92 @@ test("the Unix socket is owner-only", async () => {
   }
 });
 
+test("the real stream rejects captured bytes after a navigation round trip but accepts current bytes", async () => {
+  const fixture = await startTestServer({ withPane: true });
+  await fixture.app.runtime.start(fixture.app.snapshot().panes[0]!);
+  const write = spyOn(fixture.app.runtime, "write");
+  const stream = await fixture.client.stream({ onMessage() {} });
+  try {
+    const attachment = await stream.attach("session-1");
+    const attached = await fixture.client.snapshot();
+    const reportStamp = {
+      epoch: attached.epoch,
+      attachmentGeneration: attachment.generation,
+      navigationGeneration: attached.navigation[0]!.generation,
+      geometrySequence: attached.geometry.tabs[0]!.generation,
+    };
+    stream.reportViewport(
+      {
+        epoch: attached.epoch,
+        attachmentGeneration: attachment.generation,
+        navigationGeneration: attached.navigation[0]!.generation,
+        tabId: "tab-1",
+        canvas: { cols: 80, rows: 25 },
+        eligible: true,
+      },
+      reportStamp,
+    );
+    await stream.command(
+      {
+        type: "session.navigate",
+        sessionId: "session-1",
+        target: { kind: "pane", paneId: "pane-1" },
+      },
+      attachment.generation,
+    );
+    const before = await fixture.client.snapshot();
+    const stamp = {
+      epoch: before.epoch,
+      attachmentGeneration: attachment.generation,
+      navigationGeneration: before.navigation[0]!.generation,
+      geometrySequence: before.geometry.tabs[0]!.generation,
+    };
+    stream.sendInput("pane-1", new TextEncoder().encode("current"), {
+      ...stamp,
+      source: "input",
+      kind: "key",
+    });
+    await stream.command(
+      {
+        type: "session.navigate",
+        sessionId: "session-1",
+        target: { kind: "category", category: "operations" },
+      },
+      attachment.generation,
+    );
+    await stream.command(
+      {
+        type: "session.navigate",
+        sessionId: "session-1",
+        target: { kind: "pane", paneId: "pane-1" },
+      },
+      attachment.generation,
+    );
+    stream.sendInput("pane-1", new TextEncoder().encode("stale"), {
+      ...stamp,
+      source: "input",
+      kind: "key",
+    });
+    const after = await stream.command(
+      {
+        type: "session.navigate",
+        sessionId: "session-1",
+        target: { kind: "pane", paneId: "pane-1" },
+      },
+      attachment.generation,
+    );
+    expect(after.result.navigation!.generation).toBeGreaterThan(stamp.navigationGeneration);
+    expect(write.mock.calls.map(([, bytes]) => new TextDecoder().decode(bytes))).toEqual([
+      "current",
+    ]);
+  } finally {
+    stream.close();
+    write.mockRestore();
+    await fixture.app.runtime.stopAll();
+    await fixture.close();
+  }
+});
+
 test("directory registration exposes requested and root IDs without opening a surface", async () => {
   const fixture = await startTestServer();
   const target = await mkdtemp(join(tmpdir(), "work-craft-http-directory-"));
