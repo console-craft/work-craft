@@ -20,6 +20,7 @@ import type {
 } from "./api/protocol.ts";
 import type { Health } from "./application/app.ts";
 import { resolvePaths } from "./daemon/paths.ts";
+import { observeOutput, outputProbeEnabled } from "./terminal/output-probe.ts";
 
 export { decodeBytes } from "./api/protocol.ts";
 export { projectPaneLayout } from "./application/layout.ts";
@@ -104,12 +105,19 @@ export const INTERNAL_DESTROY_DAEMON_ARG = "__daemon-destroy";
 export { resolvePaths };
 
 async function requestJson(socketPath: string, path: string, init?: RequestInit): Promise<unknown> {
+  const started = outputProbeEnabled ? performance.now() : 0;
+  if (outputProbeEnabled && path === "/snapshot") {
+    observeOutput({ stage: "snapshot.fetch.start" });
+  }
   const response = await fetch(`http://localhost${path}`, {
     ...init,
     signal: init?.signal ?? AbortSignal.timeout(3_000),
     unix: socketPath,
   });
   const body = await response.json();
+  if (outputProbeEnabled && path === "/snapshot") {
+    observeOutput({ stage: "snapshot.fetch.end", durationMs: performance.now() - started });
+  }
   if (!response.ok) {
     const message =
       typeof body === "object" && body !== null && "error" in body && typeof body.error === "string"
@@ -239,6 +247,7 @@ export function createClient(options: { socketPath?: string } = {}): WorkCraftCl
       let closeError: Error | undefined;
       let current: Pick<Snapshot, "epoch" | "revision"> | undefined;
       let snapshots = Promise.resolve();
+      let queuedMessages = 0;
       let alive = true;
       let requestId = 0;
       const pending = new Map<
@@ -318,39 +327,81 @@ export function createClient(options: { socketPath?: string } = {}): WorkCraftCl
 
       socket.on("message", (data) => {
         try {
+          const received = outputProbeEnabled ? performance.now() : 0;
           const message = JSON.parse(data.toString()) as ServerMessage;
+          const metadata =
+            outputProbeEnabled && message.type === "terminal.output"
+              ? {
+                  paneId: message.paneId,
+                  cursor: message.cursor,
+                  geometrySequence: message.geometrySequence,
+                }
+              : undefined;
+          if (outputProbeEnabled) {
+            queuedMessages++;
+            observeOutput({
+              stage: "socket.receive",
+              ...metadata,
+              bytes: Array.isArray(data)
+                ? data.reduce((sum, chunk) => sum + chunk.byteLength, 0)
+                : data.byteLength,
+              pending: queuedMessages,
+              durationMs: performance.now() - received,
+            });
+          }
           snapshots = snapshots
             .then(async () => {
-              if (!alive) {
-                return;
+              const applied = outputProbeEnabled ? performance.now() : 0;
+              if (outputProbeEnabled) {
+                observeOutput({
+                  stage: "transport.apply.start",
+                  ...metadata,
+                  pending: queuedMessages,
+                  durationMs: applied - received,
+                });
               }
-              if (message.type === "snapshot.available") {
-                applySnapshot((await requestJson(socketPath, "/snapshot")) as Snapshot);
-                return;
-              }
-              if (message.type === "snapshot") {
-                await handleSnapshot(message.snapshot);
-                return;
-              }
-              if (
-                (message.type === "client.attached" && message.requestId !== null) ||
-                message.type === "command.result" ||
-                message.type === "command.error"
-              ) {
-                const item = pending.get(message.requestId!);
-                if (item) {
-                  pending.delete(message.requestId!);
-                  clearTimeout(item.timer);
-                  if (message.type === "command.error") {
-                    item.reject(new ApiError(message.message, message.field));
-                  } else {
-                    item.resolve(
-                      message.type === "client.attached" ? message.attachment : message.response,
-                    );
+              try {
+                if (!alive) {
+                  return;
+                }
+                if (message.type === "snapshot.available") {
+                  applySnapshot((await requestJson(socketPath, "/snapshot")) as Snapshot);
+                  return;
+                }
+                if (message.type === "snapshot") {
+                  await handleSnapshot(message.snapshot);
+                  return;
+                }
+                if (
+                  (message.type === "client.attached" && message.requestId !== null) ||
+                  message.type === "command.result" ||
+                  message.type === "command.error"
+                ) {
+                  const item = pending.get(message.requestId!);
+                  if (item) {
+                    pending.delete(message.requestId!);
+                    clearTimeout(item.timer);
+                    if (message.type === "command.error") {
+                      item.reject(new ApiError(message.message, message.field));
+                    } else {
+                      item.resolve(
+                        message.type === "client.attached" ? message.attachment : message.response,
+                      );
+                    }
                   }
                 }
+                handlers.onMessage(message);
+              } finally {
+                if (outputProbeEnabled) {
+                  queuedMessages--;
+                  observeOutput({
+                    stage: "transport.apply.end",
+                    ...metadata,
+                    pending: queuedMessages,
+                    durationMs: performance.now() - applied,
+                  });
+                }
               }
-              handlers.onMessage(message);
             })
             .catch(closeWith);
         } catch (error) {

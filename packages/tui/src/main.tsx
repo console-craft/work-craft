@@ -1,7 +1,8 @@
-import { createCliRenderer, EmbeddedTerminalRenderable } from "@opentui/core";
+import { CliRenderEvents, createCliRenderer, EmbeddedTerminalRenderable } from "@opentui/core";
 import { createRoot, extend } from "@opentui/react";
 
 import { App } from "@/app.tsx";
+import { observeOutput, outputProbeEnabled } from "@/client/output-probe";
 import { ComponentsDemo } from "@/demos/components";
 import { ControlsDemo } from "@/demos/controls";
 import { configureRendererListeners } from "@/ui/renderer";
@@ -32,6 +33,14 @@ const renderer = await createCliRenderer({
   useKittyKeyboard: { disambiguate: true },
 });
 configureRendererListeners(renderer);
+if (outputProbeEnabled) {
+  let previous = performance.now();
+  renderer.on(CliRenderEvents.FRAME, () => {
+    const now = performance.now();
+    observeOutput({ stage: "frame", durationMs: now - previous });
+    previous = now;
+  });
+}
 if (process.env.CONTROLS_DEMO === "true" || process.env.COMPONENTS_DEMO === "true") {
   renderer.keyInput.on("keypress", (event) => {
     if (

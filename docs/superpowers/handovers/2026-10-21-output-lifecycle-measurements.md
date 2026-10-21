@@ -64,3 +64,22 @@ demonstrated. The standalone `bun -e` observer printed those successful assertio
 but did not exit within its 120-second tool timeout; Bun's ordinary test runner
 does not exhibit that observer shutdown behavior. Do not count the observer as
 a clean process-exit test. No real-state cleanup was performed.
+
+## Probe Verification
+
+Temporary probes are disabled without an explicit owned diagnostic directory and
+role. Enabled probes retain at most 32,768 metadata-only events, aggregate later
+observations, and flush outside measured intervals on fixture-owned `SIGUSR2`.
+Overflow or a missing completed footer invalidates detailed attribution.
+No terminal text, key values, credentials or public protocol fields are logged.
+
+Recorder and real normal-entrypoint flush coverage passed; the connected client,
+native workbench, server client and HTTP group passed 161 tests/889 assertions.
+Type checking passed. The fresh full `bun test` reached completion in 176.47 s:
+**1,685 pass, 1 fail**, across 120 files. The sole failure was the unchanged burst
+latency maximum at **9,203.35 ms**. This is not a claim of product repair.
+
+For diagnostic checkpoint commits only, the pre-commit full-test job is excluded
+because the documented baseline is red; formatting, lint, types and commit-message
+hooks remain enabled. Explicit task checks and final full verification are still
+required. This exception must not be mistaken for passing CI or merge readiness.

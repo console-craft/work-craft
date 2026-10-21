@@ -12,6 +12,7 @@ import type {
 } from "../api/protocol.ts";
 import { validateSplitCwd } from "../terminal/cwd.ts";
 import { TerminalHistory } from "../terminal/history.ts";
+import { observeOutput, outputProbeEnabled } from "../terminal/output-probe.ts";
 import { RuntimeRegistry } from "../terminal/runtime.ts";
 import { applyCommand } from "./commands.ts";
 import { canonicalDirectoryPath, type DirectoryScan, inspectDirectory } from "./directories.ts";
@@ -60,18 +61,50 @@ export function createApp(options: {
   const sizing = createTerminalSizing(readSnapshot(options.db, epoch, revision, history));
 
   function snapshot(): Snapshot {
-    return readSnapshot(options.db, epoch, revision, history, sizing.current());
+    const started = outputProbeEnabled ? performance.now() : 0;
+    const result = readSnapshot(options.db, epoch, revision, history, sizing.current());
+    if (outputProbeEnabled) {
+      observeOutput({
+        stage: "snapshot.read",
+        generation: revision,
+        durationMs: performance.now() - started,
+      });
+    }
+    return result;
   }
 
   function broadcast(message: ServerMessage): void {
     const encoded = encodeMessage(message);
     for (const socket of subscribers) {
-      socket.send(encoded);
+      const sent = socket.send(encoded);
+      if (outputProbeEnabled) {
+        observeOutput({
+          stage: "socket.send",
+          bytes: Buffer.byteLength(encoded),
+          pending: socket.getBufferedAmount(),
+          ...(message.type === "terminal.output"
+            ? {
+                paneId: message.paneId,
+                cursor: message.cursor,
+                geometrySequence: message.geometrySequence,
+              }
+            : {}),
+          generation: sent,
+        });
+      }
     }
   }
 
   function encodeMessage(message: ServerMessage): string {
+    const started = outputProbeEnabled ? performance.now() : 0;
     const encoded = JSON.stringify(message);
+    if (outputProbeEnabled) {
+      observeOutput({
+        stage: "message.encode",
+        bytes: Buffer.byteLength(encoded),
+        durationMs: performance.now() - started,
+      });
+    }
     // Leave queue room for output and acknowledgments instead of disconnecting on one snapshot.
     if (message.type === "snapshot" && Buffer.byteLength(encoded) > MAX_INLINE_SNAPSHOT_BYTES) {
       return JSON.stringify({
@@ -266,7 +299,18 @@ export function createApp(options: {
   }
 
   function onOutput(paneId: string, bytes: Uint8Array): void {
+    const started = outputProbeEnabled ? performance.now() : 0;
     const cursor = history.append(paneId, bytes);
+    if (outputProbeEnabled) {
+      observeOutput({ stage: "pty.read", paneId, cursor, bytes: bytes.byteLength });
+      observeOutput({
+        stage: "history.append",
+        paneId,
+        cursor,
+        bytes: bytes.byteLength,
+        durationMs: performance.now() - started,
+      });
+    }
     broadcast({
       type: "terminal.output",
       epoch,

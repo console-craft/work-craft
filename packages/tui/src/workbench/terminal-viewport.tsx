@@ -8,6 +8,7 @@ import { useRenderer } from "@opentui/react";
 import type { InputStamp, TerminalSize } from "@work-craft/server/client";
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 
+import { observeOutput, outputProbeEnabled } from "@/client/output-probe";
 import type { TerminalBuffer } from "@/client/terminal-buffer";
 import { type ReplayProgress, terminalReplaySteps } from "@/client/terminal-replay";
 import { Box } from "@/ui/primitives/box";
@@ -30,6 +31,8 @@ export type TerminalViewportProps = {
 function sameSize(first: TerminalSize, second: TerminalSize): boolean {
   return first.cols === second.cols && first.rows === second.rows;
 }
+
+let nextProbeInstance = 0;
 
 /** Native parsing uses the shared grid; only this outer viewport follows local geometry. */
 export function TerminalViewport(props: TerminalViewportProps): ReactNode {
@@ -57,6 +60,10 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
   const responseStamp = useRef<InputStamp | null>(null);
   const resizing = useRef(false);
   const resyncBuffer = useRef<TerminalBuffer | null>(null);
+  const probeInstance = useRef(0);
+  if (outputProbeEnabled && probeInstance.current === 0) {
+    probeInstance.current = ++nextProbeInstance;
+  }
 
   function readiness(value: boolean): void {
     inputReady.current = value;
@@ -78,7 +85,18 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
       return;
     }
     const current = latest.current;
+    const planned = outputProbeEnabled ? performance.now() : 0;
     const replay = terminalReplaySteps(current.buffer, progress.current);
+    if (outputProbeEnabled) {
+      observeOutput({
+        stage: "native.plan",
+        paneId: current.paneId,
+        cursor: progress.current?.cursor,
+        generation: probeInstance.current,
+        pending: replay.steps.length,
+        durationMs: performance.now() - planned,
+      });
+    }
     if (replay.needsSnapshot) {
       resync();
       return;
@@ -102,9 +120,29 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
       } else {
         suppressResponse.current = step.origin === "history";
         responseStamp.current = step.responseStamp ?? null;
+        const written = outputProbeEnabled ? performance.now() : 0;
+        if (outputProbeEnabled) {
+          observeOutput({
+            stage: "native.write.start",
+            paneId: current.paneId,
+            cursor: step.cursor,
+            bytes: step.data.byteLength,
+            generation: probeInstance.current,
+          });
+        }
         try {
           target.write(step.data);
         } finally {
+          if (outputProbeEnabled) {
+            observeOutput({
+              stage: "native.write.end",
+              paneId: current.paneId,
+              cursor: step.cursor,
+              bytes: step.data.byteLength,
+              generation: probeInstance.current,
+              durationMs: performance.now() - written,
+            });
+          }
           suppressResponse.current = false;
           responseStamp.current = null;
         }
@@ -121,6 +159,24 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
     readiness(true);
   }
 
+  useLayoutEffect(() => {
+    if (outputProbeEnabled) {
+      observeOutput({
+        stage: "native.create",
+        paneId: props.paneId,
+        generation: probeInstance.current,
+      });
+    }
+    return () => {
+      if (outputProbeEnabled) {
+        observeOutput({
+          stage: "native.destroy",
+          paneId: props.paneId,
+          generation: probeInstance.current,
+        });
+      }
+    };
+  }, []);
   useLayoutEffect(drain);
   useLayoutEffect(followCursor, [viewport.width, viewport.height]);
   useLayoutEffect(() => {
@@ -203,6 +259,14 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
             return;
           }
           actualGrid.current = { cols, rows };
+          if (outputProbeEnabled) {
+            observeOutput({
+              stage: "native.resize",
+              paneId: latest.current.paneId,
+              generation: probeInstance.current,
+              bytes: cols * rows,
+            });
+          }
           resizing.current = false;
           drain();
         }}

@@ -12,6 +12,7 @@ import {
   type WorkCraftClient,
 } from "@work-craft/server/client";
 
+import { observeOutput, outputProbeEnabled } from "@/client/output-probe";
 import {
   appendTerminalChunk,
   snapshotTerminals,
@@ -79,6 +80,7 @@ export function createWorkCraftStore(
   let run = 0;
   let connectionGeneration = 0;
   let applying = Promise.resolve();
+  let queuedMessages = 0;
   let desiredSession: string | null = null;
   let initialChoice = true;
   let attachmentRequest = 0;
@@ -178,6 +180,17 @@ export function createWorkCraftStore(
 
   function update(patch: Partial<WorkCraftState>): void {
     state = { ...state, ...patch };
+    if (outputProbeEnabled && ("attachment" in patch || "status" in patch || "snapshot" in patch)) {
+      const navigation = state.snapshot?.navigation.find(
+        (entry) => entry.sessionId === state.attachment?.sessionId,
+      );
+      observeOutput({
+        stage: "control",
+        paneId: navigation?.paneId ?? undefined,
+        generation: navigation?.generation,
+        pending: state.attachment?.generation,
+      });
+    }
     for (const listener of listeners) {
       listener();
     }
@@ -327,6 +340,17 @@ export function createWorkCraftStore(
         ),
       );
       update({ terminals });
+      if (outputProbeEnabled) {
+        const buffer = terminals.get(message.paneId)!;
+        observeOutput({
+          stage: "store.buffer",
+          paneId: message.paneId,
+          cursor: message.cursor,
+          bytes:
+            buffer.history.byteLength +
+            buffer.chunks.reduce((n, chunk) => n + chunk.data.byteLength, 0),
+        });
+      }
       return;
     }
     if (message.type !== "snapshot") {
@@ -450,12 +474,53 @@ export function createWorkCraftStore(
   }
 
   function apply(message: ServerMessage, activeRun?: number, connection?: number): Promise<void> {
+    const enqueued = outputProbeEnabled ? performance.now() : 0;
+    const metadata =
+      outputProbeEnabled && message.type === "terminal.output"
+        ? {
+            paneId: message.paneId,
+            cursor: message.cursor,
+            geometrySequence: message.geometrySequence,
+          }
+        : undefined;
+    if (outputProbeEnabled) {
+      queuedMessages++;
+      observeOutput({
+        stage: "store.enqueue",
+        ...metadata,
+        generation: connection,
+        pending: queuedMessages,
+      });
+    }
     const result = applying.then(() => {
       if (
         (activeRun !== undefined && run !== activeRun) ||
         (connection !== undefined && connection !== connectionGeneration)
       ) {
+        if (outputProbeEnabled) {
+          queuedMessages--;
+        }
         return;
+      }
+      if (outputProbeEnabled) {
+        const started = performance.now();
+        observeOutput({
+          stage: "store.apply.start",
+          ...metadata,
+          generation: connection,
+          pending: queuedMessages,
+          durationMs: started - enqueued,
+        });
+        return applyMessage(message, activeRun, connection).finally(() => {
+          queuedMessages--;
+          observeOutput({
+            stage: "store.apply.end",
+            ...metadata,
+            generation: connection,
+            pending: queuedMessages,
+            durationMs: performance.now() - started,
+          });
+        });
       }
       return applyMessage(message, activeRun, connection);
     });

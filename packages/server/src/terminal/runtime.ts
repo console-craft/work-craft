@@ -1,5 +1,6 @@
 import type { PaneStatus, TerminalSize } from "../api/protocol.ts";
 import { readProcessCwd, validateSplitCwd } from "./cwd.ts";
+import { observeOutput, outputProbeEnabled } from "./output-probe.ts";
 import { resolveShellSpawn, type RuntimePane } from "./restore.ts";
 
 export type RuntimeCallbacks = {
@@ -156,6 +157,9 @@ export class RuntimeRegistry {
   }
 
   write(paneId: string, bytes: Uint8Array): void {
+    if (outputProbeEnabled) {
+      observeOutput({ stage: "input.forward", paneId, bytes: bytes.byteLength });
+    }
     this.liveRuntime(paneId).terminal.write(bytes);
   }
 

@@ -1,6 +1,7 @@
 import { chmodSync } from "node:fs";
 
 import type { WorkCraftApp } from "../application/app.ts";
+import { observeOutput, outputProbeEnabled } from "../terminal/output-probe.ts";
 import { parseClientMessage, ProtocolError, STREAM_BACKPRESSURE_LIMIT } from "./protocol.ts";
 
 async function commandBody(request: Request): Promise<unknown> {
@@ -21,7 +22,12 @@ export function startHttpServer(app: WorkCraftApp, socketPath: string): Bun.Serv
           return Response.json(app.health());
         }
         if (request.method === "GET" && pathname === "/snapshot") {
-          return Response.json(app.snapshot());
+          const started = outputProbeEnabled ? performance.now() : 0;
+          const response = Response.json(app.snapshot());
+          if (outputProbeEnabled) {
+            observeOutput({ stage: "snapshot.http", durationMs: performance.now() - started });
+          }
+          return response;
         }
         if (request.method === "POST" && pathname === "/command") {
           return Response.json(await app.execute(await commandBody(request)));

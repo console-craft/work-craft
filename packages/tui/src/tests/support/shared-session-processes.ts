@@ -77,17 +77,24 @@ export async function focusSharedTerminal(tui: SharedTuiProcess, tabColumn = 70)
   await sharedWait(ready, "native workbench input", tui.frame);
 }
 
-export async function startSharedSessionFixture(): Promise<SharedSessionFixture> {
+export async function startSharedSessionFixture(
+  options: { profileDirectory?: string; boundedObservation?: boolean } = {},
+): Promise<SharedSessionFixture> {
   const home = await realpath(await mkdtemp(join(tmpdir(), "work-craft-shared-")));
   const client = createClient({ socketPath: join(home, "work-craft.sock") });
   const shell = join(home, "shell");
   await writeFile(shell, `#!/bin/sh\nprintf '%s\\n' "$$" >> '${home}/shell-pids'\nexec /bin/sh\n`);
   await chmod(shell, 0o755);
-  const environment = { ...process.env, WORK_CRAFT_HOME: home, SHELL: shell };
+  const environment = {
+    ...process.env,
+    WORK_CRAFT_HOME: home,
+    SHELL: shell,
+    WORK_CRAFT_OUTPUT_PROFILE_DIR: options.profileDirectory ?? "",
+  };
   function spawnDaemon() {
     return Bun.spawn([process.execPath, join(ROOT, "packages/server/src/main.ts")], {
       cwd: ROOT,
-      env: environment,
+      env: { ...environment, WORK_CRAFT_OUTPUT_PROFILE_ROLE: "daemon" },
       detached: true,
       stdin: "ignore",
       stdout: "ignore",
@@ -125,7 +132,7 @@ export async function startSharedSessionFixture(): Promise<SharedSessionFixture>
       });
       const child = Bun.spawn([process.execPath, "run", "tui"], {
         cwd: ROOT,
-        env: environment,
+        env: { ...environment, WORK_CRAFT_OUTPUT_PROFILE_ROLE: "tui" },
         detached: true,
         terminal,
       });
