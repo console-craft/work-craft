@@ -2,12 +2,16 @@
 
 ## Status And Decisions
 
-Draft companion to [TUI Overhaul Stage 2](2026-09-18-tui-overhaul-design.md).
-The full design is not yet approved and does not authorize implementation.
+Approved companion to [TUI Overhaul Stage 2](2026-09-18-tui-overhaul-design.md).
+The user approved the full design on 2026-10-21 and authorized writing the
+implementation plan. The user subsequently approved the plan and native execution
+in this worktree on 2026-10-21.
 
 The user confirmed tmux-inspired shared selection, client-local session attachment,
-and latest-active-client terminal sizing. Other decisions below are proposed
-engineering choices, not previously approved product requirements.
+and latest-active-client terminal sizing, then approved the complete design below.
+They explicitly confirmed the shared-editor expectation: clients viewing the same
+pane see one Neovim process, including the same edits and logical cursor position,
+not independently running editors synchronized after the fact.
 
 Workflow:
 
@@ -17,8 +21,13 @@ Workflow:
 - [x] Verify the unmodified baseline.
 - [x] Draft this companion design.
 - [x] Complete an independent builder check and resolve consequential questions.
-- [ ] Obtain approval of this full design.
-- [ ] Write an implementation plan after approval.
+- [x] Obtain approval of this full design.
+- [x] Write an implementation plan after approval.
+
+The self-reviewed [implementation plan](../plans/2026-10-21-shared-session-navigation.md)
+is saved in the repository's intentionally workspace-local/gitignored plans
+directory. Native implementation starts with the plan's explicit terminal
+feasibility gate before schema/protocol cutover.
 
 Worktree: `/Users/ovi/.local/share/opencode/worktree/c4185d/stage-2-shared-session-navigation`.
 Baseline `bun run check` passed 1,519 tests, zero failures, lint/format/types,
@@ -30,8 +39,8 @@ or repair is claimed. The existing server `no-unsafe-finally` warning remains.
 
 The independent builder check identified one consequential ambiguity: whether a
 viewer with some undersized panes can own tab sizing. The explicit per-pane rule
-in the sizing section resolves it while preserving usable siblings. This is an
-engineering choice proposed for approval, not additional user-confirmed intent.
+in the sizing section resolves it while preserving usable siblings. This
+engineering choice was included in the subsequently approved full design.
 
 ## Intent And Boundaries
 
