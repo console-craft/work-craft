@@ -83,3 +83,41 @@ For diagnostic checkpoint commits only, the pre-commit full-test job is excluded
 because the documented baseline is red; formatting, lint, types and commit-message
 hooks remain enabled. Explicit task checks and final full verification are still
 required. This exception must not be mistaken for passing CI or merge readiness.
+
+## Native Continuation And Recovery Feasibility
+
+The enabled characterization suite passed **9 tests / 12 assertions** on the
+installed OpenTUI 0.6.6. It compares uninterrupted versus byte-split parsing for
+UTF-8, CSI/OSC, alternate screens, saved cursor, scroll regions, wrapping, styles,
+paste/application-cursor modes and query reply bytes. Style comparisons use the
+test renderer's public `captureSpans()`, not text alone. Two resizes at the same
+byte cursor preserve continuation in the tested case. A headless mouse test
+verifies the exact SGR mouse encoding after byte-split mode instructions.
+
+The negative control is decisive: after a mode-setting prefix is older than the
+1 MiB raw tail, full parsing and reset-plus-tail produce **the same visible text
+but different next-paste bytes**. A screenshot or raw tail is not full VT state.
+These narrow cases are not certification of arbitrary VT extensions.
+
+| Capability                                         | Result                                                                  | Evidence / boundary                                                                                                                   |
+| -------------------------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Keep one native instance and parse every byte      | Proven for the tested continuations                                     | Native instance remains authoritative; no history loss in its parser                                                                  |
+| Exact recovery using bounded raw tail alone        | Failed                                                                  | Equal text, unequal paste mode after old prefix is lost                                                                               |
+| Supported full VT state export/import              | Not found in installed public wrapper/ABI declarations and shipped JS   | No claim that an underlying native implementation could never support it; native Zig sources are not shipped here                     |
+| Headless daemon parsing/query replies              | Proven primitive                                                        | Public `resolveRenderLib()`, context/embedded-terminal allocation, write, compose and response drain work without a terminal renderer |
+| Headless screen observation                        | Proven cursor after composition; further projection feasibility remains | `contextEmbeddedTerminalCursor` is a composed cursor cache: before composition it has no value, not evidence that parsing failed      |
+| Per-client hidden parser memory at target capacity | Not yet measured                                                        | Do not extrapolate from the finite four-pane RSS samples                                                                              |
+
+Concrete API references: installed `zig.d.ts` lines 999–1028 expose terminal
+allocation/write/resize/compose/cursor/key/mouse/paste/response functions; lines
+1123–1150 expose buffer allocation, leases and resolved character extraction.
+The corresponding shipped `chunk-bun-jztcnb74.js` calls the native
+`ot_embedded_terminal_*` ABI. `EmbeddedTerminalRenderable` exposes no supported
+full checkpoint export/import method. Do not scrape private handles or patch
+installed dependencies as an implicit implementation decision.
+
+The headless result keeps a daemon-owned parser/current-screen projection option
+open: a live daemon could retain full parser state and send disposable clients
+rendered state instead of pretending a cell snapshot restores a client parser.
+That would explicitly change response/input encoding ownership and protocol;
+it is a candidate for the measured amendment, not approved production work.
