@@ -53,7 +53,7 @@ export type ShellModel = {
 export function deriveShellModel(input: {
   snapshot: Omit<Snapshot, "terminalHistories"> | null;
   state: ShellModelState;
-  attachment: ClientAttachment | null;
+  attachment: Pick<ClientAttachment, "sessionId"> | null;
 }): ShellModel {
   const { snapshot, state, attachment } = input;
   const navigation =

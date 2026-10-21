@@ -8,8 +8,9 @@ import type {
   TerminalInputContext,
   TerminalSize,
 } from "@work-craft/server/client";
-import { useCallback, useRef } from "react";
+import { useCallback, useRef, useSyncExternalStore } from "react";
 
+import type { TerminalBuffer } from "@/client/terminal-buffer";
 import type { PaneOutput } from "@/client/terminal-output";
 import { Alert, AlertContent, AlertTitle } from "@/ui/components/alert.tsx";
 import { Button } from "@/ui/controls/button.tsx";
@@ -27,10 +28,12 @@ import { TerminalViewport } from "@/workbench/terminal-viewport";
 export type TerminalPaneProps = {
   bounds: PaneRect;
   connected: boolean;
+  preservePresentation?: boolean;
   reactivatingPaneIds: ReadonlySet<string>;
   canReactivate(paneId: string): boolean;
   onReactivatePane(paneId: string): void;
   output: PaneOutput;
+  runtimeIdentity?: { epoch: string; runtimeGeneration: number };
   focused: boolean;
   pane: Snapshot["panes"][number];
   size: TerminalSize;
@@ -52,10 +55,12 @@ export type TerminalPaneProps = {
 export function TerminalPane({
   bounds,
   connected,
+  preservePresentation = false,
   reactivatingPaneIds,
   canReactivate,
   onReactivatePane,
   output,
+  runtimeIdentity,
   focused,
   pane,
   size,
@@ -70,8 +75,23 @@ export function TerminalPane({
   inputEnabled = true,
   canReceiveInput = () => true,
 }: TerminalPaneProps) {
-  const runtimeGeneration = useRef(output.read()?.runtimeGeneration).current;
-  const notice = paneNotice(pane.processStatus, connected);
+  const renderedIdentity = useRef(terminalPaneKey(pane.id, output.read()));
+  // Runtime changes wait for their control commit; reset-only changes stay pane-local.
+  const identity = useSyncExternalStore(output.subscribe, () => {
+    const buffer = output.read();
+    if (
+      runtimeIdentity &&
+      buffer &&
+      (buffer.epoch !== runtimeIdentity.epoch ||
+        buffer.runtimeGeneration !== runtimeIdentity.runtimeGeneration)
+    ) {
+      return renderedIdentity.current;
+    }
+    return terminalPaneKey(pane.id, buffer);
+  });
+  renderedIdentity.current = identity;
+  const runtimeGeneration = output.read()?.runtimeGeneration;
+  const notice = paneNotice(pane.processStatus, connected || preservePresentation);
   const viewport = terminalRect(bounds, notice !== null);
   const reportReady = useCallback(
     (node: EmbeddedTerminalRenderable | null) => onTerminalReady(pane.id, node),
@@ -81,7 +101,7 @@ export function TerminalPane({
   function acceptsInput(): boolean {
     return (
       connected &&
-      output.read()?.runtimeGeneration === runtimeGeneration &&
+      terminalPaneKey(pane.id, output.read()) === identity &&
       running &&
       inputEnabled &&
       hasTerminalViewport(viewport) &&
@@ -111,12 +131,15 @@ export function TerminalPane({
     >
       <Box height={viewport.height} width="100%" flexShrink={0} minHeight={0} overflow="hidden">
         <TerminalViewport
+          key={identity}
           paneId={pane.id}
           output={output}
           size={size}
           focused={focused}
+          preservePresentation={preservePresentation}
           inputEnabled={inputEnabled}
           canInput={acceptsInput}
+          canConsume={() => terminalPaneKey(pane.id, output.read()) === identity}
           canRespond={(stamp) => connected && running && canRespond(pane.id, stamp)}
           onReady={reportReady}
           onFocus={onFocus}
@@ -129,7 +152,7 @@ export function TerminalPane({
             if (source === "response") {
               if (
                 responseStamp &&
-                output.read()?.runtimeGeneration === runtimeGeneration &&
+                terminalPaneKey(pane.id, output.read()) === identity &&
                 canRespond(pane.id, responseStamp)
               ) {
                 stream.sendInput(pane.id, bytes, { ...responseStamp, source, runtimeGeneration });
@@ -194,4 +217,8 @@ export function TerminalPane({
       ) : null}
     </Box>
   );
+}
+
+export function terminalPaneKey(paneId: string, buffer: TerminalBuffer | undefined): string {
+  return `${paneId}:${buffer?.epoch ?? "pending"}:${buffer?.runtimeGeneration ?? 0}:${buffer?.resetGeneration ?? 0}`;
 }

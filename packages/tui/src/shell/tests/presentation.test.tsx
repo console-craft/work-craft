@@ -11,10 +11,12 @@ import { type Command } from "@work-craft/server/client";
 import { act, type Dispatch, type SetStateAction, useState } from "react";
 
 import { calculateShellLayout } from "@/shell/layout.ts";
+import { projectShellPresentation } from "@/shell/presentation";
 import { SessionSwitcher } from "@/shell/session-switcher.tsx";
 import { WorkCraftShell } from "@/shell/shell.tsx";
 import { StatusBar } from "@/shell/status-bar.tsx";
 import {
+  deferred,
   liveInputFixture,
   openFixtureItem,
   splitSurfaceSnapshot,
@@ -24,6 +26,7 @@ import {
   workCraftStateFixture,
 } from "@/shell/tests/fixtures";
 import { WorkspaceBar } from "@/shell/workspace-bar.tsx";
+import { attachmentFixture, controlSnapshotFixture } from "@/tests/support/fixtures";
 import { snapshotFixture, streamFixture } from "@/tests/support/fixtures.ts";
 import { Box } from "@/ui/primitives/box.tsx";
 import type { Theme } from "@/ui/theming/theme";
@@ -31,6 +34,154 @@ import { ThemeProvider } from "@/ui/theming/theme-provider.tsx";
 import { defaultTheme } from "@/ui/theming/themes/default.ts";
 import { draculaTheme } from "@/ui/theming/themes/dracula.ts";
 import { paneIds } from "@/workbench/layout.ts";
+
+test("confirmed detach and a deliberate destination change cannot reuse stale presentation", () => {
+  const snapshot = controlSnapshotFixture(surfaceSnapshot());
+  const previous = projectShellPresentation(null, {
+    snapshot,
+    attachment: attachmentFixture(),
+    status: "connected",
+    requestedSessionId: "session-work",
+  });
+  expect(previous?.sessionId).toBe("session-work");
+  expect(
+    projectShellPresentation(previous, {
+      snapshot,
+      attachment: null,
+      status: "connecting",
+      requestedSessionId: "session-work",
+    }),
+  ).toBe(previous);
+  expect(
+    projectShellPresentation(previous, {
+      snapshot,
+      attachment: attachmentFixture(null),
+      status: "connected",
+      requestedSessionId: null,
+    }),
+  ).toBeNull();
+  expect(
+    projectShellPresentation(previous, {
+      snapshot,
+      attachment: null,
+      status: "connected",
+      requestedSessionId: "other-session",
+    }),
+  ).toBeNull();
+  const removed = { ...snapshot, sessions: [] };
+  expect(
+    projectShellPresentation(previous, {
+      snapshot: removed,
+      attachment: null,
+      status: "connecting",
+      requestedSessionId: "session-work",
+    }),
+  ).toBeNull();
+  const archived = {
+    ...snapshot,
+    items: snapshot.items.map((item) => ({ ...item, archived: true })),
+  };
+  expect(
+    projectShellPresentation(previous, {
+      snapshot: archived,
+      attachment: null,
+      status: "connecting",
+      requestedSessionId: "session-work",
+    }),
+  ).toBeNull();
+});
+
+test("transient reattachment preserves the exact native frame and cursor without input authority", async () => {
+  const setup = await liveInputFixture();
+  const native = setup.renderer.root.findDescendantById(
+    "terminal:pane-1",
+  ) as EmbeddedTerminalRenderable;
+  await act(async () => setup.output("\x1b[2J\x1b[2;3Hkept through reconnect"));
+  await setup.flush();
+  const body = setup
+    .captureCharFrame()
+    .split("\n")
+    .slice(0, setup.renderer.height - 1)
+    .join("\n");
+  const cursor = native.screen().cursor;
+  const oldData = native.onData!;
+  const pending = deferred<ReturnType<typeof streamFixture>>();
+  const entered = deferred<void>();
+  setup.client.stream = async () => {
+    entered.resolve();
+    return pending.promise;
+  };
+  const reconnect = setup.store.reload();
+  try {
+    await entered.promise;
+    oldData(new Uint8Array([97]), "input");
+    oldData(new Uint8Array([98]), "response");
+    expect(setup.sent).toEqual([]);
+    setup.renderCurrent();
+    await setup.flush();
+    expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBe(native);
+    expect(native.screen().cursor).toEqual(cursor);
+    expect(
+      setup
+        .captureCharFrame()
+        .split("\n")
+        .slice(0, setup.renderer.height - 1)
+        .join("\n"),
+    ).toBe(body);
+    pending.resolve(streamFixture());
+    await reconnect;
+    setup.renderCurrent();
+    await setup.flush();
+    expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBe(native);
+  } finally {
+    pending.resolve(streamFixture());
+    await reconnect;
+    setup.store.stop();
+    act(() => setup.renderer.destroy());
+  }
+});
+
+test("runtime replacement changes only its native viewport once and rejects old callbacks before commit", async () => {
+  const setup = await liveInputFixture();
+  const first = setup.renderer.root.findDescendantById(
+    "terminal:pane-1",
+  ) as EmbeddedTerminalRenderable;
+  const sibling = setup.renderer.root.findDescendantById("terminal:pane-2");
+  const outer = first.parent!.parent;
+  const captured = first.onData!;
+  const full = splitSurfaceSnapshot();
+  setup.client.paneHistory = async (paneId) => ({
+    epoch: full.epoch,
+    paneId,
+    runtimeGeneration: paneId === "pane-1" ? 1 : 0,
+    history: full.terminalHistories.find((history) => history.paneId === paneId)!,
+  });
+  try {
+    const current = setup.store.snapshot()!;
+    const next = {
+      ...current,
+      revision: current.revision + 1,
+      terminalStates: current.terminalStates.map((state) =>
+        state.paneId === "pane-1" ? { ...state, runtimeGeneration: 1 } : state,
+      ),
+    };
+    await setup.store.apply({ type: "control.snapshot", snapshot: next });
+    captured(new Uint8Array([97]), "input");
+    captured(new Uint8Array([98]), "response");
+    expect(setup.sent).toEqual([]);
+    setup.renderCurrent();
+    await setup.flush();
+    const replacement = setup.renderer.root.findDescendantById("terminal:pane-1")!;
+    expect(replacement).not.toBe(first);
+    expect(replacement.parent!.parent).toBe(outer);
+    expect(setup.renderer.root.findDescendantById("terminal:pane-2")).toBe(sibling);
+    await setup.publish({ ...next, revision: next.revision + 1 });
+    expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBe(replacement);
+  } finally {
+    setup.store.stop();
+    act(() => setup.renderer.destroy());
+  }
+});
 
 for (const direction of ["single", "horizontal", "vertical"] as const) {
   for (const stopped of [false, true]) {

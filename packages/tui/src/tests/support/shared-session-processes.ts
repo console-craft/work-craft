@@ -33,6 +33,7 @@ export type SharedSessionFixture = {
   stopTui(tui: SharedTuiProcess): Promise<void>;
   resizeTui(tui: SharedTuiProcess, cols: number, rows: number): Promise<void>;
   restartDaemon(): Promise<void>;
+  pauseDaemon(): () => void;
   cli(args: string[]): Promise<Record<string, unknown>>;
   flushDiagnostics(): Promise<void>;
   close(): Promise<void>;
@@ -196,6 +197,18 @@ export async function startSharedSessionFixture(
       await daemon.exited;
       daemon = spawnDaemon();
       await ready();
+    },
+    pauseDaemon(): () => void {
+      const owned = daemon;
+      if (owned.exitCode !== null || owned.signalCode !== null) {
+        throw new Error("The fixture daemon has exited");
+      }
+      process.kill(owned.pid, "SIGSTOP");
+      return () => {
+        if (owned.exitCode === null && owned.signalCode === null) {
+          process.kill(owned.pid, "SIGCONT");
+        }
+      };
     },
     async cli(args: string[]): Promise<Record<string, unknown>> {
       const child = Bun.spawn(

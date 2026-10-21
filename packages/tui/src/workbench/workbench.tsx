@@ -6,7 +6,7 @@ import type { TerminalOutputs } from "@/client/terminal-output";
 import { EmptyState, EmptyStateDescription, EmptyStateTitle } from "@/ui/components/empty-state";
 import { Box } from "@/ui/primitives/box.tsx";
 import { WORKBENCH_PADDING_X } from "@/workbench/layout.ts";
-import { SurfaceView } from "@/workbench/surface-view.tsx";
+import { SurfaceView, type SurfaceViewProps } from "@/workbench/surface-view.tsx";
 import { TabBar } from "@/workbench/tab-bar.tsx";
 import type { TerminalPaneProps } from "@/workbench/terminal-pane";
 
@@ -15,10 +15,11 @@ export type WorkbenchProps = Pick<
   "stamp" | "canRespond" | "inputEvent" | "onMouseInput" | "onResync"
 > & {
   connected: boolean;
+  preservePresentation?: boolean;
   reactivatingPaneIds: ReadonlySet<string>;
   canReactivate(paneId: string): boolean;
   onReactivatePane(paneId: string): void;
-  snapshot: Omit<Snapshot, "terminalHistories"> | null;
+  snapshot: SurfaceViewProps["snapshot"] | null;
   stream: StreamConnection | null;
   outputs: TerminalOutputs;
   surface: Snapshot["surfaces"][number] | undefined;
@@ -44,6 +45,7 @@ export type WorkbenchProps = Pick<
 
 export function Workbench({
   connected,
+  preservePresentation,
   reactivatingPaneIds,
   canReactivate,
   onReactivatePane,
@@ -100,6 +102,7 @@ export function Workbench({
         ) : (
           <SurfaceView
             connected={connected}
+            preservePresentation={preservePresentation}
             reactivatingPaneIds={reactivatingPaneIds}
             canReactivate={canReactivate}
             onReactivatePane={onReactivatePane}

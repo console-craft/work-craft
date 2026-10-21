@@ -21,7 +21,10 @@ export type TerminalViewportProps = {
   size: TerminalSize;
   inputEnabled: boolean;
   focused: boolean;
+  /** Preserve native focus as a picture only; byte forwarding still checks live input gates. */
+  preservePresentation?: boolean;
   canInput(): boolean;
+  canConsume?(): boolean;
   canRespond(stamp: InputStamp): boolean;
   onData(bytes: Uint8Array, source: "input" | "response", responseStamp?: InputStamp): void;
   onReady(node: EmbeddedTerminalRenderable | null): void;
@@ -100,6 +103,9 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
       return false;
     }
     const current = latest.current;
+    if (current.canConsume?.() === false) {
+      return false;
+    }
     const buffer = current.output.read();
     if (!buffer) {
       readiness(false);
@@ -254,7 +260,7 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
       props.inputEnabled &&
       viewport.width >= 20 &&
       viewport.height >= 5 &&
-      props.canInput();
+      (props.canInput() || props.preservePresentation === true);
     target.focusable = eligible;
     if (!props.focused || !eligible) {
       target.blur();
@@ -262,7 +268,15 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
     if (props.focused && eligible) {
       target.focus();
     }
-  }, [ready, props.focused, props.inputEnabled, props.canInput, viewport.width, viewport.height]);
+  }, [
+    ready,
+    props.focused,
+    props.inputEnabled,
+    props.canInput,
+    props.preservePresentation,
+    viewport.width,
+    viewport.height,
+  ]);
 
   useEffect(() => {
     props.onReady(terminal.current);

@@ -33,6 +33,7 @@ export type WorkCraftState = {
   status: ConnectionStatus;
   /** Null awaits an acknowledgment; an acknowledged sessionId:null means explicitly detached. */
   attachment: ClientAttachment | null;
+  requestedSessionId: string | null;
   geometry: TerminalGeometry;
   attach(sessionId: string | null): Promise<void>;
   /** Reads current authoritative state even from callbacks captured before a React commit. */
@@ -96,6 +97,7 @@ export function createWorkCraftStore(
     snapshot: null,
     status: "connecting",
     attachment: null,
+    requestedSessionId: null,
     geometry: { sequence: 0, tabs: [], panes: [] },
     attach,
     canSendInput: (paneId, stamp) => canUsePane(paneId, stamp, "running", false),
@@ -260,7 +262,7 @@ export function createWorkCraftStore(
     const request = ++attachmentRequest;
     initialChoice = false;
     desiredSession = sessionId;
-    update({ attachment: null });
+    update({ attachment: null, requestedSessionId: sessionId });
     discardObsoleteRecoveries();
     const attachment = await stream.attach(sessionId);
     if (request === attachmentRequest && stream === state.stream) {
@@ -381,7 +383,7 @@ export function createWorkCraftStore(
     ) {
       desiredSession = null;
       attachmentRequest += 1;
-      update({ attachment: null });
+      update({ attachment: null, requestedSessionId: null });
     }
     if (
       current === null ||
@@ -454,7 +456,7 @@ export function createWorkCraftStore(
     if (message.type === "client.attached" && message.requestId === null) {
       desiredSession = message.attachment.sessionId;
       attachmentRequest += 1;
-      update({ attachment: message.attachment });
+      update({ attachment: message.attachment, requestedSessionId: message.attachment.sessionId });
       return;
     }
     if (message.type === "terminal.geometry") {

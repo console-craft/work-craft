@@ -22,6 +22,52 @@ type ProgramState = {
   size: { cols: number; rows: number };
 };
 
+test("normal reconnect keeps the coherent body through held recovery without respawning its shell", async () => {
+  const fixture = await startSharedSessionFixture();
+  const [a] = fixture.tuis;
+  let resume = () => {};
+  try {
+    await focusSharedTerminal(a);
+    sharedWrite(a, "printf '\\nRECONNECT-%s-%s\\n' PID \"$$\"\r");
+    await sharedWait(() => /RECONNECT-PID-\d+/.test(a.frame()), "original child PID", a.frame);
+    const pid = /RECONNECT-PID-(\d+)/.exec(a.frame())![1]!;
+    const before = a.frame().split("\n");
+    const shellPids = await readFile(join(fixture.home, "shell-pids"), "utf8");
+    const daemonPid = (await fixture.client.health()).pid;
+    const outputLength = a.output().length;
+    resume = fixture.pauseDaemon();
+    sharedWrite(a, "\x1b[114;15u");
+    await sharedWait(
+      () =>
+        a.output().length > outputLength &&
+        a.frame().includes("Reconnect") &&
+        !a.frame().split("\n")[44]?.includes("Prev category"),
+      "held reconnect presentation",
+      a.frame,
+    );
+    expect(a.frame().split("\n").slice(0, 44)).toEqual(before.slice(0, 44));
+    expect(a.frame()).not.toContain("Select session...");
+    resume();
+    await sharedWait(
+      () => a.frame().split("\n")[44] === before[44],
+      "same-context attachment resumes",
+      a.frame,
+    );
+    expect(a.frame().split("\n").slice(0, 44)).toEqual(before.slice(0, 44));
+    sharedWrite(a, "printf '\\nRECONNECTED-%s-%s\\n' PID \"$$\"\r");
+    await sharedWait(
+      () => a.frame().includes(`RECONNECTED-PID-${pid}`),
+      "same child accepts subsequent input",
+      a.frame,
+    );
+    expect((await fixture.client.health()).pid).toBe(daemonPid);
+    expect(await readFile(join(fixture.home, "shell-pids"), "utf8")).toBe(shellPids);
+  } finally {
+    resume();
+    await fixture.close();
+  }
+}, 15000);
+
 async function programState(log: string): Promise<ProgramState> {
   const lines = (await readFile(log, "utf8")).split("\n");
   return JSON.parse(lines.at(-2)!) as ProgramState;

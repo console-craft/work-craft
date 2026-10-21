@@ -1483,9 +1483,12 @@ test("raw stage 1 key sequences drive the shell", async () => {
     try {
       tui.terminal.write(input.encode(kitty.hyper(114)));
       await waitFor(
-        () => Bun.stripANSI(tui.output().slice(reloadOutputLength)).includes("Select session..."),
-        "reload to withdraw its old attachment",
+        () => Bun.stripANSI(tui.output().slice(reloadOutputLength)).includes("Reconnect"),
+        "reload to withdraw input authority while retaining its presentation",
         () => `\n${tui.output().slice(reloadOutputLength)}`,
+      );
+      expect(Bun.stripANSI(tui.output().slice(reloadOutputLength))).not.toContain(
+        "Select session...",
       );
     } finally {
       process.kill(daemonPid, "SIGCONT");
@@ -1494,7 +1497,7 @@ test("raw stage 1 key sequences drive the shell", async () => {
     await waitFor(
       () => {
         const output = tui.output().slice(reconnectOutputLength);
-        return output.includes(CONNECTED_COLOR) && Bun.stripANSI(output).includes("Keys");
+        return output.includes(CONNECTED_COLOR);
       },
       "reload to reconnect and restore its attachment",
       () => `\n${tui.output().slice(reconnectOutputLength)}`,

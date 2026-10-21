@@ -21,8 +21,8 @@ import { defaultTheme } from "@/ui/theming/themes/default.ts";
 import {
   SurfaceView as NativeSurfaceView,
   type SurfaceViewProps,
-  terminalPaneKey,
 } from "@/workbench/surface-view.tsx";
+import { TerminalPane, terminalPaneKey } from "@/workbench/terminal-pane";
 import { Workbench as NativeWorkbench, type WorkbenchProps } from "@/workbench/workbench.tsx";
 
 extend({ terminal: EmbeddedTerminalRenderable });
@@ -179,11 +179,11 @@ function splitSurfaceSnapshot(direction: "horizontal" | "vertical"): Snapshot {
   };
 }
 
-test("terminal renderer identity includes the daemon epoch and replay cursor", () => {
-  expect(terminalPaneKey("pane-1", undefined)).toBe("pane-1:pending:0:0:0");
+test("terminal renderer identity includes the daemon epoch and runtime/reset generations", () => {
+  expect(terminalPaneKey("pane-1", undefined)).toBe("pane-1:pending:0:0");
   expect(
     terminalPaneKey("pane-1", terminalBufferFixture({ epoch: "epoch-2", historyCursor: 42 })),
-  ).toBe("pane-1:epoch-2:0:0:42");
+  ).toBe("pane-1:epoch-2:0:0");
 });
 
 test("runtime replacement cannot reuse a native input encoder at the same history cursor", () => {
@@ -191,6 +191,66 @@ test("runtime replacement cannot reuse a native input encoder at the same histor
   expect(terminalPaneKey("pane-1", { ...previous, runtimeGeneration: 2 })).not.toBe(
     terminalPaneKey("pane-1", previous),
   );
+});
+
+test("history baseline advance does not replace the native leaf identity", () => {
+  const previous = terminalBufferFixture({ epoch: "e", runtimeGeneration: 1 });
+  expect(terminalPaneKey("pane-1", { ...previous, historyCursor: 100 })).toBe(
+    terminalPaneKey("pane-1", previous),
+  );
+});
+
+test("baseline advance preserves native state and a genuine reset replaces only its inner viewport", async () => {
+  const initial = terminalBufferFixture({ history: new Uint8Array([65]), historyCursor: 1 });
+  const outputs = createTerminalOutputs(new Map([["pane-1", initial]]));
+  const sent: number[][] = [];
+  const setup = await testRender(
+    <TerminalPane
+      {...recoveryProps}
+      bounds={{ x: 0, y: 0, width: 80, height: 25 }}
+      output={outputs.pane("pane-1")}
+      focused
+      pane={surfaceSnapshot().panes[0]!}
+      size={{ cols: 80, rows: 24 }}
+      stream={streamFixture({ sendInput: (_paneId, bytes) => sent.push([...bytes]) })}
+      onFocus={() => {}}
+      onTerminalReady={() => {}}
+    />,
+    { width: 80, height: 28 },
+  );
+  await setup.flush();
+  const native = setup.renderer.root.findDescendantById(
+    "terminal:pane-1",
+  ) as EmbeddedTerminalRenderable;
+  const outer = native.parent!.parent;
+  const captured = native.onData!;
+  try {
+    outputs.set("pane-1", { ...initial, history: new Uint8Array([65, 66]), historyCursor: 2 });
+    await setup.flush();
+    expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBe(native);
+    expect(native.screen().text).toContain("AB");
+    act(() => {
+      outputs.set("pane-1", {
+        ...initial,
+        history: new Uint8Array([88]),
+        historyStartCursor: 10,
+        historyCursor: 11,
+      });
+      captured(new Uint8Array([97]), "input");
+      expect(sent).toEqual([]);
+    });
+    await setup.flush();
+    const replacement = setup.renderer.root.findDescendantById(
+      "terminal:pane-1",
+    ) as EmbeddedTerminalRenderable;
+    expect(replacement).not.toBe(native);
+    expect(replacement.parent!.parent).toBe(outer);
+    expect(replacement.screen().text).toContain("X");
+    await setup.flush();
+    expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBe(replacement);
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
 });
 
 for (const source of ["history", "chunks"] as const) {

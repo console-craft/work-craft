@@ -48,6 +48,10 @@ acknowledgement, and cannot hold unrelated output or command acknowledgements.
 Recovery results are bound to connection, attachment, navigation, epoch and runtime
 identities. Runtime/reset generations are distinct from history byte cursors;
 runtime generation is also captured in TUI-originated raw input.
+`shell/presentation.ts` retains only a coherent same-session display through
+disconnect/pending reattachment. Requested destination, confirmed detach, deletion
+and real metadata invalidate that fallback. Commands, viewport reporting, entry
+cancellation and byte forwarding continue reading live state, never the cache.
 `client/terminal-buffer.ts` retains bounded bytes/resize markers and their live/history
 origin and original reply stamps; `client/terminal-replay.ts` orders grid changes
 between byte ranges without granting new response authority to delayed queries.
@@ -64,8 +68,13 @@ from retained history; empty drains do not plan that history again.
 entry/geometry frontier; ordinary output does not move it. Screen-change cursor
 inspection coalesces at 33 ms. Structural/geometry updates
 still use the root control subscription; output does not grant input authority.
-`terminal-pane.tsx` gates forwarding and displays recovery state. Leaves do not
-directly resize daemon PTYs: the shell reports its available canvas/eligibility
+`terminal-pane.tsx` gates forwarding and displays recovery state. A history cursor
+advance does not replace its native viewport: its identity is pane,
+epoch, runtime and actual reset generation. The pane-local identity subscription
+does not render for ordinary bytes. Runtime/epoch replacement waits for its control
+commit; a reset replaces only the inner viewport. Transient presentation can retain
+native focus/notice geometry without granting input or response authority.
+Leaves do not directly resize daemon PTYs: the shell reports its available canvas/eligibility
 and physical activity, then the daemon elects the latest-active eligible viewer.
 Attachment is activity; idle resize and emulator replies are not. Owner resize
 updates the grid; non-owner resize affects only its candidate and local crop.

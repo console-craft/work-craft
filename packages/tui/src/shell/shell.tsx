@@ -30,6 +30,7 @@ import { focusTargetFor } from "@/shell/focus.ts";
 import { Header } from "@/shell/header.tsx";
 import { calculateShellLayout } from "@/shell/layout.ts";
 import { deriveShellModel } from "@/shell/model.ts";
+import { projectShellPresentation, type ShellPresentation } from "@/shell/presentation";
 import { ResizeGuard } from "@/shell/resize-guard.tsx";
 import { createInitialShellState, reduceShellState, type ShellAction } from "@/shell/state.ts";
 import { StatusBar, type StatusBarProps } from "@/shell/status-bar.tsx";
@@ -104,6 +105,13 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     onNativeFocus: (target) => shellFocus.observeNativeFocus(target),
   });
   const snapshot = workCraft.snapshot;
+  const presentationRef = useRef<ShellPresentation | null>(null);
+  const shellPresentation = projectShellPresentation(presentationRef.current, workCraft);
+  presentationRef.current = shellPresentation;
+  const displaySnapshot = shellPresentation?.snapshot ?? snapshot;
+  const preservePresentation =
+    shellPresentation !== null &&
+    (workCraft.status !== "connected" || workCraft.attachment === null);
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
   const workCraftRef = useRef(workCraft);
@@ -118,10 +126,10 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
   });
 
   useEffect(() => {
-    if (snapshot !== null) {
+    if (snapshot !== null && !preservePresentation) {
       dispatch({ type: "snapshot.reconcile", snapshot, attachment: workCraft.attachment });
     }
-  }, [snapshot, workCraft.attachment]);
+  }, [snapshot, workCraft.attachment, preservePresentation]);
 
   useEffect(() => {
     if (routerState.invalidMessageUntil === null) {
@@ -137,8 +145,15 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     return () => clearTimeout(timeout);
   }, [routerState.invalidMessageUntil]);
 
-  const model = deriveShellModel({ snapshot, state, attachment: workCraft.attachment });
-  const navigation = model.navigation;
+  const liveModel = deriveShellModel({ snapshot, state, attachment: workCraft.attachment });
+  const model = deriveShellModel({
+    snapshot: displaySnapshot,
+    state,
+    attachment: shellPresentation
+      ? { sessionId: shellPresentation.sessionId }
+      : workCraft.attachment,
+  });
+  const navigation = liveModel.navigation;
   const stamp: InputStamp | null =
     snapshot && navigation && workCraft.attachment
       ? {
@@ -206,15 +221,15 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     navigatorOpen: state.navigatorOpen,
     preferredNavigatorWidth: state.navigatorWidth,
     paneLayout,
-    panes: snapshot?.panes,
-    connected: workCraft.status === "connected",
+    panes: displaySnapshot?.panes,
+    connected: workCraft.status === "connected" || preservePresentation,
   });
   const { navigatorMode, navigatorVisible, navigatorWidth, resizeBlocked, undersized } =
     shellLayout;
   const environment: ShellEnvironment = {
     snapshot,
     state,
-    model,
+    model: liveModel,
     layout: shellLayout,
     connected: workCraft.status === "connected",
   };
@@ -240,6 +255,10 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     };
   }
   function canReceiveWorkbenchInput(paneId?: string): boolean {
+    const live = workCraftRef.current.getState();
+    if (live.status !== "connected" || live.attachment === null) {
+      return false;
+    }
     const local = liveState.current;
     if (
       renderer.width < 80 ||
@@ -323,7 +342,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     return !layout.undersized && node !== undefined && hasRecoveryViewport(node.rect);
   }
   const shellFocus = useShellFocus({
-    environment,
+    environment: { ...environment, snapshot: displaySnapshot, model },
     read: readEnvironment,
     nativeFocus,
     entry,
@@ -341,12 +360,18 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
 
   useLayoutEffect(() => {
     entry.contextChanged(workCraft.status === "connected");
-  }, [completionContext.navigationKey, dialogKey, workCraft.status]);
+  }, [liveModel.navigationKey, dialogKey, workCraft.status, workCraft.attachment]);
 
   useLayoutEffect(() => {
     commands.observeCompletion(completionContext);
   }, [completionContext.key, completionContext.navigationKey, completionContext.dialog]);
-  const structuralCommands = availableCommands({ model, state, snapshot, focus, focusedPaneId });
+  const structuralCommands = availableCommands({
+    model: liveModel,
+    state,
+    snapshot,
+    focus,
+    focusedPaneId,
+  });
 
   const commandContext: CommandContext = {
     focus,
@@ -716,6 +741,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
   };
   const workbenchProps = {
     connected: workCraft.status === "connected",
+    preservePresentation,
     reactivatingPaneIds: commands.reactivatingPaneIds,
     canReactivate,
     onReactivatePane: commands.reactivate,
@@ -734,7 +760,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     },
     activeTabId: activeTab?.id ?? null,
     focusedPaneId,
-    snapshot,
+    snapshot: displaySnapshot,
     stream: workCraft.stream,
     surface,
     tabCursorId: state.tabCursorId,

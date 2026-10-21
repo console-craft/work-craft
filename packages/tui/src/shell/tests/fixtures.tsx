@@ -109,6 +109,7 @@ export function workCraftStateFixture(
     status: "connected",
     connectionError: null,
     attachment: attachmentFixture(),
+    requestedSessionId: "session-work",
     geometry: snapshot.geometry,
     attach: async (sessionId) => {
       if (sessionId !== null && !fixture.snapshot?.sessions.some(({ id }) => id === sessionId)) {
@@ -118,6 +119,7 @@ export function workCraftStateFixture(
         ...attachmentFixture(sessionId),
         generation: (fixture.attachment?.generation ?? 0) + 1,
       };
+      fixture.requestedSessionId = sessionId;
     },
     canRespond: () => false,
     canSendInput: (paneId, stamp) => {
@@ -182,6 +184,10 @@ export function workCraftStateFixture(
         : attachmentFixture(null);
   }
   fixture.geometry = fixture.snapshot?.geometry ?? { sequence: 0, tabs: [], panes: [] };
+  fixture.requestedSessionId =
+    overrides.requestedSessionId === undefined
+      ? (fixture.attachment?.sessionId ?? null)
+      : overrides.requestedSessionId;
   if (overrides.outputs === undefined && initial && "terminalHistories" in initial) {
     fixture.outputs = createTerminalOutputs(snapshotTerminals(initial, new Map()));
   }

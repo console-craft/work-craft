@@ -1,8 +1,12 @@
 import type { BoxRenderable, EmbeddedTerminalRenderable } from "@opentui/core";
-import { projectPaneLayout, type Snapshot, type StreamConnection } from "@work-craft/server/client";
+import {
+  type ControlSnapshot,
+  projectPaneLayout,
+  type Snapshot,
+  type StreamConnection,
+} from "@work-craft/server/client";
 import { useEffect, useState } from "react";
 
-import type { TerminalBuffer } from "@/client/terminal-buffer.ts";
 import type { TerminalOutputs } from "@/client/terminal-output";
 import { EmptyState, EmptyStateDescription, EmptyStateTitle } from "@/ui/components/empty-state";
 import { Box } from "@/ui/primitives/box.tsx";
@@ -14,25 +18,17 @@ import { selectedTab } from "@/workbench/model";
 import { paneNotice } from "@/workbench/pane-state.ts";
 import { TerminalPane, type TerminalPaneProps } from "@/workbench/terminal-pane.tsx";
 
-export function terminalPaneKey(
-  paneId: string,
-  buffer:
-    | Pick<TerminalBuffer, "epoch" | "runtimeGeneration" | "resetGeneration" | "historyCursor">
-    | undefined,
-): string {
-  return `${paneId}:${buffer?.epoch ?? "pending"}:${buffer?.runtimeGeneration ?? 0}:${buffer?.resetGeneration ?? 0}:${buffer?.historyCursor ?? 0}`;
-}
-
 export type SurfaceViewProps = Pick<
   TerminalPaneProps,
   "stamp" | "canRespond" | "inputEvent" | "onMouseInput" | "onResync"
 > & {
   activeTabId: string | null;
   connected: boolean;
+  preservePresentation?: boolean;
   reactivatingPaneIds: ReadonlySet<string>;
   canReactivate(paneId: string): boolean;
   onReactivatePane(paneId: string): void;
-  snapshot: Omit<Snapshot, "terminalHistories">;
+  snapshot: Omit<Snapshot, "terminalHistories"> & Partial<Pick<ControlSnapshot, "terminalStates">>;
   stream: StreamConnection | null;
   surface: Snapshot["surfaces"][number];
   outputs: TerminalOutputs;
@@ -48,6 +44,7 @@ export type SurfaceViewProps = Pick<
 
 export function SurfaceView({
   connected,
+  preservePresentation = false,
   reactivatingPaneIds,
   canReactivate,
   onReactivatePane,
@@ -112,10 +109,10 @@ export function SurfaceView({
           {geometry.panes.map(({ paneId, rect }) => {
             const pane = snapshot.panes.find(({ id }) => id === paneId);
             const output = outputs.pane(paneId);
-            const buffer = output.read();
             const viewport = terminalRect(
               rect,
-              pane !== undefined && paneNotice(pane.processStatus, connected) !== null,
+              pane !== undefined &&
+                paneNotice(pane.processStatus, connected || preservePresentation) !== null,
             );
             const usable = !undersized && hasTerminalViewport(viewport);
             return (
@@ -135,11 +132,19 @@ export function SurfaceView({
                   <TerminalPane
                     bounds={rect}
                     connected={connected}
+                    preservePresentation={preservePresentation}
                     reactivatingPaneIds={reactivatingPaneIds}
                     canReactivate={canReactivate}
                     onReactivatePane={onReactivatePane}
-                    key={terminalPaneKey(paneId, buffer)}
                     output={output}
+                    runtimeIdentity={{
+                      epoch: snapshot.epoch,
+                      runtimeGeneration:
+                        snapshot.terminalStates?.find((entry) => entry.paneId === paneId)
+                          ?.runtimeGeneration ??
+                        output.read()?.runtimeGeneration ??
+                        0,
+                    }}
                     focused={workbenchFocused && paneId === focusedPaneId}
                     pane={pane}
                     size={snapshot.geometry.panes.find((entry) => entry.paneId === paneId)!.size}
