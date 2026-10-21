@@ -17,7 +17,7 @@ test("client recorder bounds events and counts overflow without writing on the i
     () => 3,
   );
   for (let index = 0; index < 32769; index++) {
-    probe.observe({ stage: "native.write", bytes: 2 });
+    probe.observe({ stage: "native.write", bytes: 2, pending: index });
   }
   expect(writes).toEqual([]);
   probe.flush();
@@ -28,6 +28,7 @@ test("client recorder bounds events and counts overflow without writing on the i
     .map((line) => JSON.parse(line));
   expect(records.filter((record) => record.type === "event")).toHaveLength(32768);
   expect(records.at(-1)).toMatchObject({ type: "summary", valid: false, discarded: 1 });
+  expect(records.at(-1).highWater["native.write"]).toEqual({ bytes: 2, pending: 32768 });
 });
 
 test("client recorder strips payload and isolates sink failures", () => {

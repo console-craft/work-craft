@@ -23,6 +23,7 @@ export function createOutputProbe(
   let events: object[] = [];
   let sequence = 0;
   let discarded = 0;
+  let highWater: Record<string, { bytes: number; pending: number }> = Object.create(null);
   let totals: Record<string, { count: number; bytes: number; durationMs: number }> =
     Object.create(null);
   return {
@@ -33,6 +34,9 @@ export function createOutputProbe(
       total.count++;
       total.bytes += event.bytes ?? 0;
       total.durationMs += event.durationMs ?? 0;
+      const high = (highWater[key] ??= { bytes: 0, pending: 0 });
+      high.bytes = Math.max(high.bytes, event.bytes ?? 0);
+      high.pending = Math.max(high.pending, event.pending ?? 0);
       sequence++;
       if (events.length >= 32768) {
         discarded++;
@@ -85,6 +89,8 @@ export function createOutputProbe(
           truncated,
           valid: discarded === 0 && truncated === 0,
           totals,
+          highWater,
+          memory: process.memoryUsage(),
         }) + "\n",
       );
       try {
@@ -95,6 +101,7 @@ export function createOutputProbe(
       events = [];
       discarded = 0;
       totals = Object.create(null);
+      highWater = Object.create(null);
     },
   };
 }

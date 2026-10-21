@@ -6,6 +6,8 @@ import { EmbeddedTerminalRenderable } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createClient, type WorkCraftClient } from "@work-craft/server/client";
 
+import { createTerminalObservation } from "@/tests/support/terminal-observation";
+
 const ROOT = resolve(import.meta.dir, "../../../../..");
 
 export type SharedTuiProcess = {
@@ -14,6 +16,7 @@ export type SharedTuiProcess = {
   output(): string;
   frame(): string;
   cursor(): { x: number; y: number; visible: boolean };
+  outputStats(): { rawBytes: number; parseMs: number };
 };
 
 export type SharedSessionFixture = {
@@ -122,12 +125,19 @@ export async function startSharedSessionFixture(
         flexShrink: 0,
       });
       display.renderer.root.add(screen);
+      const observation = options.boundedObservation
+        ? createTerminalObservation(screen)
+        : undefined;
       terminal = new Bun.Terminal({
         cols,
         rows,
         data: (_terminal, bytes) => {
-          output += decoder.decode(bytes, { stream: true });
-          screen.write(bytes);
+          if (observation) {
+            observation.write(bytes);
+          } else {
+            output += decoder.decode(bytes, { stream: true });
+            screen.write(bytes);
+          }
         },
       });
       const child = Bun.spawn([process.execPath, "run", "tui"], {
@@ -139,9 +149,13 @@ export async function startSharedSessionFixture(
       const tui = {
         child,
         terminal,
-        output: () => output,
+        output: () => (observation ? new TextDecoder().decode(observation.retained()) : output),
         frame: () => screen.screen().text,
         cursor: () => screen.screen().cursor,
+        outputStats: () => ({
+          rawBytes: observation?.bytes() ?? Buffer.byteLength(output),
+          parseMs: observation?.parseMs() ?? 0,
+        }),
       };
       processes.set(tui, screen);
       return tui;

@@ -11,7 +11,7 @@ test("records 32768 events then counts discarded observations without event-time
     () => 12,
   );
   for (let index = 0; index < 32769; index++) {
-    probe.observe({ stage: "native.write", bytes: 10, durationMs: 2 });
+    probe.observe({ stage: "native.write", bytes: 10, durationMs: 2, pending: index });
   }
   expect(writes).toEqual([]);
   probe.flush();
@@ -29,6 +29,7 @@ test("records 32768 events then counts discarded observations without event-time
     bytes: 327690,
     durationMs: 65538,
   });
+  expect(records.at(-1).highWater["native.write"]).toEqual({ bytes: 10, pending: 32768 });
 });
 
 test("flush clears retained events and strips unexpected payload properties", () => {
