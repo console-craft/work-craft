@@ -35,7 +35,8 @@ CREATE TABLE terminal_grids (
   baseline_cols INTEGER, baseline_rows INTEGER, baseline_sequence INTEGER,
   truncated INTEGER NOT NULL DEFAULT 0 CHECK (truncated IN (0,1)),
   CHECK ((baseline_cols IS NULL AND baseline_rows IS NULL AND baseline_sequence IS NULL) OR
-    (baseline_cols > 0 AND baseline_rows > 0 AND baseline_sequence >= 0))
+    (baseline_cols IS NOT NULL AND baseline_rows IS NOT NULL AND baseline_sequence IS NOT NULL
+      AND baseline_cols > 0 AND baseline_rows > 0 AND baseline_sequence >= 0))
 );
 CREATE TABLE terminal_resizes (
   pane_id TEXT NOT NULL REFERENCES panes(id) ON DELETE CASCADE,
