@@ -7,11 +7,16 @@ import WebSocket from "ws";
 
 import { encodeBytes } from "./api/protocol.ts";
 import type {
+  ClientAttachment,
   Command,
   CommandResponse,
+  InputStamp,
+  InteractiveMessage,
   ServerMessage,
   Snapshot,
+  TerminalInputContext,
   ValidationField,
+  ViewerReport,
 } from "./api/protocol.ts";
 import type { Health } from "./application/app.ts";
 import { resolvePaths } from "./daemon/paths.ts";
@@ -77,8 +82,11 @@ export type StreamHandlers = {
 
 export type StreamConnection = {
   close(): void;
-  sendInput(paneId: string, bytes: Uint8Array): void;
-  resize(paneId: string, cols: number, rows: number): void;
+  attach(sessionId: string | null): Promise<ClientAttachment>;
+  command(command: Command, attachmentGeneration: number): Promise<CommandResponse>;
+  reportViewport(report: ViewerReport | null, stamp: InputStamp): void;
+  activity(stamp: InputStamp, sequence: number): void;
+  sendInput(paneId: string, bytes: Uint8Array, context: TerminalInputContext): void;
 };
 
 export type WorkCraftClient = {
@@ -230,9 +238,51 @@ export function createClient(options: { socketPath?: string } = {}): WorkCraftCl
       let closeError: Error | undefined;
       let current: Pick<Snapshot, "epoch" | "revision"> | undefined;
       let snapshots = Promise.resolve();
+      let alive = true;
+      let requestId = 0;
+      const pending = new Map<
+        number,
+        {
+          resolve(value: ClientAttachment | CommandResponse): void;
+          reject(error: Error): void;
+          timer: Timer;
+        }
+      >();
+
+      function send(message: InteractiveMessage): void {
+        if (!alive || socket.readyState !== WebSocket.OPEN) {
+          throw new Error("Stream is disconnected");
+        }
+        socket.send(JSON.stringify(message));
+      }
+
+      function request(
+        message:
+          | { type: "client.attach"; sessionId: string | null }
+          | { type: "client.command"; command: Command; attachmentGeneration: number },
+      ): Promise<ClientAttachment | CommandResponse> {
+        if (pending.size >= 128) {
+          return Promise.reject(new Error("Too many interactive requests in flight"));
+        }
+        const id = ++requestId;
+        return new Promise((resolve, reject) => {
+          const timer = setTimeout(() => {
+            pending.delete(id);
+            reject(new Error("Interactive request timed out"));
+          }, 10_000);
+          pending.set(id, { resolve, reject, timer });
+          try {
+            send({ ...message, requestId: id });
+          } catch (error) {
+            clearTimeout(timer);
+            pending.delete(id);
+            reject(error);
+          }
+        });
+      }
 
       function applySnapshot(snapshot: Snapshot): void {
-        if (current?.epoch === snapshot.epoch && snapshot.revision <= current.revision) {
+        if (!alive || (current?.epoch === snapshot.epoch && snapshot.revision < current.revision)) {
           return;
         }
         current = { epoch: snapshot.epoch, revision: snapshot.revision };
@@ -247,7 +297,13 @@ export function createClient(options: { socketPath?: string } = {}): WorkCraftCl
         ) {
           applySnapshot(next);
         } else if (next.revision > current.revision + 1) {
-          applySnapshot((await requestJson(socketPath, "/snapshot")) as Snapshot);
+          const epoch = current.epoch;
+          const refreshed = (await requestJson(socketPath, "/snapshot")) as Snapshot;
+          if (alive && current.epoch === epoch) {
+            applySnapshot(refreshed);
+          }
+        } else if (next.revision === current.revision) {
+          applySnapshot(next);
         }
       }
 
@@ -259,11 +315,36 @@ export function createClient(options: { socketPath?: string } = {}): WorkCraftCl
       socket.on("message", (data) => {
         try {
           const message = JSON.parse(data.toString()) as ServerMessage;
-          if (message.type !== "snapshot") {
-            handlers.onMessage(message);
-            return;
-          }
-          snapshots = snapshots.then(() => handleSnapshot(message.snapshot)).catch(closeWith);
+          snapshots = snapshots
+            .then(async () => {
+              if (!alive) {
+                return;
+              }
+              if (message.type === "snapshot") {
+                await handleSnapshot(message.snapshot);
+                return;
+              }
+              if (
+                (message.type === "client.attached" && message.requestId !== null) ||
+                message.type === "command.result" ||
+                message.type === "command.error"
+              ) {
+                const item = pending.get(message.requestId!);
+                if (item) {
+                  pending.delete(message.requestId!);
+                  clearTimeout(item.timer);
+                  if (message.type === "command.error") {
+                    item.reject(new ApiError(message.message, message.field));
+                  } else {
+                    item.resolve(
+                      message.type === "client.attached" ? message.attachment : message.response,
+                    );
+                  }
+                }
+              }
+              handlers.onMessage(message);
+            })
+            .catch(closeWith);
         } catch (error) {
           closeWith(error);
         }
@@ -272,12 +353,18 @@ export function createClient(options: { socketPath?: string } = {}): WorkCraftCl
         opened = true;
         resolve({
           close: () => socket.close(),
-          sendInput: (paneId, bytes) =>
-            socket.send(
-              JSON.stringify({ type: "terminal.input", paneId, data: encodeBytes(bytes) }),
-            ),
-          resize: (paneId, cols, rows) =>
-            socket.send(JSON.stringify({ type: "terminal.resize", paneId, cols, rows })),
+          attach: (sessionId) =>
+            request({ type: "client.attach", sessionId }) as Promise<ClientAttachment>,
+          command: (command, attachmentGeneration) =>
+            request({
+              type: "client.command",
+              command,
+              attachmentGeneration,
+            }) as Promise<CommandResponse>,
+          reportViewport: (report, stamp) => send({ type: "client.viewport", report, stamp }),
+          activity: (stamp, sequence) => send({ type: "client.activity", stamp, sequence }),
+          sendInput: (paneId, bytes, context) =>
+            send({ type: "terminal.input", paneId, data: encodeBytes(bytes), context }),
         });
       });
       socket.once("error", (error) => {
@@ -287,6 +374,12 @@ export function createClient(options: { socketPath?: string } = {}): WorkCraftCl
         }
       });
       socket.once("close", () => {
+        alive = false;
+        for (const item of pending.values()) {
+          clearTimeout(item.timer);
+          item.reject(closeError ?? new Error("Stream closed during request"));
+        }
+        pending.clear();
         if (!opened) {
           reject(closeError ?? new Error("WebSocket closed before connecting"));
           return;
@@ -318,6 +411,9 @@ export function createClient(options: { socketPath?: string } = {}): WorkCraftCl
         let received = false;
         void stream({
           onMessage(message) {
+            if (message.type !== "snapshot") {
+              return;
+            }
             received = true;
             connection?.close();
             resolve(message);

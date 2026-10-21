@@ -1,9 +1,9 @@
 import type { Database } from "bun:sqlite";
 
-import { decodeBytes, encodeBytes, parseCommand, ProtocolError } from "../api/protocol.ts";
+import { type CommandOrigin, createConnections } from "../api/connections.ts";
+import { encodeBytes, parseCommand, ProtocolError } from "../api/protocol.ts";
 import type {
   ClientMessage,
-  Command,
   CommandResponse,
   DirectoryData,
   PaneStatus,
@@ -16,6 +16,8 @@ import { RuntimeRegistry } from "../terminal/runtime.ts";
 import { applyCommand } from "./commands.ts";
 import { canonicalDirectoryPath, type DirectoryScan, inspectDirectory } from "./directories.ts";
 import { isTrustedGroupScan, readItems, reconcileDirectoryScan } from "./items.ts";
+import { normalizeSessionNavigations, readNavigationCatalog } from "./navigation-store.ts";
+import { createTerminalSizing, type GeometryDecision } from "./sizing.ts";
 import { readSnapshot } from "./snapshot.ts";
 
 export type Health = { epoch: string; revision: number; pid: number };
@@ -27,8 +29,8 @@ export type WorkCraftApp = {
   startDirectoryRefresh(): void;
   refreshDirectories(): Promise<void>;
   closeDirectoryRefresh(): Promise<void>;
-  execute(command: Command): Promise<CommandResponse>;
-  receive(message: ClientMessage): void;
+  execute(command: unknown, origin?: CommandOrigin): Promise<CommandResponse>;
+  receive(socket: Bun.ServerWebSocket, message: ClientMessage): Promise<void>;
   subscribe(socket: Bun.ServerWebSocket): void;
   unsubscribe(socket: Bun.ServerWebSocket): void;
   history: TerminalHistory;
@@ -53,9 +55,10 @@ export function createApp(options: {
   let directoryRefreshStarted = false;
   let directoryRefreshClosed = false;
   let directoryClose: Promise<void> | undefined;
+  const sizing = createTerminalSizing(readSnapshot(options.db, epoch, revision, history));
 
   function snapshot(): Snapshot {
-    return readSnapshot(options.db, epoch, revision, history);
+    return readSnapshot(options.db, epoch, revision, history, sizing.current());
   }
 
   function broadcast(message: ServerMessage): void {
@@ -68,7 +71,25 @@ export function createApp(options: {
   function publishChange(changed: boolean): void {
     if (changed) {
       revision += 1;
+      connections.reconcile();
+      applyGeometry(sizing.reconcile(snapshot()));
       broadcast({ type: "snapshot", snapshot: snapshot() });
+    }
+  }
+
+  function applyGeometry(decision: GeometryDecision): void {
+    if (!decision.changed) {
+      return;
+    }
+    const resizes = decision.resizes.flatMap(({ paneId, size }) => {
+      const marker = history.recordGrid(paneId, size);
+      return marker ? [{ paneId, marker }] : [];
+    });
+    broadcast({ type: "terminal.geometry", epoch, geometry: decision.geometry, resizes });
+    for (const { paneId, size } of decision.resizes) {
+      if (runtime.isLive(paneId)) {
+        runtime.resize(paneId, size.cols, size.rows);
+      }
     }
   }
 
@@ -180,7 +201,12 @@ export function createApp(options: {
       if (!currentDirectory(root.id, root.workspaceId, root.data)) {
         continue;
       }
-      publishChange(reconcileDirectoryScan(options.db, root.id, scan));
+      const changed = options.db.transaction(() => {
+        const before = readNavigationCatalog(options.db);
+        const changed = reconcileDirectoryScan(options.db, root.id, scan);
+        return normalizeSessionNavigations(options.db, before) || changed;
+      })();
+      publishChange(changed);
     }
   }
 
@@ -226,7 +252,14 @@ export function createApp(options: {
 
   function onOutput(paneId: string, bytes: Uint8Array): void {
     const cursor = history.append(paneId, bytes);
-    broadcast({ type: "terminal.output", epoch, paneId, cursor, data: encodeBytes(bytes) });
+    broadcast({
+      type: "terminal.output",
+      epoch,
+      paneId,
+      cursor,
+      data: encodeBytes(bytes),
+      geometrySequence: sizing.current().sequence,
+    });
   }
 
   function onStatus(paneId: string, status: PaneStatus, error?: string): void {
@@ -243,7 +276,6 @@ export function createApp(options: {
     if (result.changes !== 1) {
       throw new Error(`Pane not found: ${paneId}`);
     }
-    revision += 1;
     broadcast({
       type: "process.status",
       epoch,
@@ -251,10 +283,24 @@ export function createApp(options: {
       status,
       ...(error === undefined ? {} : { error }),
     });
-    broadcast({ type: "snapshot", snapshot: snapshot() });
+    publishChange(true);
   }
 
   const runtime = new RuntimeRegistry({ onOutput, onStatus });
+  const connections = createConnections({
+    epoch,
+    snapshot,
+    execute,
+    onViewer: (id, report) => applyGeometry(sizing.report(id, report)),
+    onAttachActivity: (id) => applyGeometry(sizing.attachmentActivity(id)),
+    onActivity: (id, sequence) => applyGeometry(sizing.activity(id, sequence)),
+    onDisconnect: (id) => applyGeometry(sizing.remove(id)),
+    onInput: (paneId, bytes) => {
+      if (runtime.isLive(paneId)) {
+        runtime.write(paneId, bytes);
+      }
+    },
+  });
 
   async function recoverOnce(): Promise<void> {
     const panes = new Map(snapshot().panes.map((pane) => [pane.id, pane]));
@@ -285,6 +331,7 @@ export function createApp(options: {
     for (const { id } of interrupted) {
       const pane = panes.get(id)!;
       try {
+        history.recordGrid(pane.id, { cols: 80, rows: 24 });
         await runtime.start(pane);
       } catch (cause) {
         const failed = options.db
@@ -304,83 +351,105 @@ export function createApp(options: {
     return recovery;
   }
 
+  async function execute(value: unknown, origin?: CommandOrigin): Promise<CommandResponse> {
+    let command = parseCommand(value);
+    function validateOrigin(): void {
+      if (
+        origin &&
+        (!connections.isCurrent(origin) ||
+          ((command.type === "session.navigate" ||
+            command.type === "session.step" ||
+            command.type === "session.openItem") &&
+            command.sessionId !== origin.sessionId) ||
+          ("activation" in command &&
+            command.activation !== undefined &&
+            command.activation.sessionId !== origin.sessionId))
+      ) {
+        throw new ProtocolError("Attachment changed before command activation");
+      }
+    }
+    validateOrigin();
+    if (command.type === "directory.register" && directoryRefreshClosed) {
+      throw new ProtocolError("Directory discovery is closed");
+    }
+    const registration =
+      command.type === "directory.register"
+        ? await inspectPath(await canonicalDirectoryPath(command.path))
+        : undefined;
+    if (command.type === "directory.register" && directoryRefreshClosed) {
+      throw new ProtocolError("Directory discovery is closed");
+    }
+    if (registration !== undefined && !registration.available) {
+      throw new ProtocolError(
+        registration.reason ?? "Directory became unavailable during registration",
+      );
+    }
+    if (command.type === "pane.split") {
+      try {
+        const cwd =
+          command.cwd === undefined
+            ? await runtime.currentDirectory(command.paneId)
+            : await validateSplitCwd(command.cwd);
+        command = { ...command, cwd };
+      } catch (cause) {
+        throw new ProtocolError(cause instanceof Error ? cause.message : String(cause));
+      }
+    }
+    // Keep the runtime's final identity check adjacent to the synchronous split transaction.
+    validateOrigin();
+    const { result, effects, changed } = applyCommand(options.db, command, registration);
+    if (command.type === "daemon.stop" || command.type === "daemon.destroy") {
+      options.onStop?.(command.type === "daemon.destroy");
+      return { ok: true, revision, result };
+    }
+
+    publishChange(changed);
+    const committedRevision = revision;
+
+    for (const effect of effects) {
+      if (effect.type !== "spawn-pane" || runtime.isLive(effect.paneId)) {
+        continue;
+      }
+      const pane = snapshot().panes.find(({ id }) => id === effect.paneId);
+      if (pane === undefined) {
+        throw new Error(`Pane not found after commit: ${effect.paneId}`);
+      }
+      try {
+        const size = sizing.current().panes.find(({ paneId }) => paneId === pane.id)?.size ?? {
+          cols: 80,
+          rows: 24,
+        };
+        history.recordGrid(pane.id, size);
+        await runtime.start(pane, size);
+      } catch {
+        // RuntimeRegistry has already persisted and broadcast the failed status.
+      }
+    }
+
+    return { ok: true, revision: committedRevision, result };
+  }
+
   return {
     history,
     runtime,
-    health() {
-      return { epoch, revision, pid: process.pid };
-    },
     snapshot,
     recover,
     startDirectoryRefresh,
     refreshDirectories,
     closeDirectoryRefresh,
-    async execute(value) {
-      let command = parseCommand(value);
-      if (command.type === "directory.register" && directoryRefreshClosed) {
-        throw new ProtocolError("Directory discovery is closed");
-      }
-      const registration =
-        command.type === "directory.register"
-          ? await inspectPath(await canonicalDirectoryPath(command.path))
-          : undefined;
-      if (command.type === "directory.register" && directoryRefreshClosed) {
-        throw new ProtocolError("Directory discovery is closed");
-      }
-      if (registration !== undefined && !registration.available) {
-        throw new ProtocolError(
-          registration.reason ?? "Directory became unavailable during registration",
-        );
-      }
-      if (command.type === "pane.split") {
-        try {
-          const cwd =
-            command.cwd === undefined
-              ? await runtime.currentDirectory(command.paneId)
-              : await validateSplitCwd(command.cwd);
-          command = { ...command, cwd };
-        } catch (cause) {
-          throw new ProtocolError(cause instanceof Error ? cause.message : String(cause));
-        }
-      }
-      // Keep the runtime's final identity check adjacent to the synchronous split transaction.
-      const { result, effects, changed } = applyCommand(options.db, command, registration);
-      if (command.type === "daemon.stop" || command.type === "daemon.destroy") {
-        options.onStop?.(command.type === "daemon.destroy");
-        return { ok: true, revision, result };
-      }
-
-      for (const effect of effects) {
-        if (effect.type !== "spawn-pane" || runtime.isLive(effect.paneId)) {
-          continue;
-        }
-        const pane = snapshot().panes.find(({ id }) => id === effect.paneId);
-        if (pane === undefined) {
-          throw new Error(`Pane not found after commit: ${effect.paneId}`);
-        }
-        try {
-          await runtime.start(pane);
-        } catch {
-          // RuntimeRegistry has already persisted and broadcast the failed status.
-        }
-      }
-
-      publishChange(changed);
-      return { ok: true, revision, result };
+    execute,
+    health() {
+      return { epoch, revision, pid: process.pid };
     },
-    receive(message) {
-      if (message.type === "terminal.input") {
-        runtime.write(message.paneId, decodeBytes(message.data));
-      } else {
-        runtime.resize(message.paneId, message.cols, message.rows);
-      }
-    },
+    receive: (socket, message) => connections.receive(socket, message),
     subscribe(socket) {
       subscribers.add(socket);
+      connections.open(socket);
       socket.send(JSON.stringify({ type: "snapshot", snapshot: snapshot() }));
     },
     unsubscribe(socket) {
       subscribers.delete(socket);
+      connections.close(socket);
     },
   };
 }

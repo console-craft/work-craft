@@ -473,7 +473,7 @@ test("persists shell output after the process exits", async () => {
     INSERT INTO workspaces VALUES ('workspace-1', 'Work');
     INSERT INTO session_workspaces VALUES ('session-1', 'workspace-1', 0);
     INSERT INTO items VALUES ('item-1', 'workspace-1', 'design', NULL, 'generic', 'Build', 0, 0, '{}');
-    INSERT INTO surfaces VALUES ('surface-1', 'item-1', NULL);
+    INSERT INTO surfaces VALUES ('surface-1', 'item-1');
     INSERT INTO panes VALUES ('pane-1', 'surface-1', 'terminal', 'Shell', '/tmp', '{"type":"shell","executable":"/bin/sh","args":[]}', 'running', NULL, NULL, NULL);
   `);
   const history = new TerminalHistory(db);

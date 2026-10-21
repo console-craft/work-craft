@@ -24,7 +24,7 @@ import {
   workCraftStateFixture,
 } from "@/shell/tests/fixtures";
 import { WorkspaceBar } from "@/shell/workspace-bar.tsx";
-import { snapshotFixture } from "@/tests/support/fixtures.ts";
+import { snapshotFixture, streamFixture } from "@/tests/support/fixtures.ts";
 import { Box } from "@/ui/primitives/box.tsx";
 import type { Theme } from "@/ui/theming/theme";
 import { ThemeProvider } from "@/ui/theming/theme-provider.tsx";
@@ -93,9 +93,10 @@ for (const direction of ["single", "horizontal", "vertical"] as const) {
             if (node.target.region !== "workbench") {
               continue;
             }
-            const rendered = root.findDescendantById(
+            const target = root.findDescendantById(
               `${node.target.control ? "reactivate" : "terminal"}:${node.target.paneId}`,
             )!;
+            const rendered = node.target.control ? target : target.parent!;
             expect({
               x: rendered.screenX,
               y: rendered.screenY,
@@ -105,14 +106,16 @@ for (const direction of ["single", "horizontal", "vertical"] as const) {
           }
           for (const id of paneIds(initial.tabs[0]!.layout)) {
             const terminal = root.findDescendantById(`terminal:${id}`)!;
-            const pane = terminal.parent!;
-            expect(terminal.screenY).toBe(pane.screenY + 1);
-            expect(terminal.screenY + terminal.height).toBeLessThanOrEqual(
+            const viewport = terminal.parent!;
+            const pane = viewport.parent!.parent!;
+            expect(viewport.screenY).toBe(pane.screenY + 1);
+            expect(viewport.screenY + viewport.height).toBeLessThanOrEqual(
               pane.screenY + pane.height,
             );
+            expect([terminal.width, terminal.height]).toEqual([80, 24]);
             const alert = root.findDescendantById(`pane-alert:${id}`);
             if (alert) {
-              expect(alert.screenY).toBe(terminal.screenY + terminal.height);
+              expect(alert.screenY).toBe(viewport.screenY + viewport.height);
               expect(alert.screenY + alert.height).toBe(pane.screenY + pane.height);
             }
             expect(pane.screenY + pane.height).toBeLessThanOrEqual(status.screenY);
@@ -122,7 +125,7 @@ for (const direction of ["single", "horizontal", "vertical"] as const) {
       }
       try {
         assertLayout(120, 40, true);
-        const first = setup.renderer.root.findDescendantById("terminal:pane-1")!;
+        const first = setup.renderer.root.findDescendantById("terminal:pane-1")!.parent!;
         expect([first.screenX, first.screenY, first.width, first.height]).toEqual(
           direction === "single"
             ? [51, 6, 68, stopped ? 30 : 33]
@@ -203,13 +206,12 @@ test("resize guard blocks same-buffer terminal bytes and keeps dialog input moun
   const sent: Uint8Array[] = [];
   const workCraft = workCraftStateFixture({
     snapshot: surfaceSnapshot(),
-    stream: {
+    stream: streamFixture({
       sendInput: (_id, data) => {
         sent.push(data);
       },
-      resize() {},
       close() {},
-    },
+    }),
   });
   const setup = await testRender(<WorkCraftShell workCraft={workCraft} />, {
     width: 120,
@@ -311,11 +313,10 @@ test("theme changes preserve workbench identity, focus, hints and status geometr
       commands.push(command);
       return { ok: true, revision: snapshot.revision, result: { id: "result-1" } };
     },
-    stream: {
+    stream: streamFixture({
       close: () => {},
-      resize: () => {},
       sendInput: (paneId, bytes) => received.push({ paneId, bytes: [...bytes] }),
-    },
+    }),
   });
   let changeTheme: Dispatch<SetStateAction<Theme>>;
   function Fixture() {
@@ -412,11 +413,10 @@ test("horizontal pointer scrolling preserves terminal identity and subsequent in
   const workCraft = workCraftStateFixture({
     snapshot,
     connectionError: "Connection detail ".repeat(10),
-    stream: {
+    stream: streamFixture({
       close: () => {},
-      resize: () => {},
       sendInput: (paneId, bytes) => received.push({ paneId, bytes: [...bytes] }),
-    },
+    }),
   });
   let changeTheme: Dispatch<SetStateAction<Theme>>;
   function Fixture() {

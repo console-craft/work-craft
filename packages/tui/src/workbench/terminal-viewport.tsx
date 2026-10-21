@@ -8,16 +8,13 @@ import { useRenderer } from "@opentui/react";
 import type { TerminalSize } from "@work-craft/server/client";
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 
-import {
-  type ReplayProgress,
-  type TerminalReplayBuffer,
-  terminalReplaySteps,
-} from "@/client/terminal-replay";
+import type { TerminalBuffer } from "@/client/terminal-buffer";
+import { type ReplayProgress, terminalReplaySteps } from "@/client/terminal-replay";
 import { Box } from "@/ui/primitives/box";
 
 export type TerminalViewportProps = {
   paneId: string;
-  buffer: TerminalReplayBuffer;
+  buffer: TerminalBuffer;
   size: TerminalSize;
   inputEnabled: boolean;
   focused: boolean;
@@ -27,6 +24,7 @@ export type TerminalViewportProps = {
   onReady(node: EmbeddedTerminalRenderable | null): void;
   onFocus(): void;
   onResync(): void;
+  onMouseInput?(event: MouseEvent): void;
 };
 
 function sameSize(first: TerminalSize, second: TerminalSize): boolean {
@@ -40,6 +38,7 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
   latest.current = props;
   // A down-specific prop would replace the native terminal's mouse-encoding handler.
   const onMouse = useRef((event: MouseEvent) => {
+    latest.current.onMouseInput?.(event);
     if (event.type === "down" && event.button === 0) {
       latest.current.onFocus();
     }
@@ -56,7 +55,7 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
   const progress = useRef<ReplayProgress | null>(null);
   const suppressResponse = useRef(false);
   const resizing = useRef(false);
-  const resyncBuffer = useRef<TerminalReplayBuffer | null>(null);
+  const resyncBuffer = useRef<TerminalBuffer | null>(null);
 
   function readiness(value: boolean): void {
     inputReady.current = value;
@@ -138,10 +137,10 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
       viewport.width >= 20 &&
       viewport.height >= 5 &&
       props.canInput();
+    target.focusable = eligible;
     if (!props.focused || !eligible) {
       target.blur();
     }
-    target.focusable = eligible;
     if (props.focused && eligible) {
       target.focus();
     }
@@ -195,6 +194,10 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
         flexShrink={0}
         transparentBackground
         onTerminalResize={(cols, rows) => {
+          const screen = terminal.current?.screen();
+          if (!screen || screen.columns !== cols || screen.rows !== rows) {
+            return;
+          }
           actualGrid.current = { cols, rows };
           resizing.current = false;
           drain();

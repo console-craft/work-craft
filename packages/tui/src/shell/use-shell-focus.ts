@@ -19,7 +19,6 @@ type ShellFocusOptions = {
   canReceiveInput(paneId?: string): boolean;
   canReactivate(paneId: string): boolean;
   clearLeader(): void;
-  rememberPane(tabId: string, paneId: string): void;
 };
 export type ShellFocusController = {
   focus: FocusTarget;
@@ -39,7 +38,6 @@ export function useShellFocus({
   canReceiveInput,
   canReactivate,
   clearLeader,
-  rememberPane,
 }: ShellFocusOptions): ShellFocusController {
   const renderer = useRenderer();
   const { state, snapshot, model, layout } = environment;
@@ -140,9 +138,10 @@ export function useShellFocus({
     }
   }, [navigatorVisible, state.focus.region]);
 
+  const entryFocus = entry.focusFor(model, state.focus);
   const { focus: resolvedFocus, focusedPaneId } = resolveShellFocus({
-    focus: entry.focusFor(model, state.focus),
-    rememberedPaneId: state.lastPaneByTab[activeTab?.id ?? ""] ?? null,
+    focus: entryFocus,
+    rememberedPaneId: model.navigation?.paneId ?? null,
     paneIds,
     runningPaneIds: paneIds.filter((id) =>
       snapshot?.panes.some((pane) => pane.id === id && pane.processStatus === "running"),
@@ -154,7 +153,7 @@ export function useShellFocus({
   // A measured host needs another frame before a resize-restored terminal is focusable.
   const transientWorkbenchProjection =
     state.focus.region === "workbench" &&
-    nativeTarget?.region === "tabs" &&
+    nativeTarget?.region !== "workbench" &&
     (undersized ||
       (resolvedFocus.region === "workbench" &&
         !(
@@ -163,7 +162,9 @@ export function useShellFocus({
             : entry.terminal(resolvedFocus.paneId)
         )?.focusable));
   const focus =
-    state.dialog === null && !transientWorkbenchProjection
+    state.dialog === null &&
+    !transientWorkbenchProjection &&
+    focusKey(entryFocus) === focusKey(state.focus)
       ? (nativeTarget ?? resolvedFocus)
       : resolvedFocus;
   const resolvedFocusKey = focusKey(resolvedFocus);
@@ -210,9 +211,6 @@ export function useShellFocus({
         )
       ) {
         return;
-      }
-      if (activeTab) {
-        rememberPane(activeTab.id, target.paneId);
       }
       if (
         !(target.control === "reactivate"

@@ -1,10 +1,10 @@
 import { expect, spyOn, test } from "bun:test";
 
-import { EmbeddedTerminalRenderable } from "@opentui/core";
+import { CliRenderEvents, EmbeddedTerminalRenderable } from "@opentui/core";
 import { extend } from "@opentui/react";
 import { act, useState } from "react";
 
-import type { TerminalReplayBuffer } from "@/client/terminal-replay";
+import type { TerminalBuffer } from "@/client/terminal-buffer";
 import { flushMeasured } from "@/tests/support/measured-render";
 import { testRender } from "@/tests/support/render";
 import { Box } from "@/ui/primitives/box";
@@ -16,7 +16,7 @@ import { TerminalViewport } from "@/workbench/terminal-viewport";
 extend({ terminal: EmbeddedTerminalRenderable });
 const encode = (text: string) => new TextEncoder().encode(text);
 
-function buffer(text = "", overrides: Partial<TerminalReplayBuffer> = {}): TerminalReplayBuffer {
+function buffer(text = "", overrides: Partial<TerminalBuffer> = {}): TerminalBuffer {
   return {
     epoch: "e",
     history: encode(text),
@@ -31,14 +31,9 @@ function buffer(text = "", overrides: Partial<TerminalReplayBuffer> = {}): Termi
   };
 }
 
-async function viewport(
-  initial: TerminalReplayBuffer,
-  width: number,
-  height: number,
-  responds = true,
-) {
+async function viewport(initial: TerminalBuffer, width: number, height: number, responds = true) {
   const emitted: { source: string; text: string }[] = [];
-  let update!: (next: TerminalReplayBuffer) => void;
+  let update!: (next: TerminalBuffer) => void;
   let resyncs = 0;
   function Fixture() {
     const [current, setCurrent] = useState(initial);
@@ -199,9 +194,28 @@ test("same-cursor resize retains the native object and translates mouse coordina
   }
 });
 
+test("an obsolete native resize callback cannot invent a different actual grid", async () => {
+  const setup = await viewport(buffer("kept"), 60, 12);
+  try {
+    act(() => setup.terminal().onTerminalResize!(80, 20));
+    await flushMeasured(setup);
+    expect(setup.resyncs()).toBe(0);
+    expect(setup.terminal().focusable).toBe(true);
+    expect(setup.terminal().screen()).toMatchObject({ columns: 100, rows: 30 });
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
 test("a byte gap requests one resync and does not feed partial output to the emulator", async () => {
   const initial = buffer("kept");
   const setup = await viewport(initial, 60, 12);
+  const eligibilityAtBlur: boolean[] = [];
+  setup.renderer.on(CliRenderEvents.FOCUSED_RENDERABLE, () => {
+    if (setup.renderer.currentFocusedRenderable === null) {
+      eligibilityAtBlur.push(setup.terminal().focusable);
+    }
+  });
   try {
     act(() =>
       setup.update({
@@ -214,6 +228,7 @@ test("a byte gap requests one resync and does not feed partial output to the emu
     expect(setup.resyncs()).toBe(1);
     expect(setup.terminal().screen().text).not.toContain("BAD");
     expect(setup.terminal().focusable).toBe(false);
+    expect(eligibilityAtBlur).toEqual([false]);
   } finally {
     act(() => setup.renderer.destroy());
   }

@@ -72,13 +72,14 @@ async function renderTabs(failed = false) {
   };
 }
 
-test("browsing selects immediately but only activation requests entry", async () => {
+test("buffered browsing stays local and activation selects its exact candidate", async () => {
   const setup = await renderTabs();
   try {
     act(() => setup.renderer.stdin.emit("data", Buffer.from("\x1b[C\x1b[C")));
-    expect(setup.selectedIds).toEqual(["tab-2", "tab-3"]);
+    expect(setup.selectedIds).toEqual([]);
     expect(setup.enteredIds).toEqual([]);
     act(() => setup.renderer.stdin.emit("data", Buffer.from("\r")));
+    expect(setup.selectedIds).toEqual(["tab-3"]);
     expect(setup.enteredIds).toEqual(["tab-3"]);
     await setup.flush();
     expect(setup.renderer.root.findDescendantById("region:tabs")!.height).toBe(2);
@@ -100,8 +101,22 @@ test("click and reclick select and enter requested tab on release", async () => 
     await act(async () => setup.mockMouse.release(tab.screenX + 1, tab.screenY));
     await setup.flush();
     await act(async () => setup.mockMouse.click(tab.screenX + 1, tab.screenY));
-    expect(setup.selectedIds).toEqual(["tab-3"]);
+    expect(setup.selectedIds).toEqual(["tab-3", "tab-3"]);
     expect(setup.enteredIds).toEqual(["tab-3", "tab-3"]);
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
+test("browsing the strip stays local until explicit activation", async () => {
+  const setup = await renderTabs();
+  try {
+    await act(async () => setup.mockInput.pressKey("ARROW_RIGHT"));
+    expect(setup.selectedIds).toEqual([]);
+    expect(setup.enteredIds).toEqual([]);
+    await act(async () => setup.mockInput.pressEnter());
+    expect(setup.selectedIds).toEqual(["tab-2"]);
+    expect(setup.enteredIds).toEqual(["tab-2"]);
   } finally {
     act(() => setup.renderer.destroy());
   }
@@ -116,7 +131,7 @@ test("refocus restores authoritative active selection without selecting again", 
     act(() => setup.renderer.root.findDescendantById("region:tabs")!.focus());
     await setup.flush();
     await act(async () => setup.mockInput.pressEnter());
-    expect(setup.selectedIds).toEqual(["tab-2"]);
+    expect(setup.selectedIds).toEqual(["tab-1"]);
     expect(setup.enteredIds).toEqual(["tab-1"]);
   } finally {
     act(() => setup.renderer.destroy());
@@ -148,7 +163,7 @@ test("buffered refocus then browsing starts from the authoritative tab", async (
       setup.renderer.root.findDescendantById("region:tabs")!.focus();
       setup.renderer.stdin.emit("data", Buffer.from("\x1b[C\r"));
     });
-    expect(setup.selectedIds).toEqual(["tab-2", "tab-2"]);
+    expect(setup.selectedIds).toEqual(["tab-2"]);
     expect(setup.enteredIds).toEqual(["tab-2"]);
   } finally {
     act(() => setup.renderer.destroy());
@@ -177,7 +192,7 @@ test("disconnected entry hints and callbacks are omitted while browsing remains 
     await setup.flush();
     await act(async () => setup.mockInput.pressKey("ARROW_RIGHT"));
     await act(async () => setup.mockInput.pressEnter());
-    expect(setup.selectedIds).toEqual(["tab-2"]);
+    expect(setup.selectedIds).toEqual([]);
     expect(setup.enteredIds).toEqual([]);
     expect(getControlHints(setup.renderer.currentFocusedRenderable)).toEqual([]);
   } finally {

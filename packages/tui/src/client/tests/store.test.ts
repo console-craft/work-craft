@@ -3,7 +3,15 @@ import { expect, test } from "bun:test";
 import type { Snapshot, StreamHandlers, WorkCraftClient } from "@work-craft/server/client";
 
 import { createWorkCraftStore } from "@/client/store.ts";
-import { snapshotFixture } from "@/tests/support/fixtures.ts";
+import { inputStampFixture, snapshotFixture, streamFixture } from "@/tests/support/fixtures.ts";
+
+const historyMetadata = {
+  startCursor: 0,
+  prefixBytes: 0,
+  initialSize: null,
+  initialGridSequence: null,
+  resizes: [],
+};
 
 for (const lifecycle of ["reload", "stop and start"] as const) {
   test(`a delayed stream gap refresh cannot replace a newer epoch after ${lifecycle}`, async () => {
@@ -26,7 +34,7 @@ for (const lifecycle of ["reload", "stop and start"] as const) {
     };
     client.stream = async (next) => {
       handlers.push(next);
-      return { close() {}, sendInput() {}, resize() {} };
+      return streamFixture();
     };
     const store = createWorkCraftStore(client);
     try {
@@ -42,6 +50,7 @@ for (const lifecycle of ["reload", "stop and start"] as const) {
       refresh.resolve({ ...old, revision: 6 });
       await store.apply({
         type: "terminal.output",
+        geometrySequence: 0,
         epoch: "never",
         paneId: "p",
         cursor: 1,
@@ -103,7 +112,23 @@ for (const change of [
 ] as const) {
   test(`captured state rejects input after authoritative ${change} before React commits`, async () => {
     const snapshot = snapshotFixture({
-      surfaces: [{ id: "surface-1", itemId: "item-1", activeTabId: "tab-1" }],
+      navigation: [
+        {
+          sessionId: "session-work",
+          generation: 1,
+          workspaceId: "workspace-shared",
+          category: "implementation",
+          itemId: "item-1",
+          tabId: "tab-1",
+          paneId: "pane-1",
+        },
+      ],
+      geometry: {
+        sequence: 0,
+        tabs: [{ tabId: "tab-1", generation: 0, ownerConnectionId: null, canvas: null }],
+        panes: [{ paneId: "pane-1", size: { cols: 80, rows: 24 } }],
+      },
+      surfaces: [{ id: "surface-1", itemId: "item-1" }],
       tabs: [
         {
           id: "tab-1",
@@ -129,14 +154,16 @@ for (const change of [
       ],
     });
     const client = fakeClient(snapshot);
-    client.stream = async () => ({ close() {}, sendInput() {}, resize() {} });
+    client.stream = async () => streamFixture();
     const store = createWorkCraftStore(client);
     await store.start();
+    await store.getState().attach("session-work");
+    const stamp = inputStampFixture(snapshot);
     const capturedState = store.getState();
     expect(typeof capturedState.canSendInput).toBe("function");
-    expect(capturedState.canSendInput("pane-1", "epoch-a")).toBe(true);
-    expect(capturedState.canSendInput("missing", "epoch-a")).toBe(false);
-    expect(capturedState.canSendInput("pane-1", "old-epoch")).toBe(false);
+    expect(capturedState.canSendInput("pane-1", stamp)).toBe(true);
+    expect(capturedState.canSendInput("missing", stamp)).toBe(false);
+    expect(capturedState.canSendInput("pane-1", { ...stamp, epoch: "old-epoch" })).toBe(false);
     const next = structuredClone(snapshot);
     next.revision += 1;
     if (change === "disconnect") {
@@ -145,7 +172,7 @@ for (const change of [
       if (change === "epoch") {
         next.epoch = "epoch-b";
       } else if (change === "active tab") {
-        next.surfaces[0]!.activeTabId = "tab-2";
+        next.navigation[0]!.tabId = "tab-2";
       } else if (change === "removed") {
         next.tabs[0]!.layout = null;
       } else if (change === "item archived" || change === "parent archived") {
@@ -160,7 +187,7 @@ for (const change of [
       await store.apply({ type: "snapshot", snapshot: next });
     }
     expect(capturedState.canSendInput).toBe(store.getState().canSendInput);
-    expect(capturedState.canSendInput("pane-1", "epoch-a")).toBe(false);
+    expect(capturedState.canSendInput("pane-1", stamp)).toBe(false);
     store.stop();
   });
 }
@@ -172,13 +199,11 @@ test("force reload closes the old stream and retains coherent state while connec
   const client = fakeClient(snapshot);
   client.stream = async () => {
     streamCalls += 1;
-    return {
+    return streamFixture({
       close: () => {
         closes += 1;
       },
-      sendInput() {},
-      resize() {},
-    };
+    });
   };
   const store = createWorkCraftStore(client, { retryDelays: [] });
   await store.start();
@@ -198,7 +223,7 @@ test("automatic reconnect is yellow until recovery is exhausted", async () => {
   let closeHandler: (() => void) | undefined;
   client.stream = async (handlers) => {
     closeHandler = handlers.onClose;
-    return { close() {}, sendInput() {}, resize() {} };
+    return streamFixture();
   };
   const store = createWorkCraftStore(client, {
     retryDelays: [0],
@@ -227,7 +252,7 @@ test("only the newest concurrent reload installs a stream", async () => {
   };
   client.stream = async () => {
     streams += 1;
-    return { close() {}, sendInput() {}, resize() {} };
+    return streamFixture();
   };
   const store = createWorkCraftStore(client, { retryDelays: [] });
   await store.start();
@@ -251,7 +276,7 @@ test("stop during reload prevents a replacement stream", async () => {
   client.snapshot = async () => (++snapshots === 1 ? snapshot : nextSnapshot.promise);
   client.stream = async () => {
     streams += 1;
-    return { close() {}, sendInput() {}, resize() {} };
+    return streamFixture();
   };
   const store = createWorkCraftStore(client, { retryDelays: [] });
   await store.start();
@@ -272,7 +297,7 @@ test("an old stream close callback cannot start a competing reconnect", async ()
   client.stream = async (handlers) => {
     streams += 1;
     closeHandlers.push(() => handlers.onClose?.());
-    return { close() {}, sendInput() {}, resize() {} };
+    return streamFixture();
   };
   const store = createWorkCraftStore(client, { retryDelays: [] });
   await store.start();
@@ -298,7 +323,7 @@ test("obsolete recovery failure cannot disconnect a successful reload", async ()
   };
   client.stream = async (handlers) => {
     closeHandlers.push(() => handlers.onClose?.());
-    return { close() {}, sendInput() {}, resize() {} };
+    return streamFixture();
   };
   const store = createWorkCraftStore(client, { retryDelays: [] });
   await store.start();
@@ -323,7 +348,7 @@ test("an old stream message cannot replace state after reload", async () => {
   client.snapshot = async () => (++snapshots === 1 ? oldSnapshot : currentSnapshot);
   client.stream = async (nextHandlers) => {
     handlers.push(nextHandlers);
-    return { close() {}, sendInput() {}, resize() {} };
+    return streamFixture();
   };
   const store = createWorkCraftStore(client, { retryDelays: [] });
   await store.start();
@@ -430,14 +455,12 @@ test("a failed stream gap refresh closes the connection and starts reconnecting"
   let closes = 0;
   client.stream = async (nextHandlers) => {
     handlers = nextHandlers;
-    return {
+    return streamFixture({
       close() {
         closes += 1;
         nextHandlers.onClose?.();
       },
-      sendInput() {},
-      resize() {},
-    };
+    });
   };
   const store = createWorkCraftStore(client, { retryDelays: [], sleep: async () => {} });
   await store.start();
@@ -461,6 +484,7 @@ test("current-epoch terminal output remains available after a renderer remount",
         {
           paneId: "pane-1",
           cursor: 3,
+          ...historyMetadata,
           data: Buffer.from("old").toString("base64"),
           truncated: false,
         },
@@ -471,6 +495,7 @@ test("current-epoch terminal output remains available after a renderer remount",
   await store.apply({
     type: "terminal.output",
     epoch: "stale-epoch",
+    geometrySequence: 0,
     paneId: "pane-1",
     cursor: 8,
     data: Buffer.from("stale").toString("base64"),
@@ -478,6 +503,7 @@ test("current-epoch terminal output remains available after a renderer remount",
   await store.apply({
     type: "terminal.output",
     epoch: "epoch-a",
+    geometrySequence: 0,
     paneId: "pane-1",
     cursor: 6,
     data: Buffer.from("new").toString("base64"),
@@ -490,6 +516,7 @@ test("current-epoch terminal output remains available after a renderer remount",
         {
           paneId: "pane-1",
           cursor: 6,
+          ...historyMetadata,
           data: Buffer.from("oldnew").toString("base64"),
           truncated: false,
         },
@@ -506,13 +533,21 @@ test("current-epoch terminal output remains available after a renderer remount",
 
 test("current-session terminal output is bounded to one MiB per pane", async () => {
   const store = createWorkCraftStore(fakeClient(snapshotFixture()));
-  await store.apply({ type: "snapshot", snapshot: snapshotFixture() });
+  await store.apply({
+    type: "snapshot",
+    snapshot: snapshotFixture({
+      terminalHistories: [
+        { paneId: "pane-1", cursor: 0, data: "", truncated: false, ...historyMetadata },
+      ],
+    }),
+  });
   const bytes = new Uint8Array(1_048_577).fill(2);
   bytes[0] = 1;
 
   await store.apply({
     type: "terminal.output",
     epoch: "epoch-a",
+    geometrySequence: 0,
     paneId: "pane-1",
     cursor: 1_048_577,
     data: Buffer.from(bytes).toString("base64"),
@@ -532,6 +567,7 @@ test("a same-revision reconnect snapshot appends output missed while disconnecte
         {
           paneId: "pane-1",
           cursor: 3,
+          ...historyMetadata,
           data: Buffer.from("old").toString("base64"),
           truncated: false,
         },
@@ -546,6 +582,7 @@ test("a same-revision reconnect snapshot appends output missed while disconnecte
         {
           paneId: "pane-1",
           cursor: 9,
+          ...historyMetadata,
           data: Buffer.from("oldmissed").toString("base64"),
           truncated: false,
         },
@@ -569,6 +606,7 @@ test("a reconnect snapshot requests a clean replay when its retained suffix star
         {
           paneId: "pane-1",
           cursor: 1,
+          ...historyMetadata,
           data: Buffer.from("a").toString("base64"),
           truncated: false,
         },
@@ -584,6 +622,8 @@ test("a reconnect snapshot requests a clean replay when its retained suffix star
         {
           paneId: "pane-1",
           cursor: 1_048_578,
+          ...historyMetadata,
+          startCursor: 2,
           data: Buffer.from(retained).toString("base64"),
           truncated: true,
         },
@@ -618,7 +658,23 @@ for (const change of [
 ] as const) {
   test(`captured exited-action eligibility rejects authoritative ${change} before React commits`, async () => {
     const snapshot = snapshotFixture({
-      surfaces: [{ id: "s", itemId: "item-1", activeTabId: "t" }],
+      navigation: [
+        {
+          sessionId: "session-work",
+          generation: 1,
+          workspaceId: "workspace-shared",
+          category: "implementation",
+          itemId: "item-1",
+          tabId: "t",
+          paneId: "p",
+        },
+      ],
+      geometry: {
+        sequence: 0,
+        tabs: [{ tabId: "t", generation: 0, ownerConnectionId: null, canvas: null }],
+        panes: [{ paneId: "p", size: { cols: 80, rows: 24 } }],
+      },
+      surfaces: [{ id: "s", itemId: "item-1" }],
       tabs: [
         {
           id: "t",
@@ -644,16 +700,18 @@ for (const change of [
       ],
     });
     const client = fakeClient(snapshot);
-    client.stream = async () => ({ close() {}, sendInput() {}, resize() {} });
+    client.stream = async () => streamFixture();
     const store = createWorkCraftStore(client);
     try {
       await store.start();
+      await store.getState().attach("session-work");
+      const stamp = inputStampFixture(snapshot);
       const captured = store.getState();
       expect(typeof captured.canReactivate).toBe("function");
-      expect(captured.canReactivate("p", "epoch-a")).toBe(true);
-      expect(captured.canReactivate("missing", "epoch-a")).toBe(false);
-      expect(captured.canReactivate("p", "old-epoch")).toBe(false);
-      expect(captured.canSendInput("p", "epoch-a")).toBe(false);
+      expect(captured.canReactivate("p", stamp)).toBe(true);
+      expect(captured.canReactivate("missing", stamp)).toBe(false);
+      expect(captured.canReactivate("p", { ...stamp, epoch: "old-epoch" })).toBe(false);
+      expect(captured.canSendInput("p", stamp)).toBe(false);
       const next = structuredClone(snapshot);
       next.revision += 1;
       const parent = next.items.find((item) => item.id === "root-1")!;
@@ -663,7 +721,7 @@ for (const change of [
         if (change === "epoch") {
           next.epoch = "epoch-b";
         } else if (change === "active tab") {
-          next.surfaces[0]!.activeTabId = "other";
+          next.navigation[0]!.tabId = "other";
         } else if (change === "layout") {
           next.tabs[0]!.layout = null;
         } else if (change === "pane") {
@@ -692,7 +750,7 @@ for (const change of [
         await store.apply({ type: "snapshot", snapshot: next });
       }
       expect(captured.canReactivate).toBe(store.getState().canReactivate);
-      expect(captured.canReactivate("p", "epoch-a")).toBe(false);
+      expect(captured.canReactivate("p", stamp)).toBe(false);
     } finally {
       store.stop();
     }

@@ -7,6 +7,7 @@ import { join, resolve } from "node:path";
 import { defaultTheme } from "@/ui/theming/themes/default.ts";
 
 import { createClient, decodeBytes } from "../packages/server/src/client.ts";
+import { sendTerminalInput } from "./test-support/terminal-input.ts";
 
 if (process.argv.includes("--self-test")) {
   assert.equal(
@@ -206,7 +207,9 @@ async function smokeCoding(): Promise<void> {
   ) as { surfaceId: string; paneId: string };
   const stream = await client.stream({ onMessage() {} });
   try {
-    stream.sendInput(
+    await sendTerminalInput(
+      client,
+      stream,
       opened.paneId,
       new TextEncoder().encode('printf \'COMPILED-CWD-%s\\nCOMPILED-PID-%s\\n\' "$(pwd)" "$$"\r'),
     );
@@ -233,7 +236,9 @@ async function smokeCoding(): Promise<void> {
     console.log("compiled smoke source PID:", originalPid);
     const liveCwd = join(expectedCwd, "live cwd 雪");
     await mkdir(liveCwd);
-    stream.sendInput(
+    await sendTerminalInput(
+      client,
+      stream,
       opened.paneId,
       new TextEncoder().encode(`cd '${liveCwd}'; printf 'LIVE-%s\\n' ready\r`),
     );
@@ -242,7 +247,9 @@ async function smokeCoding(): Promise<void> {
     const split = JSON.parse(
       await run(["pane", "split", opened.paneId, "--direction", "vertical", "--json"]),
     ) as { paneId: string };
-    stream.sendInput(
+    await sendTerminalInput(
+      client,
+      stream,
       split.paneId,
       new TextEncoder().encode("printf 'SPLIT-CWD-%s\\n' \"$(pwd)\"\r"),
     );
@@ -251,7 +258,9 @@ async function smokeCoding(): Promise<void> {
       (text) => text.includes(`SPLIT-CWD-${liveCwd}`),
       "new shell live cwd",
     );
-    stream.sendInput(
+    await sendTerminalInput(
+      client,
+      stream,
       opened.paneId,
       new TextEncoder().encode("printf 'RETAINED-PID-%s\\n' \"$$\"\r"),
     );

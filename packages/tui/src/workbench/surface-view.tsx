@@ -11,7 +11,7 @@ import { useTheme } from "@/ui/theming/theme-provider.tsx";
 import { hasTerminalViewport, paneIds, terminalRect } from "@/workbench/layout.ts";
 import { selectedTab } from "@/workbench/model";
 import { paneNotice } from "@/workbench/pane-state.ts";
-import { TerminalPane } from "@/workbench/terminal-pane.tsx";
+import { TerminalPane, type TerminalPaneProps } from "@/workbench/terminal-pane.tsx";
 
 export function terminalPaneKey(
   paneId: string,
@@ -20,7 +20,11 @@ export function terminalPaneKey(
   return `${paneId}:${buffer?.epoch ?? "pending"}:${buffer?.historyCursor ?? 0}`;
 }
 
-export type SurfaceViewProps = {
+export type SurfaceViewProps = Pick<
+  TerminalPaneProps,
+  "stamp" | "canRespond" | "inputEvent" | "onMouseInput" | "onResync"
+> & {
+  activeTabId: string | null;
   connected: boolean;
   reactivatingPaneIds: ReadonlySet<string>;
   canReactivate(paneId: string): boolean;
@@ -37,7 +41,6 @@ export type SurfaceViewProps = {
   onSourceFailure?(source: { paneId: string; message: string }): void;
   inputEnabled?: boolean;
   canReceiveInput?(paneId?: string): boolean;
-  canResize?(): boolean;
 };
 
 export function SurfaceView({
@@ -45,7 +48,12 @@ export function SurfaceView({
   reactivatingPaneIds,
   canReactivate,
   onReactivatePane,
-  canResize,
+  activeTabId,
+  stamp,
+  canRespond,
+  inputEvent,
+  onMouseInput,
+  onResync,
   inputEnabled = true,
   canReceiveInput,
   focusedPaneId,
@@ -70,7 +78,7 @@ export function SurfaceView({
   }
   const activeTab = selectedTab(
     snapshot.tabs.filter(({ surfaceId }) => surfaceId === surface.id),
-    surface.activeTabId,
+    activeTabId,
   );
   useEffect(() => {
     for (const paneId of paneIds(activeTab?.layout ?? null)) {
@@ -130,11 +138,15 @@ export function SurfaceView({
                     buffer={buffer}
                     focused={workbenchFocused && paneId === focusedPaneId}
                     pane={pane}
-                    resizeEnabled={usable}
+                    size={snapshot.geometry.panes.find((entry) => entry.paneId === paneId)!.size}
+                    stamp={stamp}
+                    canRespond={canRespond}
+                    inputEvent={inputEvent}
+                    onMouseInput={onMouseInput}
+                    onResync={onResync}
                     stream={stream}
                     inputEnabled={inputEnabled && usable}
                     canReceiveInput={canReceiveInput}
-                    canResize={canResize}
                     onFocus={() => onFocusPane(paneId)}
                     onTerminalReady={onTerminalReady}
                   />

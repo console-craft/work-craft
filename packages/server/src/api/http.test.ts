@@ -6,7 +6,13 @@ import { join } from "node:path";
 
 import WebSocket from "ws";
 
+import { sendTerminalInput } from "../../../../scripts/test-support/terminal-input.ts";
 import { createApp } from "../application/app.ts";
+import { applyCommand } from "../application/commands.ts";
+import {
+  normalizeSessionNavigations,
+  readNavigationCatalog,
+} from "../application/navigation-store.ts";
 import { ApiError, createClient } from "../client.ts";
 import { openDatabase } from "../persistence/database.ts";
 import { TerminalHistory } from "../terminal/history.ts";
@@ -19,9 +25,16 @@ function seedPane(db: ReturnType<typeof openDatabase>): void {
     INSERT INTO workspaces VALUES ('workspace-1', 'Work');
     INSERT INTO session_workspaces VALUES ('session-1', 'workspace-1', 0);
     INSERT INTO items VALUES ('item-1', 'workspace-1', 'design', NULL, 'generic', 'Build', 0, 0, '{}');
-    INSERT INTO surfaces VALUES ('surface-1', 'item-1', NULL);
+    INSERT INTO surfaces VALUES ('surface-1', 'item-1');
+    INSERT INTO tabs VALUES ('tab-1', 'surface-1', 'Main', 0, '{"type":"pane","paneId":"pane-1"}');
     INSERT INTO panes VALUES ('pane-1', 'surface-1', 'terminal', 'Shell', '/tmp', '{"type":"shell","executable":"/bin/sh","args":[]}', 'interrupted', NULL, NULL, NULL);
   `);
+  normalizeSessionNavigations(db, readNavigationCatalog(db));
+  applyCommand(db, {
+    type: "session.navigate",
+    sessionId: "session-1",
+    target: { kind: "pane", paneId: "pane-1" },
+  });
 }
 
 async function startTestServer(options: { withPane?: boolean } = {}) {
@@ -230,6 +243,9 @@ test("only successful durable commands advance and broadcast snapshots", async (
   try {
     connection = await fixture.client.stream({
       onMessage(message) {
+        if (message.type !== "snapshot") {
+          return;
+        }
         messages.push(message);
         if (messages.length === 1) {
           receiveFirst();
@@ -292,7 +308,7 @@ test("streams runtime input, output, status, and queued history", async () => {
     connection = await fixture.client.stream({
       onMessage(message) {
         messages.push(message);
-        if (messages.length === 1) {
+        if (message.type === "snapshot") {
           initialSnapshot();
         }
         if (message.type === "process.status" && message.status === "exited") {
@@ -306,8 +322,12 @@ test("streams runtime input, output, status, and queued history", async () => {
       cwd: process.cwd(),
       restorePolicy: { type: "shell", executable: "/bin/sh", args: [] },
     });
-    connection.resize("pane-1", 100, 30);
-    connection.sendInput("pane-1", new TextEncoder().encode("printf app-stream; exit\n"));
+    await sendTerminalInput(
+      fixture.client,
+      connection,
+      "pane-1",
+      new TextEncoder().encode("printf app-stream; exit\n"),
+    );
     expect(await fixture.app.runtime.waitForExit("pane-1")).toBe(0);
     await exited;
 
@@ -404,6 +424,8 @@ test("applies a newer snapshot frame after a pending gap refresh", async () => {
     tabs: [],
     panes: [],
     terminalHistories: [],
+    navigation: [],
+    geometry: { sequence: 0, tabs: [], panes: [] },
   });
   let streamSocket: Bun.ServerWebSocket | undefined;
   let markRefreshStarted!: () => void;
@@ -472,9 +494,9 @@ test("applies a newer snapshot frame after a pending gap refresh", async () => {
         status: "running",
       }),
     );
-    await marker;
     releaseRefresh();
     await refreshed;
+    await marker;
     expect(await Promise.race([newest.then(() => true), Bun.sleep(100).then(() => false)])).toBe(
       true,
     );

@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { createClient, decodeBytes, type WorkCraftClient } from "@work-craft/server/client";
 
+import { sendTerminalInput } from "../../../scripts/test-support/terminal-input.ts";
 import { USAGE } from "./args.ts";
 import { readStatus } from "./format.ts";
 
@@ -375,7 +376,14 @@ test("creates resources and controls surfaces through canonical commands", async
       "--title",
       "Second",
     ]);
-    await runJson(home, ["surface", "select-tab", String(ensured.surfaceId), String(tab.tabId)]);
+    const legacySelection = await runCli(home, [
+      "surface",
+      "select-tab",
+      String(ensured.surfaceId),
+      String(tab.tabId),
+    ]);
+    expect(legacySelection.exitCode).not.toBe(0);
+    expect(legacySelection.stderr).toContain("explicit session");
     const split = await runJson(home, [
       "pane",
       "split",
@@ -414,7 +422,7 @@ test("creates resources and controls surfaces through canonical commands", async
       expect.objectContaining({ id: item.id, parentId: project.id, data: { source: "cli" } }),
     );
     expect(surfaces).toContainEqual(
-      expect.objectContaining({ id: ensured.surfaceId, itemId: item.id, activeTabId: tab.tabId }),
+      expect.objectContaining({ id: ensured.surfaceId, itemId: item.id }),
     );
     expect(tabs).toContainEqual(
       expect.objectContaining({
@@ -461,7 +469,9 @@ test("split text and JSON preserve shape, inherit live cwd and validate client-r
     const opened = await runJson(home, ["surface", "ensure", "--item", items.first, "--cwd", home]);
     const sourceId = String(opened.paneId);
     stream = await client.stream({ onMessage() {} });
-    stream.sendInput(
+    await sendTerminalInput(
+      client,
+      stream,
       sourceId,
       new TextEncoder().encode(`cd '${live}'; printf 'CLI-%s\\n' ready\n`),
     );
@@ -471,7 +481,9 @@ test("split text and JSON preserve shape, inherit live cwd and validate client-r
     const inherited = afterPlain.panes.find(({ id }) => id !== sourceId)!;
     expect(plain).toEqual({ exitCode: 0, stderr: "", stdout: `Pane: ${inherited.id}\n` });
     expect(inherited.cwd).toBe(live);
-    stream.sendInput(
+    await sendTerminalInput(
+      client,
+      stream,
       inherited.id,
       new TextEncoder().encode("printf 'INHERITED-%s\\n' \"$(pwd)\"\n"),
     );
@@ -496,7 +508,9 @@ test("split text and JSON preserve shape, inherit live cwd and validate client-r
       tabId: opened.tabId,
     });
     expect(overridden.cwd).toBe(override);
-    stream.sendInput(
+    await sendTerminalInput(
+      client,
+      stream,
       overridden.id,
       new TextEncoder().encode("printf 'OVERRIDE-%s\\n' \"$(pwd)\"\n"),
     );
@@ -519,7 +533,7 @@ test("split text and JSON preserve shape, inherit live cwd and validate client-r
       expect(after.tabs).toEqual(before.tabs);
       expect(after.revision).toBe(before.revision);
     }
-    stream.sendInput(sourceId, new TextEncoder().encode("exit\n"));
+    await sendTerminalInput(client, stream, sourceId, new TextEncoder().encode("exit\n"));
     const deadline = Date.now() + 3_000;
     let stopped = await client.snapshot();
     while (
@@ -1300,6 +1314,8 @@ test("cleanup preserves owned files when post-kill observation is uncertain", as
 
 test("retries status reads until snapshot and health revisions match", async () => {
   const emptySnapshot = {
+    navigation: [],
+    geometry: { sequence: 0, tabs: [], panes: [] },
     epoch: "epoch",
     revision: 1,
     sessions: [],
@@ -1357,6 +1373,8 @@ test("bounds incoherent status reads", async () => {
       calls += 1;
       return {
         epoch: "old",
+        navigation: [],
+        geometry: { sequence: 0, tabs: [], panes: [] },
         revision: calls,
         sessions: [],
         workspaces: [],

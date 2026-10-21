@@ -6,7 +6,7 @@ type Snapshot = Awaited<ReturnType<WorkCraftClient["snapshot"]>>;
 type Health = Awaited<ReturnType<WorkCraftClient["health"]>>;
 type Counts = Omit<
   { [Key in keyof Snapshot]: Snapshot[Key] extends unknown[] ? number : never },
-  "epoch" | "revision" | "sessionWorkspaces" | "terminalHistories"
+  "epoch" | "revision" | "sessionWorkspaces" | "terminalHistories" | "navigation" | "geometry"
 >;
 export type Status = Health & { running: true; counts: Counts };
 
@@ -97,8 +97,6 @@ export function formatResult(command: CliArgs["command"], result: Result): strin
       return `Session: ${result.sessionId}\nRemoved workspace: ${result.workspaceId}\n`;
     case "surface.ensure":
       return `Item: ${result.itemId}\nSurface: ${result.surfaceId}\n`;
-    case "surface.selectTab":
-      return `Surface: ${result.surfaceId}\nTab: ${result.tabId}\n`;
     case "tab.create":
       return `Tab: ${result.tabId}\nPane: ${result.paneId}\n`;
     case "pane.split":

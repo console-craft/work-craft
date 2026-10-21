@@ -39,7 +39,6 @@ export type CliArgs =
       cwd?: string;
     })
   | (OutputArgs & { command: "item.setArchived"; itemId: string; archived: boolean })
-  | (OutputArgs & { command: "surface.selectTab"; surfaceId: string; tabId: string })
   | (OutputArgs & { command: "tab.create"; surfaceId: string; title: string })
   | (OutputArgs & {
       command: "pane.split";
@@ -68,7 +67,6 @@ export const USAGE = `Usage:
 
   work-craft surface ensure --item <id>
                             [--cwd <path>] [--json]
-  work-craft surface select-tab <surface-id> <tab-id> [--json]
 
   work-craft tab create --surface <id> --title <title> [--json]
 
@@ -84,6 +82,7 @@ Generic categories: inbox, today, design, collaboration, operations
 `;
 
 export class UsageError extends Error {}
+export class RemovedCommandError extends UsageError {}
 
 type OptionConfig = Record<string, { type: "boolean" | "string" }>;
 
@@ -312,18 +311,10 @@ export function parseArgs(argv: string[]): CliArgs {
         json: values.json ?? false,
       };
     }
-    case "surface.select-tab": {
-      const { values, positionals } = parseLeaf(args, outputOption);
-      if (positionals.length !== 2) {
-        throw new UsageError("invalid arguments");
-      }
-      return {
-        command: "surface.selectTab",
-        surfaceId: required(positionals[0]),
-        tabId: required(positionals[1]),
-        json: values.json ?? false,
-      };
-    }
+    case "surface.select-tab":
+      throw new RemovedCommandError(
+        "surface select-tab was removed; use session navigation with an explicit session",
+      );
     case "tab.create": {
       const { values, positionals } = parseLeaf(args, {
         surface: { type: "string" },

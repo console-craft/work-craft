@@ -14,6 +14,7 @@ import { WorkCraftShell } from "@/shell/shell.tsx";
 import {
   liveInputFixture,
   openFixtureItem,
+  selectedPaneSnapshot,
   splitSurfaceSnapshot,
   statusText,
   surfaceSnapshot,
@@ -22,6 +23,116 @@ import {
   workCraftStateFixture,
 } from "@/shell/tests/fixtures";
 import { isEligibleFocusTarget } from "@/ui/interaction/focus-utils";
+
+function restartResponse(revision: number, paneId = "pane-2", generation = 2) {
+  const navigation = selectedPaneSnapshot(splitSurfaceSnapshot(), paneId, generation)
+    .navigation[0]!;
+  return { ok: true as const, revision, result: { id: paneId, navigation } };
+}
+
+function splitResponse(revision: number, paneId = "pane-2", generation = 2) {
+  return {
+    ok: true as const,
+    revision,
+    result: {
+      id: paneId,
+      paneId,
+      navigation: { ...surfaceSnapshot().navigation[0]!, generation, paneId },
+    },
+  };
+}
+
+test("a shell first rendered detached uses its current attachment for native restart handoff", async () => {
+  const initial = splitSurfaceSnapshot();
+  initial.panes[0]!.processStatus = "exited";
+  const setup = await liveInputFixture(initial, true);
+  try {
+    act(() => setup.renderer.root.findDescendantById("region:tabs")!.focus());
+    await setup.flush();
+    await act(async () => setup.mockInput.pressKeys(["\x00r"]));
+    await act(async () => setup.restarts[0]!.resolve(restartResponse(4, "pane-1", 1)));
+    await setup.publish({ ...splitSurfaceSnapshot(), revision: 5 });
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("terminal:pane-1");
+    await act(async () => setup.mockInput.typeText("x"));
+    expect(setup.sent).toEqual([{ paneId: "pane-1", bytes: [120] }]);
+    await setup.publish(
+      selectedPaneSnapshot({ ...splitSurfaceSnapshot(), revision: 6 }, "pane-2", 2),
+    );
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("terminal:pane-2");
+  } finally {
+    act(() => setup.renderer.destroy());
+    setup.store.stop();
+  }
+});
+
+test("a live selection invalidation may blur the split origin before React projects its new snapshot", async () => {
+  const setup = await liveInputFixture({ ...surfaceSnapshot(), revision: 1 });
+  try {
+    const source = setup.renderer.currentFocusedRenderable!;
+    await act(async () => setup.mockInput.pressKeys(["\x00v"]));
+    const selected = selectedPaneSnapshot({ ...splitSurfaceSnapshot(), revision: 2 }, "pane-2", 2);
+    await setup.publish(selected, false);
+    act(() => source.blur());
+    await setup.publish(selected);
+    await act(async () => setup.splits[0]!.resolve(splitResponse(2)));
+    await setup.flush();
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("terminal:pane-2");
+    await act(async () => setup.mockInput.typeText("x"));
+    expect(setup.sent).toEqual([{ paneId: "pane-2", bytes: [120] }]);
+  } finally {
+    act(() => setup.renderer.destroy());
+    setup.store.stop();
+  }
+});
+
+test("Reactivate activates its exact pane in one restart command without a competing navigation", async () => {
+  const initial = splitSurfaceSnapshot();
+  initial.panes[1]!.processStatus = "exited";
+  const setup = await liveInputFixture(initial);
+  try {
+    act(() => setup.renderer.root.findDescendantById("reactivate:pane-2")!.focus());
+    await setup.flush();
+    setup.commands.length = 0;
+    await act(async () => setup.mockInput.pressEnter());
+    expect(setup.commands).toEqual([
+      {
+        type: "process.restart",
+        paneId: "pane-2",
+        activation: { sessionId: "session-work", generation: 1 },
+      },
+    ]);
+  } finally {
+    act(() => setup.renderer.destroy());
+    setup.store.stop();
+  }
+});
+
+for (const coverage of ["dialog", "guard"] as const) {
+  test(`an acknowledged sizing owner cannot answer terminal queries after same-batch ${coverage} coverage`, async () => {
+    const initial = splitSurfaceSnapshot();
+    initial.geometry.tabs[0]!.ownerConnectionId = "test-connection";
+    const setup = await liveInputFixture(initial);
+    try {
+      const terminal = setup.renderer.currentFocusedRenderable as EmbeddedTerminalRenderable;
+      const captured = terminal.onData!;
+      captured(Uint8Array.of(65), "response");
+      expect(setup.sent).toEqual([{ paneId: "pane-1", bytes: [65] }]);
+      setup.sent.length = 0;
+      await act(async () => {
+        if (coverage === "dialog") {
+          setup.mockInput.pressKey("s", { hyper: true });
+        } else {
+          setup.resize(79, 40);
+        }
+        captured(Uint8Array.of(66), "response");
+      });
+      expect(setup.sent).toEqual([]);
+    } finally {
+      act(() => setup.renderer.destroy());
+      setup.store.stop();
+    }
+  });
+}
 
 for (const order of ["response first", "snapshot first"] as const) {
   for (const activation of ["return", "space", "mouse"] as const) {
@@ -45,23 +156,31 @@ for (const order of ["response first", "snapshot first"] as const) {
         }
         await setup.flush();
         expect(setup.commands.filter((command) => command.type === "process.restart")).toEqual([
-          { type: "process.restart", paneId: "pane-2" },
+          {
+            type: "process.restart",
+            paneId: "pane-2",
+            activation: { sessionId: "session-work", generation: 2 },
+          },
         ]);
         expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:tabs");
         expect(button.focusable).toBe(false);
         expect(setup.sent).toEqual([]);
+        const next = selectedPaneSnapshot({ ...splitSurfaceSnapshot(), revision: 6 }, "pane-2", 2);
         const respond = () =>
           act(async () =>
-            setup.restarts[0]!.resolve({ ok: true, revision: 5, result: { id: "pane-2" } }),
+            setup.restarts[0]!.resolve({
+              ok: true,
+              revision: 5,
+              result: { id: "pane-2", navigation: next.navigation[0] },
+            }),
           );
-        const next = { ...splitSurfaceSnapshot(), revision: 5 };
         if (order === "response first") {
           await respond();
           expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:tabs");
           expect(button.focusable).toBe(false);
         } else {
           await setup.publish(next);
-          expect(root.findDescendantById("reactivate:pane-2")).toBeUndefined();
+          expect(root.findDescendantById("reactivate:pane-2") === undefined).toBe(true);
           expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:tabs");
         }
         if (order === "response first") {
@@ -125,7 +244,12 @@ for (const change of [
         if (change === "epoch") {
           next.epoch = "epoch-b";
         } else if (change === "active tab") {
-          next.surfaces[0]!.activeTabId = "missing";
+          next.navigation[0] = {
+            ...next.navigation[0]!,
+            generation: 2,
+            tabId: "missing",
+            paneId: null,
+          };
         } else if (change === "item archived" || change === "parent archived") {
           next.items.find(
             (item) => item.id === (change === "item archived" ? "item-1" : "root-1"),
@@ -175,11 +299,9 @@ for (const stage of ["before response", "after response"] as const) {
         await setup.flush();
         await act(async () => setup.mockInput.pressEnter());
         if (stage === "after response") {
-          await act(async () =>
-            setup.restarts[0]!.resolve({ ok: true, revision: 6, result: { id: "pane-2" } }),
-          );
+          await act(async () => setup.restarts[0]!.resolve(restartResponse(6)));
         }
-        const next = { ...splitSurfaceSnapshot(), revision: 6 };
+        const next = selectedPaneSnapshot({ ...splitSurfaceSnapshot(), revision: 6 }, "pane-2", 2);
         if (cancellation === "input") {
           await act(async () => setup.mockInput.pressKey("x"));
         } else if (cancellation === "paste") {
@@ -208,9 +330,7 @@ for (const stage of ["before response", "after response"] as const) {
         }
         await setup.publish(next);
         if (stage === "before response") {
-          await act(async () =>
-            setup.restarts[0]!.resolve({ ok: true, revision: 6, result: { id: "pane-2" } }),
-          );
+          await act(async () => setup.restarts[0]!.resolve(restartResponse(6)));
         }
         await setup.flush();
         expect(setup.renderer.currentFocusedRenderable?.id).not.toBe("terminal:pane-2");
@@ -231,17 +351,15 @@ test("an unrelated running sibling cannot complete an exact-pane Reactivate hand
     act(() => setup.renderer.root.findDescendantById("reactivate:pane-2")!.focus());
     await setup.flush();
     await act(async () => setup.mockInput.pressEnter());
-    const starting = structuredClone(initial);
+    const starting = selectedPaneSnapshot(structuredClone(initial), "pane-2", 2);
     starting.revision = 5;
     starting.panes[1]!.processStatus = "starting";
     await setup.publish(starting);
-    await act(async () =>
-      setup.restarts[0]!.resolve({ ok: true, revision: 5, result: { id: "pane-2" } }),
-    );
+    await act(async () => setup.restarts[0]!.resolve(restartResponse(5)));
     await setup.flush();
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:tabs");
     expect(setup.renderer.root.findDescendantById("terminal:pane-1")!.opacity).toBe(1);
-    const running = { ...splitSurfaceSnapshot(), revision: 6 };
+    const running = selectedPaneSnapshot({ ...splitSurfaceSnapshot(), revision: 6 }, "pane-2", 2);
     await setup.publish(running);
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("terminal:pane-2");
     expect(setup.sent).toEqual([]);
@@ -273,9 +391,7 @@ for (const cancellation of ["none", "input", "focus", "modal"] as const) {
           await act(async () => setup.mockInput.pressKey("s", { hyper: true }));
           await act(async () => setup.mockInput.pressEscape());
         }
-        await act(async () =>
-          setup.restarts[0]!.resolve({ ok: true, revision: 7, result: { id: "pane-2" } }),
-        );
+        await act(async () => setup.restarts[0]!.resolve(restartResponse(7)));
         await setup.flush();
         if (duplicate === "button") {
           await act(async () => setup.mockMouse.click(button.screenX + 1, button.screenY));
@@ -283,10 +399,18 @@ for (const cancellation of ["none", "input", "focus", "modal"] as const) {
           await act(async () => setup.mockInput.pressKeys(["\x00r"]));
         }
         expect(setup.commands.filter((command) => command.type === "process.restart")).toEqual([
-          { type: "process.restart", paneId: "pane-2" },
+          {
+            type: "process.restart",
+            paneId: "pane-2",
+            activation: { sessionId: "session-work", generation: 1 },
+          },
         ]);
         expect(button.focusable).toBe(false);
-        const running = { ...splitSurfaceSnapshot(), revision: 7 };
+        const running = selectedPaneSnapshot(
+          { ...splitSurfaceSnapshot(), revision: 7 },
+          "pane-2",
+          2,
+        );
         await setup.publish(running);
         expect(setup.renderer.currentFocusedRenderable?.id).not.toBe("terminal:pane-2");
         expect(setup.sent).toEqual([]);
@@ -307,9 +431,7 @@ test("response-first restart releases protection only at its response revision, 
     act(() => button.focus());
     await setup.flush();
     await act(async () => setup.mockInput.pressEnter());
-    await act(async () =>
-      setup.restarts[0]!.resolve({ ok: true, revision: 7, result: { id: "pane-2" } }),
-    );
+    await act(async () => setup.restarts[0]!.resolve(restartResponse(7)));
     await setup.flush();
     expect(button.focusable).toBe(false);
     for (const revision of [5, 6]) {
@@ -318,14 +440,24 @@ test("response-first restart releases protection only at its response revision, 
       await act(async () => setup.mockInput.pressKeys(["\x00r"]));
       expect(setup.restarts).toHaveLength(1);
     }
-    await setup.publish({ ...initial, revision: 7 });
+    await setup.publish(selectedPaneSnapshot({ ...initial, revision: 7 }, "pane-2", 2));
+    expect(button.focusable).toBe(false);
+    await setup.publish(selectedPaneSnapshot({ ...initial, revision: 8 }, "pane-2", 2));
     expect(button.focusable).toBe(true);
     act(() => button.focus());
     await setup.flush();
     await act(async () => setup.mockInput.pressEnter());
     expect(setup.commands.filter((command) => command.type === "process.restart")).toEqual([
-      { type: "process.restart", paneId: "pane-2" },
-      { type: "process.restart", paneId: "pane-2" },
+      {
+        type: "process.restart",
+        paneId: "pane-2",
+        activation: { sessionId: "session-work", generation: 1 },
+      },
+      {
+        type: "process.restart",
+        paneId: "pane-2",
+        activation: { sessionId: "session-work", generation: 2 },
+      },
     ]);
     await act(async () => setup.restarts[1]!.reject(new Error("Retry refused")));
     await setup.flush();
@@ -372,20 +504,28 @@ test("a later authoritative exit can reactivate again after successful restart p
     act(() => setup.renderer.root.findDescendantById("reactivate:pane-2")!.focus());
     await setup.flush();
     await act(async () => setup.mockInput.pressEnter());
-    await act(async () =>
-      setup.restarts[0]!.resolve({ ok: true, revision: 5, result: { id: "pane-2" } }),
+    await act(async () => setup.restarts[0]!.resolve(restartResponse(5)));
+    await setup.publish(
+      selectedPaneSnapshot({ ...splitSurfaceSnapshot(), revision: 5 }, "pane-2", 2),
     );
-    await setup.publish({ ...splitSurfaceSnapshot(), revision: 5 });
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("terminal:pane-2");
-    await setup.publish({ ...initial, revision: 6 });
+    await setup.publish(selectedPaneSnapshot({ ...initial, revision: 6 }, "pane-2", 2));
     const button = setup.renderer.root.findDescendantById("reactivate:pane-2")!;
     expect(button.focusable).toBe(true);
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:tabs");
     expect(setup.renderer.root.findDescendantById("terminal:pane-2")).toBe(original);
     await act(async () => setup.mockMouse.click(button.screenX + 1, button.screenY));
     expect(setup.commands.filter((command) => command.type === "process.restart")).toEqual([
-      { type: "process.restart", paneId: "pane-2" },
-      { type: "process.restart", paneId: "pane-2" },
+      {
+        type: "process.restart",
+        paneId: "pane-2",
+        activation: { sessionId: "session-work", generation: 1 },
+      },
+      {
+        type: "process.restart",
+        paneId: "pane-2",
+        activation: { sessionId: "session-work", generation: 2 },
+      },
     ]);
     expect(setup.sent).toEqual([]);
   } finally {
@@ -405,9 +545,7 @@ for (const transition of ["disconnect", "epoch"] as const) {
         await setup.flush();
         await act(async () => setup.mockInput.pressEnter());
         if (stage === "pending snapshot") {
-          await act(async () =>
-            setup.restarts[0]!.resolve({ ok: true, revision: 7, result: { id: "pane-2" } }),
-          );
+          await act(async () => setup.restarts[0]!.resolve(restartResponse(7)));
           await setup.flush();
           expect(setup.renderer.root.findDescendantById("reactivate:pane-2")!.focusable).toBe(
             false,
@@ -430,9 +568,7 @@ for (const transition of ["disconnect", "epoch"] as const) {
         await act(async () => setup.mockInput.pressEnter());
         expect(setup.restarts).toHaveLength(2);
         if (stage === "pending response") {
-          await act(async () =>
-            setup.restarts[0]!.resolve({ ok: true, revision: 7, result: { id: "pane-2" } }),
-          );
+          await act(async () => setup.restarts[0]!.resolve(restartResponse(7)));
           await setup.flush();
         }
         expect(button.focusable).toBe(false);
@@ -466,31 +602,50 @@ for (const outcome of ["response first", "snapshot first", "failure"] as const) 
       act(() => setup.renderer.root.findDescendantById("reactivate:pane-2")!.focus());
       await setup.flush();
       await act(async () => setup.mockInput.pressEnter());
+      await setup.publish(
+        outcome === "failure"
+          ? { ...initial, revision: 5 }
+          : selectedPaneSnapshot({ ...initial, revision: 5 }, "pane-2", 2),
+      );
       if (outcome === "response first") {
-        await act(async () =>
-          setup.restarts[0]!.resolve({ ok: true, revision: 7, result: { id: "pane-2" } }),
-        );
+        await act(async () => setup.restarts[0]!.resolve(restartResponse(5)));
+        expect(setup.renderer.root.findDescendantById("reactivate:pane-2")!.focusable).toBe(false);
       }
       const away = {
         ...initial,
-        surfaces: [{ ...initial.surfaces[0]!, activeTabId: "other-tab" }],
+        navigation: [
+          {
+            ...initial.navigation[0]!,
+            generation: outcome === "failure" ? 2 : 3,
+            tabId: "other-tab",
+            paneId: "pane-3",
+          },
+        ],
       };
-      await setup.publish({ ...away, revision: 5 });
-      await setup.publish({ ...initial, revision: 6 });
+      await setup.publish({ ...away, revision: 6 });
+      await setup.publish(
+        selectedPaneSnapshot({ ...initial, revision: 7 }, "pane-1", outcome === "failure" ? 3 : 4),
+      );
       const button = setup.renderer.root.findDescendantById("reactivate:pane-2")!;
-      expect(button.focusable).toBe(false);
-      await act(async () => setup.mockMouse.click(button.screenX + 1, button.screenY));
-      await act(async () => setup.mockInput.pressKeys(["\x00r"]));
+      expect(button.focusable).toBe(outcome === "response first");
+      if (outcome !== "response first") {
+        await act(async () => setup.mockMouse.click(button.screenX + 1, button.screenY));
+        await act(async () => setup.mockInput.pressKeys(["\x00r"]));
+      }
       expect(setup.restarts).toHaveLength(1);
-      await setup.publish({ ...away, revision: 7 });
+      await setup.publish({
+        ...away,
+        revision: 8,
+        navigation: [{ ...away.navigation[0]!, generation: outcome === "failure" ? 4 : 5 }],
+      });
       if (outcome === "snapshot first") {
-        await act(async () =>
-          setup.restarts[0]!.resolve({ ok: true, revision: 7, result: { id: "pane-2" } }),
-        );
+        await act(async () => setup.restarts[0]!.resolve(restartResponse(5)));
       } else if (outcome === "failure") {
         await act(async () => setup.restarts[0]!.reject(new Error("Off-context restart refused")));
       }
-      await setup.publish({ ...initial, revision: 8 });
+      await setup.publish(
+        selectedPaneSnapshot({ ...initial, revision: 9 }, "pane-1", outcome === "failure" ? 5 : 6),
+      );
       const nextButton = setup.renderer.root.findDescendantById("reactivate:pane-2")!;
       expect(nextButton.focusable).toBe(true);
       act(() => nextButton.focus());
@@ -547,7 +702,11 @@ test("leader restart from an exited action transfers to tabs and disables duplic
     await act(async () => setup.mockMouse.click(button.screenX + 1, button.screenY));
     await act(async () => setup.mockInput.pressKeys(["\x00r"]));
     expect(setup.commands.filter((command) => command.type === "process.restart")).toEqual([
-      { type: "process.restart", paneId: "pane-2" },
+      {
+        type: "process.restart",
+        paneId: "pane-2",
+        activation: { sessionId: "session-work", generation: 1 },
+      },
     ]);
     expect(setup.sent).toEqual([]);
   } finally {
@@ -585,7 +744,11 @@ for (const status of ["exited", "failed", "interrupted"] as const) {
         );
         if (focused) {
           await act(async () => setup.mockInput.pressKeys(["\x00r"]));
-          expect(setup.commands.at(-1)).toEqual({ type: "process.restart", paneId: "pane-1" });
+          expect(setup.commands.at(-1)).toEqual({
+            type: "process.restart",
+            paneId: "pane-1",
+            activation: { sessionId: "session-work", generation: 1 },
+          });
         }
       } finally {
         act(() => setup.renderer.destroy());
@@ -629,7 +792,11 @@ for (const interaction of ["pointer", "spatial"] as const) {
         expect(setup.sent).toEqual([]);
         expect(setup.commands.filter((command) => command.type === "process.restart")).toEqual([]);
         await act(async () => setup.mockInput.pressKeys(["\x00r"]));
-        expect(setup.commands.at(-1)).toEqual({ type: "process.restart", paneId: "pane-2" });
+        expect(setup.commands.at(-1)).toEqual({
+          type: "process.restart",
+          paneId: "pane-2",
+          activation: { sessionId: "session-work", generation: 2 },
+        });
       } finally {
         act(() => setup.renderer.destroy());
         setup.store.stop();
@@ -669,6 +836,7 @@ for (const orientation of ["stacked", "side-by-side"] as const) {
         expect(setup.commands.at(-1)).toEqual({
           type: "process.restart",
           paneId: backwards ? "pane-1" : "pane-2",
+          activation: { sessionId: "session-work", generation: backwards ? 3 : 2 },
         });
         // Leaving the pane layout must still reach shell controls, not cycle on tabs.
         if (!backwards) {
@@ -722,7 +890,11 @@ test("a stopped selected pane does not steal focus from a shell control", async 
     await setup.publish(stopped);
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:category");
     await act(async () => setup.mockInput.pressKeys(["\x00r"]));
-    expect(setup.commands.at(-1)).toEqual({ type: "process.restart", paneId: "pane-1" });
+    expect(setup.commands.at(-1)).toEqual({
+      type: "process.restart",
+      paneId: "pane-1",
+      activation: { sessionId: "session-work", generation: 1 },
+    });
   } finally {
     act(() => setup.renderer.destroy());
     setup.store.stop();
@@ -765,7 +937,11 @@ for (const order of ["response first", "snapshot first"] as const) {
         act(() => setup.renderer.root.findDescendantById("region:tabs")!.focus());
         await setup.flush();
         await act(async () => setup.mockInput.pressKeys(["\x00r"]));
-        expect(setup.commands.at(-1)).toEqual({ type: "process.restart", paneId: "pane-1" });
+        expect(setup.commands.at(-1)).toEqual({
+          type: "process.restart",
+          paneId: "pane-1",
+          activation: { sessionId: "session-work", generation: 1 },
+        });
         const running = splitSurfaceSnapshot();
         running.revision = 5;
         async function respond() {
@@ -773,7 +949,7 @@ for (const order of ["response first", "snapshot first"] as const) {
             if (outcome === "failure") {
               setup.restarts[0]!.reject(new Error("Restart refused"));
             } else {
-              setup.restarts[0]!.resolve({ ok: true, revision: 5, result: { id: "pane-1" } });
+              setup.restarts[0]!.resolve(restartResponse(4, "pane-1", 1));
             }
           });
         }
@@ -856,9 +1032,7 @@ test("explicit restart clears its own entry failure after exact running readines
     act(() => setup.renderer.root.findDescendantById("region:tabs")!.focus());
     await setup.flush();
     await act(async () => setup.mockInput.pressKeys(["\x00r"]));
-    await act(async () =>
-      setup.restarts[0]!.resolve({ ok: true, revision: 5, result: { id: "pane-1" } }),
-    );
+    await act(async () => setup.restarts[0]!.resolve(restartResponse(4, "pane-1", 1)));
     await setup.publish({ ...stopped, revision: 5 });
     expect(statusText(setup)).toContain("Terminal entry failed");
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:tabs");
@@ -867,9 +1041,7 @@ test("explicit restart clears its own entry failure after exact running readines
     starting.revision = 6;
     starting.panes[0]!.processStatus = "starting";
     await setup.publish(starting);
-    await act(async () =>
-      setup.restarts[1]!.resolve({ ok: true, revision: 6, result: { id: "pane-1" } }),
-    );
+    await act(async () => setup.restarts[1]!.resolve(restartResponse(6, "pane-1", 1)));
     await setup.flush();
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:tabs");
     expect(statusText(setup)).toContain("Terminal entry failed");
@@ -906,7 +1078,12 @@ for (const change of [
       if (change === "epoch") {
         next.epoch = "epoch-b";
       } else if (change === "active tab") {
-        next.surfaces[0]!.activeTabId = "other-tab";
+        next.navigation[0] = {
+          ...next.navigation[0]!,
+          generation: 2,
+          tabId: "other-tab",
+          paneId: null,
+        };
       } else if (change === "item archived" || change === "parent archived") {
         next.items.find(
           (item) => item.id === (change === "item archived" ? "item-1" : "root-1"),
@@ -943,6 +1120,7 @@ for (const change of [
         expect(setup.store.snapshot()!.panes[0]!.processStatus).toBe("running");
         await setup.store.apply({
           type: "terminal.output",
+          geometrySequence: next.geometry.sequence,
           epoch: next.epoch,
           paneId: "pane-1",
           cursor: 4,
@@ -978,7 +1156,7 @@ for (const coverage of ["dialog", "drawer", "guard", "height", "item"] as const)
         } else if (coverage === "guard" || coverage === "height") {
           setup.resize(coverage === "guard" ? 79 : 120, coverage === "height" ? 8 : 40);
         } else {
-          setup.mockInput.pressKey("j", { hyper: true });
+          await setup.mockInput.pressKey("j", { hyper: true });
         }
         captured(Uint8Array.of(65), "input");
         captured(Uint8Array.of(66), "response");
@@ -998,24 +1176,10 @@ for (const entry of ["origin", "remembered"] as const) {
     if (split.type === "split") {
       split.ratio = 0.25;
     }
-    const sent: string[] = [];
-    const resized: string[] = [];
-    const setup = await testRender(
-      <WorkCraftShell
-        workCraft={workCraftStateFixture({
-          snapshot,
-          stream: {
-            close() {},
-            sendInput: (id) => sent.push(id),
-            resize: (id) => resized.push(id),
-          },
-        })}
-      />,
-      { width: 160, height: 40, kittyKeyboard: true },
-    );
+    const setup = await liveInputFixture(snapshot);
     try {
+      act(() => setup.resize(160, 40));
       await setup.flush();
-      await openFixtureItem(setup);
       await act(async () => setup.mockInput.pressKeys(["\x00b"]));
       await setup.flush();
       const root = setup.renderer.root;
@@ -1024,36 +1188,37 @@ for (const entry of ["origin", "remembered"] as const) {
       act(() => a.focus());
       await setup.flush();
       expect(setup.renderer.currentFocusedRenderable).toBe(a);
-      expect([a.width, b.width]).toEqual([38, 114]);
+      expect([a.parent!.width, b.parent!.width]).toEqual([38, 114]);
+      expect([a.width, b.width]).toEqual([80, 80]);
       const capturedInput = a.onData!;
-      sent.length = 0;
-      resized.length = 0;
+      setup.sent.length = 0;
       act(() => {
         setup.resize(80, 40);
         capturedInput(Uint8Array.of(65), "input");
         capturedInput(Uint8Array.of(66), "response");
       });
-      expect(sent).toEqual([]);
+      expect(setup.sent).toEqual([]);
       await setup.flush();
-      expect([a.width, b.width]).toEqual([18, 54]);
+      expect([a.parent!.width, b.parent!.width]).toEqual([18, 54]);
       expect(a.focusable).toBe(false);
-      expect(b.focusable).toBe(true);
+      expect(b.focusable).toBe(false);
       a.onData!(Uint8Array.of(67), "input");
       a.onData!(Uint8Array.of(68), "response");
       a.onTerminalResize!(80, 20);
-      expect(sent).toEqual([]);
-      expect(resized).not.toContain("pane-1");
+      expect(setup.sent).toEqual([]);
       if (entry === "remembered") {
         act(() => root.findDescendantById("region:tabs")!.focus());
         await setup.flush();
       }
-      await act(async () =>
-        setup.mockInput.pressKey(entry === "origin" ? "l" : "j", { ctrl: true }),
-      );
+      if (entry === "remembered") {
+        await act(async () => setup.mockInput.pressKey("j", { ctrl: true }));
+        expect(setup.store.snapshot()!.navigation[0]?.paneId).toBe("pane-2");
+      }
+      await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
       await setup.flush();
       expect(setup.renderer.currentFocusedRenderable?.id).toBe("terminal:pane-2");
       b.onData!(Uint8Array.of(69), "input");
-      expect(sent).toEqual(["pane-2"]);
+      expect(setup.sent).toEqual([{ paneId: "pane-2", bytes: [69] }]);
       await act(async () => setup.mockInput.pressKey("h", { ctrl: true }));
       await setup.flush();
       expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:category");
@@ -1061,6 +1226,7 @@ for (const entry of ["origin", "remembered"] as const) {
       expect(root.findDescendantById("terminal:pane-2") === b).toBe(true);
     } finally {
       act(() => setup.renderer.destroy());
+      setup.store.stop();
     }
   });
 }
@@ -1098,7 +1264,7 @@ test("same-batch split resize checks the bordered interior rather than stale nat
 });
 
 for (const coverage of ["none", "dialog", "drawer"] as const) {
-  test(`${coverage} overlay restoration synchronizes the latest measured PTY size`, async () => {
+  test(`${coverage} overlay restoration reports the latest local canvas without resizing the canonical grid`, async () => {
     const initial = splitSurfaceSnapshot();
     initial.tabs[0]!.layout = { type: "pane", paneId: "pane-1" };
     const setup = await liveInputFixture(initial);
@@ -1134,9 +1300,14 @@ for (const coverage of ["none", "dialog", "drawer"] as const) {
         await setup.flush();
       }
       const cols = coverage === "drawer" ? 103 : 98;
-      expect([terminal.width, terminal.height]).toEqual([cols, 38]);
+      expect([terminal.parent!.width, terminal.parent!.height]).toEqual([cols, 38]);
+      expect([terminal.width, terminal.height]).toEqual([80, 24]);
       expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBe(terminal);
-      expect(setup.resized).toContainEqual({ paneId: "pane-1", cols, rows: 38 });
+      expect(setup.viewports.at(-1)).toMatchObject({
+        tabId: "tab-1",
+        canvas: { cols, rows: 39 },
+        eligible: true,
+      });
       setup.resized.length = 0;
       await setup.flush();
       expect(setup.resized).toEqual([]);
@@ -1179,7 +1350,11 @@ for (const coverage of ["dialog", "drawer", "guard", "height"] as const) {
       expect(terminal!.focusable).toBe(false);
       expect(setup.sent).toEqual([]);
       await act(async () => setup.mockInput.pressKeys(["\x00r"]));
-      expect(setup.commands.at(-1)).toEqual({ type: "process.restart", paneId: "pane-1" });
+      expect(setup.commands.at(-1)).toEqual({
+        type: "process.restart",
+        paneId: "pane-1",
+        activation: { sessionId: "session-work", generation: 1 },
+      });
     } finally {
       act(() => setup.renderer.destroy());
       setup.store.stop();
@@ -1203,42 +1378,48 @@ for (const direction of ["horizontal", "vertical"] as const) {
             type: "pane.split",
             paneId: "pane-1",
             direction,
+            activation: { sessionId: "session-work", generation: 1 },
           });
-          const changed = { ...initial, revision: 2 };
+          const committed = selectedPaneSnapshot(
+            { ...splitSurfaceSnapshot(), revision: 2 },
+            "pane-2",
+            2,
+          );
+          if (committed.tabs[0]!.layout?.type === "split") {
+            committed.tabs[0]!.layout.direction = direction;
+          }
+          committed.tabs.push(initial.tabs[1]!);
+          await setup.publish(committed, false);
+          const changed = structuredClone(committed);
+          changed.revision = 3;
+          changed.navigation[0]!.generation = 3;
           if (transition === "tab switch") {
-            changed.surfaces = initial.surfaces.map((surface) => ({
-              ...surface,
-              activeTabId: "other-tab",
-            }));
+            changed.navigation[0] = { ...changed.navigation[0]!, tabId: "other-tab", paneId: null };
           } else {
             changed.items = initial.items.map((item) =>
               item.id === (transition === "item archive" ? "item-1" : "root-1")
                 ? { ...item, archived: true }
                 : item,
             );
+            changed.navigation[0] = {
+              ...changed.navigation[0]!,
+              itemId: transition === "item archive" ? "root-1" : null,
+              tabId: null,
+              paneId: null,
+            };
           }
           await setup.publish(changed);
           expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:tabs");
-          await setup.publish({ ...initial, revision: 3 });
+          const restored = selectedPaneSnapshot({ ...committed, revision: 4 }, "pane-1", 4);
+          if (order === "response first") {
+            await act(async () => setup.splits[0]!.resolve(splitResponse(2)));
+          }
+          await setup.publish(restored);
           expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:tabs");
           const source = setup.renderer.root.findDescendantById("terminal:pane-1")!;
-          const split = { ...splitSurfaceSnapshot(), revision: 4 };
-          if (split.tabs[0]!.layout?.type === "split") {
-            split.tabs[0]!.layout.direction = direction;
-          }
-          split.tabs.push(initial.tabs[1]!);
+          const split = restored;
           if (order === "snapshot first") {
-            await setup.publish(split);
-          }
-          await act(async () =>
-            setup.splits[0]!.resolve({
-              ok: true,
-              revision: 4,
-              result: { id: "pane-2", paneId: "pane-2" },
-            }),
-          );
-          if (order === "response first") {
-            await setup.publish(split);
+            await act(async () => setup.splits[0]!.resolve(splitResponse(2)));
           }
           await setup.flush();
           expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:tabs");
@@ -1253,10 +1434,12 @@ for (const direction of ["horizontal", "vertical"] as const) {
             type: "pane.split",
             paneId: "pane-1",
             direction,
+            activation: { sessionId: "session-work", generation: 4 },
           });
           const fresh: Snapshot = {
             ...split,
             revision: 5,
+            navigation: [{ ...split.navigation[0]!, generation: 5, paneId: "pane-3" }],
             tabs: [
               {
                 ...split.tabs[0]!,
@@ -1282,7 +1465,7 @@ for (const direction of ["horizontal", "vertical"] as const) {
             setup.splits[1]!.resolve({
               ok: true,
               revision: 5,
-              result: { id: "pane-3", paneId: "pane-3" },
+              result: { id: "pane-3", paneId: "pane-3", navigation: fresh.navigation[0] },
             }),
           );
           await setup.publish(fresh);
@@ -1307,9 +1490,24 @@ for (const direction of ["horizontal", "vertical"] as const) {
       try {
         act(() => setup.renderer.root.findDescendantById("region:tabs")!.focus());
         await setup.flush();
+        let committedOld: Snapshot | undefined;
         for (let request = 0; request < 2; request++) {
           await act(async () => setup.mockInput.pressKey(" ", { ctrl: true }));
           await act(async () => setup.mockInput.pressKey(direction === "horizontal" ? "s" : "v"));
+          if (request === 0 && outcome === "cancelled success") {
+            committedOld = splitSurfaceSnapshot();
+            committedOld.panes[1]!.id = "old-pane";
+            committedOld.tabs[0]!.layout = {
+              type: "split",
+              direction,
+              ratio: 0.5,
+              first: { type: "pane", paneId: "pane-1" },
+              second: { type: "pane", paneId: "old-pane" },
+            };
+            committedOld = selectedPaneSnapshot({ ...committedOld, revision: 2 }, "old-pane", 2);
+            committedOld.panes[1]!.processStatus = "starting";
+            await setup.publish(committedOld);
+          }
         }
         await act(async () => {
           if (outcome === "failure") {
@@ -1318,26 +1516,51 @@ for (const direction of ["horizontal", "vertical"] as const) {
             setup.splits[0]!.resolve({
               ok: true,
               revision: 2,
-              result: { id: "old-pane", paneId: "old-pane" },
+              result: {
+                id: "old-pane",
+                paneId: "old-pane",
+                navigation: committedOld!.navigation[0],
+              },
             });
           }
         });
-        const starting = { ...splitSurfaceSnapshot(), revision: 2 };
+        const commitRevision = committedOld ? 3 : 2;
+        const starting = selectedPaneSnapshot(
+          { ...splitSurfaceSnapshot(), revision: commitRevision },
+          "pane-2",
+          committedOld ? 3 : 2,
+        );
         if (starting.tabs[0]!.layout?.type === "split") {
           starting.tabs[0]!.layout.direction = direction;
         }
         starting.panes[1]!.processStatus = "starting";
+        if (committedOld) {
+          starting.panes.push(committedOld.panes[1]!);
+          starting.tabs[0]!.layout = {
+            type: "split",
+            direction,
+            ratio: 1 / 3,
+            first: { type: "pane", paneId: "pane-1" },
+            second: {
+              type: "split",
+              direction,
+              ratio: 0.5,
+              first: { type: "pane", paneId: "old-pane" },
+              second: { type: "pane", paneId: "pane-2" },
+            },
+          };
+        }
         await setup.publish(starting);
         await act(async () =>
           setup.splits[1]!.resolve({
             ok: true,
-            revision: 3,
-            result: { id: "pane-2", paneId: "pane-2" },
+            revision: commitRevision,
+            result: { id: "pane-2", paneId: "pane-2", navigation: starting.navigation[0] },
           }),
         );
         await setup.publish({
           ...starting,
-          revision: 3,
+          revision: commitRevision + 1,
           panes: starting.panes.map((pane) => ({ ...pane, processStatus: "running" as const })),
         });
         expect(setup.renderer.currentFocusedRenderable?.id).toBe("terminal:pane-2");
@@ -1395,7 +1618,7 @@ for (const direction of ["horizontal", "vertical"] as const) {
       const source = setup.renderer.currentFocusedRenderable;
       await act(async () => setup.mockInput.pressKey(" ", { ctrl: true }));
       await act(async () => setup.mockInput.pressKey(direction === "horizontal" ? "s" : "v"));
-      const next = { ...splitSurfaceSnapshot(), revision: 2 };
+      const next = selectedPaneSnapshot({ ...splitSurfaceSnapshot(), revision: 2 }, "pane-2", 2);
       if (next.tabs[0]!.layout?.type === "split") {
         next.tabs[0]!.layout.direction = direction;
       }
@@ -1403,16 +1626,11 @@ for (const direction of ["horizontal", "vertical"] as const) {
       const target = setup.renderer.root.findDescendantById("terminal:pane-2")!;
       expect(target.width).toBeGreaterThanOrEqual(20);
       expect(target.height).toBeGreaterThanOrEqual(5);
-      await act(async () =>
-        setup.splits[0]!.resolve({
-          ok: true,
-          revision: 3,
-          result: { id: "pane-2", paneId: "pane-2" },
-        }),
-      );
+      await act(async () => setup.splits[0]!.resolve(splitResponse(3)));
       await setup.flush();
-      expect(setup.renderer.currentFocusedRenderable).toBe(source);
+      expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:tabs");
       await setup.publish({ ...next, revision: 3 });
+      expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBe(source!);
       await act(async () => setup.mockInput.typeText("x"));
       expect(setup.sent).toEqual([{ paneId: "pane-2", bytes: [120] }]);
       expect(setup.renderer.currentFocusedRenderable).toBe(target);
@@ -1430,17 +1648,16 @@ for (const direction of ["horizontal", "vertical"] as const) {
       const source = setup.renderer.currentFocusedRenderable;
       await act(async () => setup.mockInput.pressKey(" ", { ctrl: true }));
       await act(async () => setup.mockInput.pressKey(direction === "horizontal" ? "s" : "v"));
-      expect(setup.commands.at(-1)).toEqual({ type: "pane.split", paneId: "pane-1", direction });
+      expect(setup.commands.at(-1)).toEqual({
+        type: "pane.split",
+        paneId: "pane-1",
+        direction,
+        activation: { sessionId: "session-work", generation: 1 },
+      });
       act(() => setup.resize(80, 10));
       await setup.flush();
-      await act(async () =>
-        setup.splits[0]!.resolve({
-          ok: true,
-          revision: 2,
-          result: { id: "pane-2", paneId: "pane-2" },
-        }),
-      );
-      const next = { ...splitSurfaceSnapshot(), revision: 2 };
+      await act(async () => setup.splits[0]!.resolve(splitResponse(2)));
+      const next = selectedPaneSnapshot({ ...splitSurfaceSnapshot(), revision: 2 }, "pane-2", 2);
       if (next.tabs[0]!.layout?.type === "split") {
         next.tabs[0]!.layout.direction = direction;
       }
@@ -1469,7 +1686,7 @@ for (const direction of ["horizontal", "vertical"] as const) {
       const source = setup.renderer.currentFocusedRenderable;
       await act(async () => setup.mockInput.pressKey(" ", { ctrl: true }));
       await act(async () => setup.mockInput.pressKey(direction === "horizontal" ? "s" : "v"));
-      const next = { ...splitSurfaceSnapshot(), revision: 2 };
+      const next = selectedPaneSnapshot({ ...splitSurfaceSnapshot(), revision: 2 }, "pane-2", 2);
       if (next.tabs[0]!.layout?.type === "split") {
         next.tabs[0]!.layout.direction = direction;
       }
@@ -1479,18 +1696,12 @@ for (const direction of ["horizontal", "vertical"] as const) {
       act(() => {
         target.visible = false;
       });
-      expect(setup.renderer.currentFocusedRenderable).toBe(source);
-      expect(source?.focusable).toBe(true);
+      expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:tabs");
+      expect(source?.focusable).toBe(false);
       expect(isEligibleFocusTarget(target, setup.renderer.root)).toBe(false);
-      await act(async () =>
-        setup.splits[0]!.resolve({
-          ok: true,
-          revision: 2,
-          result: { id: "pane-2", paneId: "pane-2" },
-        }),
-      );
+      await act(async () => setup.splits[0]!.resolve(splitResponse(2)));
       await setup.flush();
-      expect(setup.renderer.currentFocusedRenderable).toBe(source);
+      expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:tabs");
       expect(target.focused).toBe(false);
       act(() => {
         target.visible = true;
@@ -1519,8 +1730,13 @@ for (const direction of ["horizontal", "vertical"] as const) {
             type: "pane.split",
             paneId: "pane-1",
             direction,
+            activation: { sessionId: "session-work", generation: 1 },
           });
-          const starting = { ...splitSurfaceSnapshot(), revision: 3 };
+          const starting = selectedPaneSnapshot(
+            { ...splitSurfaceSnapshot(), revision: 3 },
+            "pane-2",
+            2,
+          );
           if (starting.tabs[0]!.layout?.type === "split") {
             starting.tabs[0]!.layout.direction = direction;
           }
@@ -1529,13 +1745,7 @@ for (const direction of ["horizontal", "vertical"] as const) {
             await setup.publish({ ...surfaceSnapshot(), revision: 2 });
             await setup.publish(starting);
           }
-          await act(async () =>
-            setup.splits[0]!.resolve({
-              ok: true,
-              revision: 3,
-              result: { id: "pane-2", paneId: "pane-2" },
-            }),
-          );
+          await act(async () => setup.splits[0]!.resolve(splitResponse(3)));
           await setup.flush();
           if (order === "response first") {
             await setup.publish({ ...surfaceSnapshot(), revision: 2 });
@@ -1598,7 +1808,11 @@ for (const direction of ["horizontal", "vertical"] as const) {
           const source = setup.renderer.currentFocusedRenderable;
           await act(async () => setup.mockInput.pressKey(" ", { ctrl: true }));
           await act(async () => setup.mockInput.pressKey(direction === "horizontal" ? "s" : "v"));
-          const starting = { ...splitSurfaceSnapshot(), revision: 2 };
+          const starting = selectedPaneSnapshot(
+            { ...splitSurfaceSnapshot(), revision: 2 },
+            "pane-2",
+            2,
+          );
           if (starting.tabs[0]!.layout?.type === "split") {
             starting.tabs[0]!.layout.direction = direction;
           }
@@ -1609,7 +1823,7 @@ for (const direction of ["horizontal", "vertical"] as const) {
               setup.splits[0]!.resolve({
                 ok: true,
                 revision: 2,
-                result: { id: "pane-2", paneId: "pane-2" },
+                result: { id: "pane-2", paneId: "pane-2", navigation: starting.navigation[0] },
               }),
             );
             await setup.flush();
@@ -1623,9 +1837,10 @@ for (const direction of ["horizontal", "vertical"] as const) {
           } else if (cancellation === "paste") {
             await act(async () => setup.mockInput.pasteBracketedText("cancel"));
           } else if (cancellation === "focus round trip") {
+            const origin = setup.renderer.currentFocusedRenderable!;
             act(() => {
               setup.renderer.root.findDescendantById("region:category")!.focus();
-              source!.focus();
+              origin.focus();
             });
           } else if (cancellation === "modal") {
             await act(async () => setup.mockInput.pressKey("s", { hyper: true }));
@@ -1637,7 +1852,7 @@ for (const direction of ["horizontal", "vertical"] as const) {
             await act(async () =>
               setup.mockMouse.scroll(area.viewport.screenX + 1, area.viewport.screenY, "down"),
             );
-            expect(setup.renderer.currentFocusedRenderable).toBe(source);
+            expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:tabs");
           } else if (cancellation === "disconnect") {
             act(() => {
               setup.store.stop();
@@ -1646,18 +1861,26 @@ for (const direction of ["horizontal", "vertical"] as const) {
           } else {
             const changed = { ...starting, revision: 3 };
             if (cancellation === "tab") {
-              changed.surfaces = starting.surfaces.map((surface) => ({
-                ...surface,
-                activeTabId: "extra-tab-0",
-              }));
+              changed.navigation = [
+                { ...starting.navigation[0]!, generation: 3, tabId: "extra-tab-0", paneId: null },
+              ];
             } else if (cancellation === "restart") {
               changed.panes = starting.panes.map((pane) =>
-                pane.id === "pane-1" ? { ...pane, processStatus: "exited" as const } : pane,
+                pane.id === "pane-2" ? { ...pane, processStatus: "exited" as const } : pane,
               );
             } else if (cancellation === "archive") {
               changed.items = starting.items.map((item) =>
                 item.id === "item-1" ? { ...item, archived: true } : item,
               );
+              changed.navigation = [
+                {
+                  ...starting.navigation[0]!,
+                  generation: 3,
+                  itemId: "root-1",
+                  tabId: null,
+                  paneId: null,
+                },
+              ];
             } else {
               changed.epoch = "new-epoch";
             }
@@ -1670,6 +1893,12 @@ for (const direction of ["horizontal", "vertical"] as const) {
             ...starting,
             revision: 4,
             panes: starting.panes.map((pane) => ({ ...pane, processStatus: "running" as const })),
+            navigation: [
+              {
+                ...starting.navigation[0]!,
+                generation: cancellation === "tab" || cancellation === "archive" ? 4 : 2,
+              },
+            ],
           };
           // Restore the original context as well: cancellation must not merely postpone entry.
           await setup.publish({ ...running, revision: 3 });
@@ -1680,8 +1909,9 @@ for (const direction of ["horizontal", "vertical"] as const) {
           await act(async () => setup.mockInput.typeText("x"));
           expect(setup.sent.some(({ paneId }) => paneId === "pane-2")).toBe(false);
           if (["input", "paste", "focus round trip", "scroll"].includes(cancellation)) {
-            expect(setup.renderer.currentFocusedRenderable).toBe(source);
-            expect(setup.sent).toEqual([{ paneId: "pane-1", bytes: [120] }]);
+            expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:tabs");
+            expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBe(source!);
+            expect(setup.sent).toEqual([]);
           }
         } finally {
           act(() => {
@@ -1704,10 +1934,16 @@ for (const direction of ["horizontal", "vertical"] as const) {
         const sourceId = index === 0 ? "pane-1" : "pane-2";
         await act(async () => setup.mockInput.pressKey(" ", { ctrl: true }));
         await act(async () => setup.mockInput.pressKey(direction === "horizontal" ? "s" : "v"));
-        expect(setup.commands.at(-1)).toEqual({ type: "pane.split", paneId: sourceId, direction });
+        expect(setup.commands.at(-1)).toEqual({
+          type: "pane.split",
+          paneId: sourceId,
+          direction,
+          activation: { sessionId: "session-work", generation: index + 1 },
+        });
         next = {
           ...next,
           revision: index + 2,
+          navigation: [{ ...next.navigation[0]!, generation: index + 2, paneId }],
           tabs: [
             {
               ...next.tabs[0]!,
@@ -1729,7 +1965,7 @@ for (const direction of ["horizontal", "vertical"] as const) {
           setup.splits[index]!.resolve({
             ok: true,
             revision: next.revision,
-            result: { id: paneId, paneId },
+            result: { id: paneId, paneId, navigation: next.navigation[0] },
           }),
         );
         if (index === 0) {
@@ -1755,22 +1991,41 @@ for (const direction of ["horizontal", "vertical"] as const) {
 }
 
 test("splitting focuses the new pane returned by the server", async () => {
+  let publish!: (snapshot: Snapshot) => void;
   let workCraft: WorkCraftState;
   workCraft = workCraftStateFixture({
     snapshot: { ...surfaceSnapshot(), revision: 1 },
     command: async (command) => {
       if (command.type === "pane.split") {
-        workCraft.snapshot = { ...splitSurfaceSnapshot(), revision: 2 };
+        workCraft.snapshot = selectedPaneSnapshot(
+          { ...splitSurfaceSnapshot(), revision: 2 },
+          "pane-2",
+          2,
+        );
+        publish(workCraft.snapshot);
         return {
           ok: true,
           revision: 2,
-          result: { id: "pane-2", surfaceId: "surface-1", tabId: "tab-1", paneId: "pane-2" },
+          result: {
+            id: "pane-2",
+            surfaceId: "surface-1",
+            tabId: "tab-1",
+            paneId: "pane-2",
+            navigation: workCraft.snapshot.navigation[0],
+          },
         };
       }
       return { ok: true, revision: 1, result: { id: "result-1" } };
     },
   });
-  const setup = await testRender(<WorkCraftShell workCraft={workCraft} />, {
+  function Fixture() {
+    const [snapshot, setSnapshot] = useState(workCraft.snapshot);
+    publish = setSnapshot;
+    return (
+      <WorkCraftShell workCraft={workCraftStateFixture({ command: workCraft.command, snapshot })} />
+    );
+  }
+  const setup = await testRender(<Fixture />, {
     width: 120,
     height: 40,
     kittyKeyboard: true,
@@ -1795,11 +2050,7 @@ test("split focus survives a response arriving before the new pane snapshot", as
       <WorkCraftShell
         workCraft={workCraftStateFixture({
           snapshot,
-          command: async () => ({
-            ok: true,
-            revision: 2,
-            result: { id: "pane-2", paneId: "pane-2" },
-          }),
+          command: async () => splitResponse(2),
         })}
       />
     );
@@ -1815,7 +2066,11 @@ test("split focus survives a response arriving before the new pane snapshot", as
     await setup.flush();
     expect(setup.renderer.root.findDescendantById("terminal:pane-2")).toBeUndefined();
     expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBe(original);
-    act(() => publishSnapshot({ ...splitSurfaceSnapshot(), revision: 2 }));
+    act(() =>
+      publishSnapshot(
+        selectedPaneSnapshot({ ...splitSurfaceSnapshot(), revision: 2 }, "pane-2", 2),
+      ),
+    );
     await setup.flush();
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("terminal:pane-2");
   } finally {
@@ -1834,7 +2089,7 @@ test("split focus survives an intermediate snapshot preceding its completion rev
           snapshot,
           command: async (command) =>
             command.type === "pane.split"
-              ? { ok: true, revision: 3, result: { id: "pane-2", paneId: "pane-2" } }
+              ? splitResponse(3)
               : { ok: true, revision: 1, result: { id: "surface-1" } },
         })}
       />
@@ -1850,7 +2105,11 @@ test("split focus survives an intermediate snapshot preceding its completion rev
     act(() => publishSnapshot({ ...surfaceSnapshot(), revision: 2 }));
     await setup.flush();
     expect(setup.renderer.root.findDescendantById("terminal:pane-2")).toBeUndefined();
-    act(() => publishSnapshot({ ...splitSurfaceSnapshot(), revision: 3 }));
+    act(() =>
+      publishSnapshot(
+        selectedPaneSnapshot({ ...splitSurfaceSnapshot(), revision: 3 }, "pane-2", 2),
+      ),
+    );
     await setup.flush();
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("terminal:pane-2");
   } finally {
@@ -1864,7 +2123,7 @@ test("a rejected pane command stays visible in the workbench region", async () =
       workCraft={workCraftStateFixture({
         snapshot: surfaceSnapshot(),
         command: async (command) => {
-          if (command.type === "surface.ensure") {
+          if (command.type === "session.openItem") {
             return { ok: true, revision: 1, result: { id: "surface-1" } };
           }
           throw new Error("split failed");

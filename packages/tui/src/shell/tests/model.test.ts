@@ -6,11 +6,19 @@ import {
   resolveShellFocus,
 } from "@/shell/model.ts";
 import { createInitialShellState, reconcileShellState } from "@/shell/state.ts";
-import { snapshotFixture } from "@/tests/support/fixtures.ts";
+import { attachmentFixture, snapshotFixture } from "@/tests/support/fixtures.ts";
 
-test("shell presentation falls back to the first ordered tab when selection is missing", () => {
+test("tab browsing may fall back locally without inventing an active tab", () => {
   const snapshot = snapshotFixture({
-    surfaces: [{ id: "surface", itemId: "item-1", activeTabId: "missing" }],
+    navigation: [
+      {
+        ...snapshotFixture().navigation[0]!,
+        category: "implementation",
+        itemId: "item-1",
+        tabId: "missing",
+      },
+    ],
+    surfaces: [{ id: "surface", itemId: "item-1" }],
     tabs: [
       { id: "b", surfaceId: "surface", position: 0, title: "B", layout: null },
       { id: "a", surfaceId: "surface", position: 0, title: "A", layout: null },
@@ -18,29 +26,33 @@ test("shell presentation falls back to the first ordered tab when selection is m
   });
   const state = {
     ...createInitialShellState(),
-    activeSessionId: "session-work",
-    activeWorkspaceId: "workspace-shared",
-    activeCategory: "implementation" as const,
-    activeNavigatorKey: "item:item-1",
   };
-  expect(deriveShellModel({ snapshot, state }).activeTab?.id).toBe("a");
-  expect(reconcileShellState(state, snapshot).tabCursorId).toBe("a");
+  expect(
+    deriveShellModel({ snapshot, state, attachment: attachmentFixture() }).activeTab,
+  ).toBeUndefined();
+  expect(reconcileShellState(state, snapshot, attachmentFixture()).tabCursorId).toBe("a");
 });
 
-test("filtering or archiving an active item does not erase its surface", () => {
+test("filtering preserves the active surface; authoritative archive fallback leaves the resource intact", () => {
   const snapshot = snapshotFixture({
-    surfaces: [{ id: "surface", itemId: "item-1", activeTabId: null }],
+    navigation: [
+      { ...snapshotFixture().navigation[0]!, category: "implementation", itemId: "item-1" },
+    ],
+    surfaces: [{ id: "surface", itemId: "item-1" }],
   });
   const state = {
     ...createInitialShellState(),
-    activeWorkspaceId: "workspace-shared",
-    activeCategory: "implementation" as const,
-    activeNavigatorKey: "item:item-1",
     navigatorQuery: "no matches",
   };
-  expect(deriveShellModel({ snapshot, state }).surface?.id).toBe("surface");
+  expect(deriveShellModel({ snapshot, state, attachment: attachmentFixture() }).surface?.id).toBe(
+    "surface",
+  );
   snapshot.items[0]!.archived = true;
-  expect(deriveShellModel({ snapshot, state }).surface?.id).toBe("surface");
+  snapshot.navigation[0] = { ...snapshot.navigation[0]!, generation: 1, itemId: null };
+  expect(
+    deriveShellModel({ snapshot, state, attachment: attachmentFixture() }).surface,
+  ).toBeUndefined();
+  expect(snapshot.surfaces).toHaveLength(1);
 });
 
 const baseSnapshot = snapshotFixture({
@@ -49,19 +61,14 @@ const baseSnapshot = snapshotFixture({
   sessionWorkspaces: [{ sessionId: "session-1", workspaceId: "workspace-1", position: 0 }],
 });
 
-test("projects fixed categories when the active workspace has no category rows", () => {
+test("an empty workspace does not invent category rows or selection", () => {
   const model = deriveShellModel({
     snapshot: { ...baseSnapshot, categories: [] },
     state: createInitialShellState(),
+    attachment: attachmentFixture("session-1"),
   });
-  expect(model.categories.map(({ kind }) => kind)).toEqual([
-    "inbox",
-    "today",
-    "design",
-    "implementation",
-    "collaboration",
-    "operations",
-  ]);
+  expect(model.categories).toEqual([]);
+  expect(model.navigation).toBeNull();
 });
 
 test("undersized workbench focus falls back to tabs", () => {
@@ -130,7 +137,18 @@ test("projects sorted session, workspace, and tab indices", () => {
       { workspaceId: "workspace-a", kind: "implementation", title: "Build", position: 0 },
     ],
     items: snapshotFixture().items.map((item) => ({ ...item, workspaceId: "workspace-a" })),
-    surfaces: [{ id: "surface-1", itemId: "item-1", activeTabId: "tab-b" }],
+    surfaces: [{ id: "surface-1", itemId: "item-1" }],
+    navigation: [
+      {
+        sessionId: "session-a",
+        generation: 1,
+        workspaceId: "workspace-a",
+        category: "implementation",
+        itemId: "item-1",
+        tabId: "tab-b",
+        paneId: null,
+      },
+    ],
     tabs: [
       { id: "tab-b", surfaceId: "surface-1", title: "Second", position: 1, layout: null },
       { id: "tab-a", surfaceId: "surface-1", title: "First", position: 0, layout: null },
@@ -138,15 +156,11 @@ test("projects sorted session, workspace, and tab indices", () => {
   });
   const state = {
     ...createInitialShellState(),
-    activeSessionId: "session-a",
-    activeWorkspaceId: "workspace-a",
-    activeCategory: "implementation" as const,
-    activeNavigatorKey: "item:item-1",
     tabCursorId: "tab-a",
     expandedRootIds: new Set(["root-1"]),
   };
 
-  const model = deriveShellModel({ snapshot, state });
+  const model = deriveShellModel({ snapshot, state, attachment: attachmentFixture("session-a") });
 
   expect(model.sessions.map(({ id }) => id)).toEqual(["session-a", "session-b"]);
   expect(model.workspaces.map(({ id }) => id)).toEqual(["workspace-a", "workspace-b"]);
@@ -162,6 +176,7 @@ test("projects sorted session, workspace, and tab indices", () => {
 
 test("item creation outside the navigator requires an active item", () => {
   const snapshot = snapshotFixture({
+    navigation: [{ ...snapshotFixture().navigation[0]!, category: "design" }],
     items: snapshotFixture().items.map((item) => ({
       ...item,
       category: "design",
@@ -170,24 +185,29 @@ test("item creation outside the navigator requires an active item", () => {
     })),
   });
   const projectState = {
-    ...reconcileShellState(createInitialShellState(), snapshot),
+    ...reconcileShellState(createInitialShellState(), snapshot, attachmentFixture()),
     focus: { region: "category" as const },
-    activeWorkspaceId: "workspace-shared",
-    activeCategory: "design" as const,
-    activeNavigatorKey: null,
     expandedRootIds: new Set(["root-1"]),
   };
-  expect(genericRootIdForShellContext(projectState, snapshot)).toBeUndefined();
+  expect(
+    genericRootIdForShellContext(projectState, snapshot, snapshot.navigation[0]!),
+  ).toBeUndefined();
 
-  const itemState = { ...projectState, activeNavigatorKey: "item:item-1" };
-  expect(genericRootIdForShellContext(itemState, snapshot)).toBe("root-1");
+  expect(
+    genericRootIdForShellContext(projectState, snapshot, {
+      ...snapshot.navigation[0]!,
+      itemId: "item-1",
+    }),
+  ).toBe("root-1");
 
   const cursorState = {
     ...projectState,
     focus: { region: "navigator" as const },
     navigatorCursorKey: "root:root-1",
   };
-  expect(genericRootIdForShellContext(cursorState, snapshot)).toBe("root-1");
+  expect(genericRootIdForShellContext(cursorState, snapshot, snapshot.navigation[0]!)).toBe(
+    "root-1",
+  );
 });
 test("an eligible exited action remains focused independently of terminal eligibility", () => {
   for (const eligible of [true, false]) {

@@ -2,7 +2,6 @@ import { chmodSync } from "node:fs";
 
 import type { WorkCraftApp } from "../application/app.ts";
 import { parseClientMessage, ProtocolError } from "./protocol.ts";
-import type { Command } from "./protocol.ts";
 
 async function commandBody(request: Request): Promise<unknown> {
   try {
@@ -25,7 +24,7 @@ export function startHttpServer(app: WorkCraftApp, socketPath: string): Bun.Serv
           return Response.json(app.snapshot());
         }
         if (request.method === "POST" && pathname === "/command") {
-          return Response.json(await app.execute((await commandBody(request)) as Command));
+          return Response.json(await app.execute(await commandBody(request)));
         }
         if (request.method === "GET" && pathname === "/stream") {
           if (server.upgrade(request)) {
@@ -54,7 +53,7 @@ export function startHttpServer(app: WorkCraftApp, socketPath: string): Bun.Serv
       message(socket, data) {
         try {
           const message = parseClientMessage(JSON.parse(data.toString()));
-          app.receive(message);
+          void app.receive(socket, message);
         } catch {
           socket.close(1008, "invalid client message");
         }

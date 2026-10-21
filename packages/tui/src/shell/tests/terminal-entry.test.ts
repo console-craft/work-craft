@@ -31,29 +31,38 @@ test("exact command candidates never enter an unrelated running sibling", () => 
       "sibling",
     ),
   ).toEqual(["new"]);
-  expect(entryPaneCandidates({ kind: "item" }, ["a", "b"], "b")).toEqual(["b", "a"]);
-  expect(entryPaneCandidates({ kind: "item" }, ["a", "b"], "stopped")).toEqual(["a", "b"]);
+  expect(entryPaneCandidates({ kind: "item" }, ["a", "b"], "b")).toEqual(["b"]);
+  expect(entryPaneCandidates({ kind: "item" }, ["a", "b"], "stopped")).toEqual([]);
   expect(entryPaneCandidates({ kind: "item" }, [], undefined)).toEqual([]);
+});
+
+test("ordinary entry never changes shared pane selection to bypass a stopped or clipped selected pane", () => {
+  expect(entryPaneCandidates({ kind: "tab" }, ["running-sibling"], "selected-stopped")).toEqual([]);
+  expect(entryPaneCandidates({ kind: "item" }, ["selected", "sibling"], "selected")).toEqual([
+    "selected",
+  ]);
 });
 
 test("snapshot-first creation can project a new selection without binding response IDs", () => {
   const entry = {
+    sessionId: "session-work",
     itemId: "item-1",
     tabId: undefined,
     revision: null,
     creation: { sourceTabId: "old", existingTabIds: ["old"] },
   };
   const snapshot = snapshotFixture({
-    surfaces: [{ id: "s", itemId: "item-1", activeTabId: "old" }],
+    navigation: [{ ...snapshotFixture().navigation[0]!, itemId: "item-1", tabId: "old" }],
+    surfaces: [{ id: "s", itemId: "item-1" }],
   });
   expect(canProjectTabEntry(entry, snapshot)).toBe(false);
-  snapshot.surfaces[0]!.activeTabId = "unrelated-new";
+  snapshot.navigation[0]!.tabId = "unrelated-new";
   expect(canProjectTabEntry(entry, snapshot)).toBe(true);
   expect(entry.tabId).toBeUndefined();
   expect(
     canProjectTabEntry({ ...entry, tabId: "returned", revision: snapshot.revision }, snapshot),
   ).toBe(false);
-  snapshot.surfaces[0]!.activeTabId = "returned";
+  snapshot.navigation[0]!.tabId = "returned";
   expect(
     canProjectTabEntry({ ...entry, tabId: "returned", revision: snapshot.revision }, snapshot),
   ).toBe(true);

@@ -54,10 +54,21 @@ test("parses session and workspace membership commands", () => {
 });
 
 test("parses protocol messages and rejects invalid boundaries", () => {
-  expect(parseClientMessage({ type: "terminal.input", paneId: "pane-1", data: "bHMK" })).toEqual({
+  const context = {
+    epoch: "e",
+    attachmentGeneration: 1,
+    navigationGeneration: 2,
+    geometrySequence: 3,
+    source: "input" as const,
+    kind: "key" as const,
+  };
+  expect(
+    parseClientMessage({ type: "terminal.input", paneId: "pane-1", data: "bHMK", context }),
+  ).toEqual({
     type: "terminal.input",
     paneId: "pane-1",
     data: "bHMK",
+    context,
   });
 
   const invalidValues = [
@@ -75,6 +86,7 @@ test("parses protocol messages and rejects invalid boundaries", () => {
     () => parseCommand({ type: "surface.open", itemId: "item-1" }),
     () => parseCommand({ type: "surface.openHere", projectId: "project-1" }),
     () => parseCommand({ type: "not-a-command" }),
+    () => parseCommand({ type: "surface.selectTab", surfaceId: "surface-1", tabId: "tab-1" }),
     () => parseClientMessage({ type: "terminal.input", paneId: "pane-1", data: "not base64" }),
     () => parseClientMessage({ type: "terminal.resize", paneId: "pane-1", cols: 0, rows: 24 }),
   ];

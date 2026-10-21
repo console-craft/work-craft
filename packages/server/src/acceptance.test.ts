@@ -3,6 +3,7 @@ import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { sendTerminalInput } from "../../../scripts/test-support/terminal-input.ts";
 import { decodeBytes, type Snapshot } from "./api/protocol.ts";
 import { createClient, type StreamConnection } from "./client.ts";
 import { resolvePaths } from "./daemon/paths.ts";
@@ -344,7 +345,9 @@ test.serial(
         "original shells",
       );
       stream = await client.stream({ onMessage() {} });
-      stream.sendInput(
+      await sendTerminalInput(
+        client,
+        stream,
         opened.paneId!,
         new TextEncoder().encode(`cd '${target}'; printf 'cwd-ready-PID-%s\\n' "$$"\n`),
       );
@@ -378,7 +381,9 @@ test.serial(
         third.paneId!,
         horizontal.paneId!,
       ].entries()) {
-        stream.sendInput(
+        await sendTerminalInput(
+          client,
+          stream,
           paneId,
           new TextEncoder().encode(`printf '\\nnew-${index}-%s\\n' "$(pwd)"\n`),
         );
@@ -421,7 +426,9 @@ test.serial(
       expect(await readShellPids(shellPidsPath)).toHaveLength(5);
       expect(originalPids.every(isAlive)).toBe(true);
       expect((await client.health()).pid).toBe(daemon.pid);
-      stream.sendInput(
+      await sendTerminalInput(
+        client,
+        stream,
         opened.paneId!,
         new TextEncoder().encode("printf 'retained-PID-%s\\n' \"$$\"\n"),
       );
@@ -432,7 +439,7 @@ test.serial(
       );
       expect(history(retained, opened.paneId!)).toContain(`cwd-ready-PID-${sourcePid}`);
 
-      stream.sendInput(opened.paneId!, new TextEncoder().encode("exit\n"));
+      await sendTerminalInput(client, stream, opened.paneId!, new TextEncoder().encode("exit\n"));
       const stopped = await waitFor(
         () => client.snapshot(),
         (snapshot) =>
@@ -460,7 +467,9 @@ test.serial(
         direction: "horizontal",
         cwd: home,
       });
-      stream.sendInput(
+      await sendTerminalInput(
+        client,
+        stream,
         override.result.paneId!,
         new TextEncoder().encode("printf '\\noverride-%s\\n' \"$(pwd)\"\n"),
       );
@@ -558,7 +567,12 @@ test.serial(
       });
       const stream = await client.stream({ onMessage() {}, onClose: closed });
       streams.push(stream);
-      stream.sendInput(paneId, new TextEncoder().encode("printf 'acceptance-%s' marker\n"));
+      await sendTerminalInput(
+        client,
+        stream,
+        paneId,
+        new TextEncoder().encode("printf 'acceptance-%s' marker\n"),
+      );
       await waitFor(
         () => client.snapshot(),
         (snapshot) => history(snapshot, paneId).includes("acceptance-marker"),

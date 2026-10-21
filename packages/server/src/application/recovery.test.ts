@@ -109,11 +109,7 @@ async function persistentAppFixture() {
         JSON.stringify({ type: "shell", executable: shellPath, args: [startsPath] }),
         paneId,
       ]);
-      app.receive({
-        type: "terminal.input",
-        paneId,
-        data: Buffer.from(`${command}\n`).toString("base64"),
-      });
+      app.runtime.write(paneId, new TextEncoder().encode(`${command}\n`));
       await waitForHistory(app, paneId, "before-restart");
       return paneId;
     },

@@ -31,7 +31,7 @@ function organizationalFixture() {
     parentId: rootId,
     title: "First slice",
   }).result.id;
-  return { db, workspaceId, rootId, itemId };
+  return { db, sessionId, workspaceId, rootId, itemId };
 }
 
 afterEach(async () => {
@@ -344,7 +344,7 @@ test("a generic root directly owns a surface without a synthetic child", () => {
   expect(snapshot.surfaces).toHaveLength(1);
 });
 
-test("creates and selects tabs only within their owning surface", () => {
+test("session tab selection resolves its owning surface and rejects missing targets", () => {
   const fixture = organizationalFixture();
   const secondItemId = applyCommand(fixture.db, {
     type: "item.create",
@@ -362,27 +362,27 @@ test("creates and selects tabs only within their owning surface", () => {
   });
 
   expect(created.effects).toEqual([{ type: "spawn-pane", paneId: created.result.paneId! }]);
-  expect(
-    readSnapshot(fixture.db, "epoch", 0).surfaces.find(({ id }) => id === first.result.surfaceId)
-      ?.activeTabId,
-  ).toBe(created.result.tabId);
+  expect(readSnapshot(fixture.db, "epoch", 0).navigation[0]?.tabId).toBeNull();
 
   applyCommand(fixture.db, {
-    type: "surface.selectTab",
-    surfaceId: first.result.surfaceId!,
-    tabId: first.result.tabId!,
+    type: "session.navigate",
+    sessionId: fixture.sessionId,
+    target: { kind: "tab", tabId: first.result.tabId! },
   });
   expect(() =>
     applyCommand(fixture.db, {
-      type: "surface.selectTab",
-      surfaceId: first.result.surfaceId!,
-      tabId: second.result.tabId!,
+      type: "session.navigate",
+      sessionId: fixture.sessionId,
+      target: { kind: "tab", tabId: "missing" },
     }),
-  ).toThrow(new ProtocolError("tab not found for surface"));
-  expect(
-    readSnapshot(fixture.db, "epoch", 0).surfaces.find(({ id }) => id === first.result.surfaceId)
-      ?.activeTabId,
-  ).toBe(first.result.tabId);
+  ).toThrow(new ProtocolError("tab not found"));
+  expect(readSnapshot(fixture.db, "epoch", 0).navigation[0]?.tabId).toBe(first.result.tabId!);
+  applyCommand(fixture.db, {
+    type: "session.navigate",
+    sessionId: fixture.sessionId,
+    target: { kind: "tab", tabId: second.result.tabId! },
+  });
+  expect(readSnapshot(fixture.db, "epoch", 0).navigation[0]?.itemId).toBe(secondItemId);
 });
 
 test("splits a pane with a resolved cwd and its source restore policy", () => {
@@ -780,7 +780,8 @@ test("app starts committed panes once and suppresses a live restart without a re
   apps.push(app);
 
   const opened = await app.execute({ type: "surface.ensure", itemId: fixture.itemId });
-  const revision = opened.revision;
+  const revision = app.health().revision;
+  expect(revision).toBeGreaterThan(opened.revision);
   const paneId = opened.result.paneId!;
   expect(app.runtime.isLive(paneId)).toBe(true);
 

@@ -1,5 +1,7 @@
 import { Database } from "bun:sqlite";
 
+import { migrateStage2 } from "./stage-2-migration.ts";
+
 export const SCHEMA4 = `
 CREATE TABLE sessions (id TEXT PRIMARY KEY, name TEXT NOT NULL, position INTEGER NOT NULL);
 CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL);
@@ -37,7 +39,7 @@ export function openDatabase(path: string): Database {
       .get()!.user_version;
     const nonempty =
       db.query("SELECT 1 FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' LIMIT 1").get() !== null;
-    if ((version !== 0 && version !== 4) || (version === 0 && nonempty)) {
+    if ((version !== 0 && version !== 4 && version !== 5) || (version === 0 && nonempty)) {
       throw new Error(
         `Incompatible Work Craft database schema ${version}. Use a fresh WORK_CRAFT_HOME or explicitly reset development state with daemon destroy --force; no data was changed.`,
       );
@@ -52,6 +54,9 @@ export function openDatabase(path: string): Database {
         db.exec(SCHEMA4);
         db.exec("PRAGMA user_version = 4");
       })();
+    }
+    if (version !== 5) {
+      migrateStage2(db);
     }
     return db;
   } catch (error) {

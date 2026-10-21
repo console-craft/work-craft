@@ -1,11 +1,17 @@
 import type { Database } from "bun:sqlite";
 
 import { encodeBytes } from "../api/protocol.ts";
-import type { PaneStatus, ShellRestorePolicy, Snapshot } from "../api/protocol.ts";
-import type { TerminalHistory } from "../terminal/history.ts";
+import type {
+  PaneStatus,
+  ShellRestorePolicy,
+  Snapshot,
+  TerminalGeometry,
+} from "../api/protocol.ts";
+import { TerminalHistory } from "../terminal/history.ts";
 import { CATEGORIES } from "./categories.ts";
 import { readItems, validateItemAncestry } from "./items.ts";
 import { parseLayout } from "./layout.ts";
+import { readSessionNavigation } from "./navigation-store.ts";
 
 function parseJson(value: string, field: string): unknown {
   try {
@@ -60,6 +66,7 @@ export function readSnapshot(
   epoch: string,
   revision: number,
   history?: TerminalHistory,
+  geometry?: TerminalGeometry,
 ): Snapshot {
   const sessions = db
     .query<{ id: string; name: string; position: number }, []>(
@@ -77,8 +84,8 @@ export function readSnapshot(
   const items = readItems(db);
   validateItemAncestry(items);
   const surfaces = db
-    .query<{ id: string; itemId: string; activeTabId: string | null }, []>(
-      "SELECT id, item_id AS itemId, active_tab_id AS activeTabId FROM surfaces ORDER BY id",
+    .query<{ id: string; itemId: string }, []>(
+      "SELECT id, item_id AS itemId FROM surfaces ORDER BY id",
     )
     .all();
   const tabRows = db
@@ -114,23 +121,23 @@ export function readSnapshot(
       "SELECT id, surface_id AS surfaceId, kind, title, cwd, restore_policy_json AS restorePolicyJson, process_status AS processStatus, error_text AS errorText, started_at AS startedAt, exited_at AS exitedAt FROM panes ORDER BY id",
     )
     .all();
-  const chunkRows = db
-    .query<{ paneId: string; cursorStart: number; cursorEnd: number; data: Uint8Array }, []>(
-      "SELECT pane_id AS paneId, cursor_start AS cursorStart, cursor_end AS cursorEnd, data FROM terminal_chunks ORDER BY pane_id, cursor_start, id",
-    )
-    .all();
-
-  const chunksByPane = new Map<string, typeof chunkRows>();
-  for (const chunk of chunkRows) {
-    const chunks = chunksByPane.get(chunk.paneId) ?? [];
-    chunks.push(chunk);
-    chunksByPane.set(chunk.paneId, chunks);
-  }
+  const retainedHistory = history ?? new TerminalHistory(db);
 
   return {
     epoch,
     revision,
     sessions,
+    navigation: sessions.map(({ id }) => readSessionNavigation(db, id).cursor),
+    geometry: geometry ?? {
+      sequence: 0,
+      tabs: tabRows.map(({ id }) => ({
+        tabId: id,
+        generation: 0,
+        ownerConnectionId: null,
+        canvas: null,
+      })),
+      panes: paneRows.map(({ id }) => ({ paneId: id, size: { cols: 80, rows: 24 } })),
+    },
     workspaces,
     sessionWorkspaces,
     categories: workspaces.flatMap((workspace) =>
@@ -148,25 +155,8 @@ export function readSnapshot(
       processStatus: parsePaneStatus(processStatus),
     })),
     terminalHistories: paneRows.map(({ id }) => {
-      if (history !== undefined) {
-        const retained = history.read(id);
-        return { ...retained, data: encodeBytes(retained.data) };
-      }
-      const chunks = chunksByPane.get(id) ?? [];
-      const bytes = new Uint8Array(
-        chunks.reduce((total, chunk) => total + chunk.data.byteLength, 0),
-      );
-      let offset = 0;
-      for (const chunk of chunks) {
-        bytes.set(chunk.data, offset);
-        offset += chunk.data.byteLength;
-      }
-      return {
-        paneId: id,
-        cursor: chunks.at(-1)?.cursorEnd ?? 0,
-        data: encodeBytes(bytes),
-        truncated: (chunks[0]?.cursorStart ?? 0) > 0,
-      };
+      const retained = retainedHistory.read(id);
+      return { ...retained, data: encodeBytes(retained.data) };
     }),
   };
 }

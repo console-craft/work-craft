@@ -1,6 +1,14 @@
 import type { EmbeddedTerminalRenderable } from "@opentui/core";
-import type { PaneRect, Snapshot, StreamConnection } from "@work-craft/server/client";
-import { useEffect, useLayoutEffect, useRef } from "react";
+import type { MouseEvent } from "@opentui/core";
+import type {
+  InputStamp,
+  PaneRect,
+  Snapshot,
+  StreamConnection,
+  TerminalInputContext,
+  TerminalSize,
+} from "@work-craft/server/client";
+import { useCallback } from "react";
 
 import type { TerminalBuffer } from "@/client/terminal-buffer.ts";
 import { Alert, AlertContent, AlertTitle } from "@/ui/components/alert.tsx";
@@ -14,6 +22,7 @@ import {
   terminalRect,
 } from "@/workbench/layout.ts";
 import { paneNotice } from "@/workbench/pane-state.ts";
+import { TerminalViewport } from "@/workbench/terminal-viewport";
 
 export type TerminalPaneProps = {
   bounds: PaneRect;
@@ -24,11 +33,18 @@ export type TerminalPaneProps = {
   buffer: TerminalBuffer | undefined;
   focused: boolean;
   pane: Snapshot["panes"][number];
-  resizeEnabled: boolean;
+  size: TerminalSize;
+  stamp: InputStamp | null;
+  canRespond(paneId: string): boolean;
+  inputEvent(): Pick<
+    Extract<TerminalInputContext, { source: "input" }>,
+    "kind" | "activitySequence"
+  >;
+  onMouseInput(event: MouseEvent): void;
+  onResync(): void;
   stream: StreamConnection | null;
   inputEnabled?: boolean;
   canReceiveInput?(paneId?: string): boolean;
-  canResize?(): boolean;
   onFocus(): void;
   onTerminalReady(paneId: string, terminal: EmbeddedTerminalRenderable | null): void;
 };
@@ -42,20 +58,24 @@ export function TerminalPane({
   buffer,
   focused,
   pane,
-  resizeEnabled,
+  size,
+  stamp,
+  canRespond,
+  inputEvent,
+  onMouseInput,
+  onResync,
   stream,
   onFocus,
   onTerminalReady,
   inputEnabled = true,
   canReceiveInput = () => true,
-  canResize = () => true,
 }: TerminalPaneProps) {
   const notice = paneNotice(pane.processStatus, connected);
   const viewport = terminalRect(bounds, notice !== null);
-  const terminal = useRef<EmbeddedTerminalRenderable>(null);
-  const nativeSize = useRef({ width: 0, height: 0 });
-  const resizePending = useRef(false);
-  const rendered = useRef({ paneId: "", epoch: "", cursor: 0 });
+  const reportReady = useCallback(
+    (node: EmbeddedTerminalRenderable | null) => onTerminalReady(pane.id, node),
+    [pane.id, onTerminalReady],
+  );
   const running = pane.processStatus === "running";
   function acceptsInput(): boolean {
     return (
@@ -75,79 +95,6 @@ export function TerminalPane({
     );
   }
 
-  function resizeTerminal(cols: number, rows: number): void {
-    nativeSize.current = { width: cols, height: rows };
-    resizePending.current = true;
-    if (
-      acceptsInput() &&
-      resizeEnabled &&
-      canResize() &&
-      stream &&
-      hasTerminalViewport(nativeSize.current)
-    ) {
-      stream.resize(pane.id, cols, rows);
-      resizePending.current = false;
-    }
-    writeOutput();
-  }
-
-  useLayoutEffect(() => {
-    // Uncovering a retained terminal does not emit another native resize event.
-    if (resizePending.current && terminal.current) {
-      resizeTerminal(terminal.current.width, terminal.current.height);
-    }
-  });
-
-  function writeOutput(): void {
-    const target = terminal.current;
-    if (
-      target === null ||
-      buffer === undefined ||
-      viewport.width <= 0 ||
-      viewport.height <= 0 ||
-      nativeSize.current.width !== viewport.width ||
-      nativeSize.current.height !== viewport.height
-    ) {
-      return;
-    }
-    if (rendered.current.paneId !== pane.id || rendered.current.epoch !== buffer.epoch) {
-      target.write(buffer.history);
-      rendered.current = {
-        paneId: pane.id,
-        epoch: buffer.epoch,
-        cursor: buffer.historyCursor,
-      };
-    }
-    for (const chunk of buffer.chunks) {
-      if (chunk.cursor > rendered.current.cursor) {
-        target.write(chunk.data);
-        rendered.current.cursor = chunk.cursor;
-      }
-    }
-  }
-
-  // Cursor-addressed history must not be parsed in the emulator's bootstrap 80x24 grid.
-  useEffect(writeOutput, [buffer, pane.id, viewport.width, viewport.height]);
-
-  useLayoutEffect(() => {
-    const eligible = acceptsInput();
-    // OpenTUI's blur is a no-op after focusable becomes false.
-    if (!focused || !eligible) {
-      terminal.current?.blur();
-    }
-    if (terminal.current) {
-      terminal.current.focusable = eligible;
-    }
-    if (focused && eligible) {
-      terminal.current?.focus();
-    }
-  }, [focused, connected, inputEnabled, running, canReceiveInput]);
-
-  useEffect(() => {
-    onTerminalReady(pane.id, terminal.current);
-    return () => onTerminalReady(pane.id, null);
-  }, [onTerminalReady, pane.id]);
-
   return (
     <Box
       width="100%"
@@ -160,31 +107,35 @@ export function TerminalPane({
       borderStyle="double"
       border={["top"]}
     >
-      {/* Native creation needs nonzero emulator dimensions before the host is measured. */}
-      <terminal
-        id={`terminal:${pane.id}`}
-        ref={terminal}
-        cols={80}
-        rows={24}
-        height={viewport.height}
-        flexShrink={0}
-        minHeight={0}
-        width="100%"
-        visible={viewport.width > 0 && viewport.height > 0}
-        transparentBackground
-        onData={(data) => {
-          if (acceptsInput()) {
-            stream?.sendInput(pane.id, data);
-          }
-        }}
-        onMouseDown={() => {
-          onFocus();
-          if (acceptsInput()) {
-            terminal.current?.focus();
-          }
-        }}
-        onTerminalResize={resizeTerminal}
-      />
+      <Box height={viewport.height} width="100%" flexShrink={0} minHeight={0} overflow="hidden">
+        {buffer ? (
+          <TerminalViewport
+            paneId={pane.id}
+            buffer={buffer}
+            size={size}
+            focused={focused}
+            inputEnabled={inputEnabled}
+            canInput={acceptsInput}
+            canRespond={() => connected && running && canRespond(pane.id)}
+            onReady={reportReady}
+            onFocus={onFocus}
+            onMouseInput={onMouseInput}
+            onResync={onResync}
+            onData={(bytes, source) => {
+              if (!stamp || !stream) {
+                return;
+              }
+              if (source === "response") {
+                if (canRespond(pane.id)) {
+                  stream.sendInput(pane.id, bytes, { ...stamp, source });
+                }
+              } else if (acceptsInput()) {
+                stream.sendInput(pane.id, bytes, { ...stamp, source, ...inputEvent() });
+              }
+            }}
+          />
+        ) : null}
+      </Box>
       {notice !== null ? (
         <Alert
           id={`pane-alert:${pane.id}`}

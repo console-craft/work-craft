@@ -1,4 +1,4 @@
-import type { PaneStatus } from "../api/protocol.ts";
+import type { PaneStatus, TerminalSize } from "../api/protocol.ts";
 import { readProcessCwd, validateSplitCwd } from "./cwd.ts";
 import { resolveShellSpawn, type RuntimePane } from "./restore.ts";
 
@@ -91,7 +91,7 @@ export class RuntimeRegistry {
 
   constructor(private readonly callbacks: RuntimeCallbacks) {}
 
-  async start(pane: RuntimePane): Promise<void> {
+  async start(pane: RuntimePane, size: TerminalSize = { cols: 80, rows: 24 }): Promise<void> {
     if (this.isLive(pane.id)) {
       throw new Error(`Pane already has a live runtime: ${pane.id}`);
     }
@@ -109,8 +109,8 @@ export class RuntimeRegistry {
         cwd: spec.cwd,
         env: spec.env,
         terminal: {
-          cols: 80,
-          rows: 24,
+          cols: size.cols,
+          rows: size.rows,
           data: (_terminal, bytes) => this.callbacks.onOutput(pane.id, bytes),
           exit: resolveTerminalExit,
         },

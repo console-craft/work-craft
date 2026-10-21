@@ -13,7 +13,7 @@ function databaseWithPane() {
     INSERT INTO workspaces VALUES ('workspace-1', 'Work');
     INSERT INTO session_workspaces VALUES ('session-1', 'workspace-1', 0);
     INSERT INTO items VALUES ('item-1', 'workspace-1', 'design', NULL, 'generic', 'Build', 0, 0, '{}');
-    INSERT INTO surfaces VALUES ('surface-1', 'item-1', NULL);
+    INSERT INTO surfaces VALUES ('surface-1', 'item-1');
     INSERT INTO panes VALUES (
       'pane-1', 'surface-1', 'terminal', 'Shell', '/tmp',
       '{"type":"shell","executable":"/bin/sh","args":[]}',
@@ -118,7 +118,7 @@ test("flushes queued output on its timer and on close", async () => {
     INSERT INTO workspaces VALUES ('workspace-1', 'Work');
     INSERT INTO session_workspaces VALUES ('session-1', 'workspace-1', 0);
     INSERT INTO items VALUES ('item-1', 'workspace-1', 'design', NULL, 'generic', 'Build', 0, 0, '{}');
-    INSERT INTO surfaces VALUES ('surface-1', 'item-1', NULL);
+    INSERT INTO surfaces VALUES ('surface-1', 'item-1');
     INSERT INTO panes VALUES ('pane-1', 'surface-1', 'terminal', 'Shell', '/tmp', '{"type":"shell","executable":"/bin/sh","args":[]}', 'running', NULL, NULL, NULL);
   `);
   const history = new TerminalHistory(db, { flushBytes: 100, flushIntervalMs: 10 });

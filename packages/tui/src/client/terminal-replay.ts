@@ -1,21 +1,7 @@
-import type { GridMarker, TerminalSize } from "@work-craft/server/client";
+import type { GridMarker } from "@work-craft/server/client";
 
-export type TerminalReplayBuffer = {
-  epoch: string;
-  history: Uint8Array;
-  historyStartCursor: number;
-  historyPrefixBytes: number;
-  historyCursor: number;
-  initialSize: TerminalSize | null;
-  initialGridSequence: number | null;
-  resizes: GridMarker[];
-  chunks: {
-    cursor: number;
-    data: Uint8Array;
-    geometrySequence: number;
-    origin: "history" | "live";
-  }[];
-};
+import type { TerminalBuffer } from "@/client/terminal-buffer";
+
 export type TerminalReplayStep =
   | { type: "resize"; marker: GridMarker }
   | { type: "bytes"; cursor: number; data: Uint8Array; origin: "history" | "live" };
@@ -25,7 +11,7 @@ type ReplayResult = { steps: TerminalReplayStep[]; needsSnapshot: boolean };
 
 /** Preserve byte offsets and resize order; a missing interval is never safe to guess. */
 export function terminalReplaySteps(
-  buffer: TerminalReplayBuffer,
+  buffer: TerminalBuffer,
   after: ReplayProgress | null,
 ): ReplayResult {
   const missing: ReplayResult = { steps: [], needsSnapshot: true };

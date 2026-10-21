@@ -31,7 +31,6 @@ function foregroundSequence(color: string, background = color, opacity = 1): str
 
 const CONNECTED_COLOR = foregroundSequence(defaultTheme.colors.success);
 const DIMMED_CONNECTED_COLOR = foregroundSequence(defaultTheme.colors.success, "#000000", 0.35);
-const CONNECTING_COLOR = foregroundSequence(defaultTheme.colors.warning);
 const kitty = {
   hyper(keyCode: number): string {
     return `\x1b[${keyCode};15u`;
@@ -149,6 +148,13 @@ function terminalText(snapshot: Snapshot, paneId: string): string {
   return new TextDecoder().decode(decodeBytes(data));
 }
 
+async function waitForHiddenCursor(tui: ReturnType<typeof startTui>, after: number): Promise<void> {
+  await waitFor(() => {
+    const output = tui.output().slice(after);
+    return output.lastIndexOf("\x1b[?25l") > output.lastIndexOf("\x1b[?25h");
+  }, "native terminal focus to leave");
+}
+
 test("normal TUI creation and duplicate linked registration enter the same PTY", async () => {
   const home = await realpath(await mkdtemp(join(tmpdir(), "work-craft-create-pty-")));
   const root = join(home, "repository");
@@ -180,6 +186,11 @@ test("normal TUI creation and duplicate linked registration enter the same PTY",
     sessionId: session.result.id,
     name: "Workspace",
   });
+  await client.command({
+    type: "session.navigate",
+    sessionId: session.result.id,
+    target: { kind: "category", category: "implementation" },
+  });
   const tui = startTui(home);
   const input = new TextEncoder();
   try {
@@ -187,7 +198,7 @@ test("normal TUI creation and duplicate linked registration enter the same PTY",
       () => tui.output().includes("Workspace") && tui.output().includes(CONNECTED_COLOR),
       "connected creation shell",
     );
-    tui.terminal.write(input.encode("\rjjj\rn"));
+    tui.terminal.write(input.encode("\r\rn"));
     await waitFor(() => tui.output().includes("Existing directory path"), "directory form");
     const creationOutput = tui.output().length;
     tui.terminal.write(input.encode(`${linked}\r`));
@@ -316,7 +327,10 @@ test("normal entrypoint ignores input after shell exit and explicitly restarts t
     tui.terminal.write(input.encode("ignored-text\x1b[200~ignored-paste\x1b[201~"));
     // A handled strip key supplies a rendered barrier after ignored typing/paste.
     tui.terminal.write(input.encode("\x1b[H"));
-    await waitFor(() => tui.output().slice(exitOutput).includes("Enter terminal"), "strip focus");
+    await waitFor(() => {
+      const output = tui.output().slice(exitOutput);
+      return output.lastIndexOf("\x1b[?25l") > output.lastIndexOf("\x1b[?25h");
+    }, "stopped pane cursor hidden");
     const ignored = await client.snapshot();
     expect(ignored.panes).toEqual(stopped.panes);
     expect(ignored.terminalHistories).toEqual(stopped.terminalHistories);
@@ -435,9 +449,9 @@ test("normal entrypoint Hyper tab switching and creation send sentinels only to 
     title: "Second",
   });
   await client.command({
-    type: "surface.selectTab",
-    surfaceId: first.result.surfaceId!,
-    tabId: first.result.tabId!,
+    type: "session.navigate",
+    sessionId: session.result.id,
+    target: { kind: "tab", tabId: first.result.tabId! },
   });
   const before = await client.snapshot();
   const tui = startTui(home);
@@ -461,7 +475,7 @@ test("normal entrypoint Hyper tab switching and creation send sentinels only to 
     tui.terminal.write(input.encode(kitty.hyper(93)));
     await waitForSnapshot(
       client,
-      (snapshot) => snapshot.surfaces[0]?.activeTabId === second.result.tabId,
+      (snapshot) => snapshot.navigation[0]?.tabId === second.result.tabId,
       "second tab selected",
     );
     await waitFor(
@@ -482,7 +496,7 @@ test("normal entrypoint Hyper tab switching and creation send sentinels only to 
     tui.terminal.write(input.encode(kitty.hyper(91)));
     await waitForSnapshot(
       client,
-      (snapshot) => snapshot.surfaces[0]?.activeTabId === first.result.tabId,
+      (snapshot) => snapshot.navigation[0]?.tabId === first.result.tabId,
       "first tab selected again",
     );
     await waitFor(
@@ -511,35 +525,42 @@ test("normal entrypoint Hyper tab switching and creation send sentinels only to 
     // Ctrl+k moves from the terminal to the native two-row strip.
     const stripOutput = tui.output().length;
     tui.terminal.write(input.encode("\x1b[107;5u"));
-    await waitFor(() => tui.output().slice(stripOutput).includes("Enter terminal"), "strip entry");
+    await waitForHiddenCursor(tui, stripOutput);
     const browseOutput = tui.output().length;
     tui.terminal.write(input.encode("\x1b[C"));
-    await waitForSnapshot(
-      client,
-      (snapshot) => snapshot.surfaces[0]?.activeTabId === second.result.tabId,
-      "local browsing selects without confirmation",
-    );
     await waitFor(
-      () => tui.output().slice(browseOutput).includes("DESTINATION-"),
-      "browsing renders selected tab output",
+      () => tui.output().slice(browseOutput).includes("Second"),
+      "browsing renders its local candidate",
       () => tui.output().slice(browseOutput),
     );
+    expect((await client.snapshot()).navigation[0]?.tabId).toBe(first.result.tabId!);
     expect(tui.output().lastIndexOf("\x1b[?25l")).toBeGreaterThan(
       tui.output().lastIndexOf("\x1b[?25h"),
     );
 
     // Control-source Hyper must preserve strip focus, unlike the terminal-source path above.
     const hyperOutput = tui.output().length;
-    tui.terminal.write(input.encode(kitty.hyper(91)));
+    tui.terminal.write(input.encode(kitty.hyper(93)));
     await waitForSnapshot(
       client,
-      (snapshot) => snapshot.surfaces[0]?.activeTabId === first.result.tabId,
+      (snapshot) => snapshot.navigation[0]?.tabId === second.result.tabId,
       "strip-source Hyper selection",
     );
-    await waitFor(() => tui.output().slice(hyperOutput).includes("SOURCE-"), "source view");
+    await waitFor(
+      () => tui.output().slice(hyperOutput).includes("DESTINATION-"),
+      "destination view",
+    );
     expect(tui.output().lastIndexOf("\x1b[?25l")).toBeGreaterThan(
       tui.output().lastIndexOf("\x1b[?25h"),
     );
+
+    const candidateOutput = tui.output().length;
+    tui.terminal.write(input.encode("\x1b[D"));
+    await waitFor(
+      () => tui.output().slice(candidateOutput).includes("Main"),
+      "local first-tab candidate",
+    );
+    expect((await client.snapshot()).navigation[0]?.tabId).toBe(second.result.tabId!);
 
     const daemonPid = (await client.health()).pid;
     for (const [index, gesture] of [
@@ -569,15 +590,14 @@ test("normal entrypoint Hyper tab switching and creation send sentinels only to 
       await waitForSnapshot(
         client,
         (snapshot) => terminalText(snapshot, paneId).includes(`LOCAL-${index}-sentinel`),
-        "local activation input reaches requested PTY",
+        `local activation ${index} input reaches requested PTY`,
+        (snapshot) =>
+          `\nNavigation: ${JSON.stringify(snapshot.navigation)}\nGeometry: ${JSON.stringify(snapshot.geometry)}\nFirst: ${terminalText(snapshot, first.result.paneId!)}\nSecond: ${terminalText(snapshot, second.result.paneId!)}\nTUI: ${Bun.stripANSI(tui.output().slice(-3_000))}`,
       );
       if (index === 0) {
         const refocusOutput = tui.output().length;
         tui.terminal.write(input.encode("\x1b[107;5u"));
-        await waitFor(
-          () => tui.output().slice(refocusOutput).includes("Enter terminal"),
-          "strip before mouse activation",
-        );
+        await waitForHiddenCursor(tui, refocusOutput);
       }
     }
     const accepted = await client.snapshot();
@@ -589,10 +609,7 @@ test("normal entrypoint Hyper tab switching and creation send sentinels only to 
       if (origin === "control") {
         const stripStart = tui.output().length;
         tui.terminal.write(input.encode("\x1b[107;5u"));
-        await waitFor(
-          () => tui.output().slice(stripStart).includes("Enter terminal"),
-          "strip before creation",
-        );
+        await waitForHiddenCursor(tui, stripStart);
       }
       const createOutput = tui.output().length;
       tui.terminal.write(input.encode(kitty.hyper(110)));
@@ -601,7 +618,7 @@ test("normal entrypoint Hyper tab switching and creation send sentinels only to 
         (snapshot) => snapshot.tabs.length === 3 + index,
         "Hyper+n creates one tab",
       );
-      const tab = created.tabs.find((tab) => tab.id === created.surfaces[0]?.activeTabId)!;
+      const tab = created.tabs.find((tab) => tab.id === created.navigation[0]?.tabId)!;
       const paneId = created.panes.find(
         (pane) =>
           !accepted.panes.some(({ id }) => id === pane.id) && !createdPanes.includes(pane.id),
@@ -786,8 +803,40 @@ test("normal entrypoint split keys inherit live pwd, equalize mixed trees and pr
     // Direct stream probes inspect old shells, not app focus/input eligibility in tiny panes.
     const stream = await client.stream({ onMessage() {} });
     try {
+      const attachment = await stream.attach(session.result.id);
       for (const [paneId, pid] of pids) {
-        stream.sendInput(paneId, input.encode("printf 'RETAINED-PID-%s\\n' \"$$\"\n"));
+        const command = {
+          type: "session.navigate" as const,
+          sessionId: session.result.id,
+          target: { kind: "pane" as const, paneId },
+        };
+        await stream.command(command, attachment.generation);
+        const selected = await client.snapshot();
+        const navigation = selected.navigation.find(
+          ({ sessionId }) => sessionId === session.result.id,
+        )!;
+        const stamp = {
+          epoch: selected.epoch,
+          attachmentGeneration: attachment.generation,
+          navigationGeneration: navigation.generation,
+          geometrySequence: selected.geometry.tabs.find(({ tabId }) => tabId === navigation.tabId)!
+            .generation,
+        };
+        stream.reportViewport(
+          { ...stamp, tabId: navigation.tabId!, canvas: { cols: 120, rows: 40 }, eligible: true },
+          stamp,
+        );
+        await stream.command(command, attachment.generation);
+        const acknowledged = await client.snapshot();
+        stream.sendInput(paneId, input.encode("printf 'RETAINED-PID-%s\\n' \"$$\"\n"), {
+          ...stamp,
+          geometrySequence: acknowledged.geometry.tabs.find(
+            ({ tabId }) => tabId === navigation.tabId,
+          )!.generation,
+          source: "input",
+          kind: "key",
+          activitySequence: paneIds.indexOf(paneId) + 1,
+        });
         const retained = await waitForSnapshot(
           client,
           (snapshot) => terminalText(snapshot, paneId).includes(`RETAINED-PID-${pid}`),
@@ -1046,7 +1095,8 @@ test("an empty installation offers session creation from the chooser", async () 
     );
     expect(tui.output()).toContain("session name");
     expect(tui.output()).toContain("HINTS");
-    expect(tui.output()).toContain("INBOX");
+    expect(tui.output()).not.toContain("INBOX");
+    expect((await client.snapshot()).navigation).toEqual([]);
     const typingOutputLength = tui.output().length;
     tui.terminal.write(new TextEncoder().encode("draft"));
     await waitFor(
@@ -1131,7 +1181,8 @@ test("deleting the active session replaces an open prompt with the chooser", asy
     tui.terminal.write(new TextEncoder().encode("n"));
     await waitFor(() => tui.output().includes("workspace name"), "the workspace prompt");
     expect(tui.output()).toContain("HINTS");
-    expect(tui.output()).toContain("INBOX");
+    expect(tui.output()).not.toContain("INBOX");
+    expect((await client.snapshot()).navigation[0]?.category).toBeNull();
     const outputLength = tui.output().length;
     await client.command({ type: "session.delete", sessionId: session.result.id });
     await waitFor(
@@ -1306,18 +1357,20 @@ test("raw stage 1 key sequences drive the shell", async () => {
     const activationDaemonPid = (await client.health()).pid;
     const activationOutputLength = tui.output().length;
     let resumeActivation: ReturnType<typeof setTimeout> | undefined;
-    // The view can render before the command response allows the input handoff.
+    // Activation must wait for the daemon, not optimistically select a local item.
     process.kill(activationDaemonPid, "SIGSTOP");
     try {
       tui.terminal.write(input.encode("\r"));
-      await waitFor(() => tui.output().includes("Second"), "item activation");
+      await Bun.sleep(100);
+      expect(tui.output().slice(activationOutputLength)).not.toContain("Second");
       expect(tui.output().slice(activationOutputLength)).not.toContain("\x1b[?25h");
       resumeActivation = setTimeout(() => process.kill(activationDaemonPid, "SIGCONT"), 150);
+      await waitFor(() => tui.output().includes("Second"), "item activation");
       await waitForTerminalInput(tui, "item Enter to focus terminal input", activationOutputLength);
       tui.terminal.write(input.encode("printf 'ENTER-%s\\n' \"$((3*7))\"\r"));
       await waitForSnapshot(
         client,
-        (snapshot) => terminalText(snapshot, secondTab.result.paneId!).includes("ENTER-21"),
+        (snapshot) => terminalText(snapshot, paneId).includes("ENTER-21"),
         "item Enter handing input directly to its active pane",
       );
     } finally {
@@ -1328,22 +1381,22 @@ test("raw stage 1 key sequences drive the shell", async () => {
     tui.terminal.write(input.encode(kitty.hyper(93)));
     await Bun.sleep(100);
     expect(
-      (await client.snapshot()).surfaces.find(({ id }) => id === ensured.result.surfaceId)
-        ?.activeTabId,
+      (await client.snapshot()).navigation.find(({ sessionId }) => sessionId === session.result.id)
+        ?.tabId,
     ).toBe(secondTab.result.tabId);
     tui.terminal.write(input.encode(kitty.hyper(91)));
     await waitForSnapshot(
       client,
       (snapshot) =>
-        snapshot.surfaces.find(({ id }) => id === ensured.result.surfaceId)?.activeTabId ===
+        snapshot.navigation.find(({ sessionId }) => sessionId === session.result.id)?.tabId ===
         firstTabId,
       "previous tab selection",
     );
     tui.terminal.write(input.encode(kitty.hyper(91)));
     await Bun.sleep(100);
     expect(
-      (await client.snapshot()).surfaces.find(({ id }) => id === ensured.result.surfaceId)
-        ?.activeTabId,
+      (await client.snapshot()).navigation.find(({ sessionId }) => sessionId === session.result.id)
+        ?.tabId,
     ).toBe(firstTabId);
 
     tui.terminal.write(Uint8Array.of(10));
@@ -1425,13 +1478,13 @@ test("raw stage 1 key sequences drive the shell", async () => {
     await Bun.sleep(50);
     const daemonPid = (await client.health()).pid;
     const reloadOutputLength = tui.output().length;
-    // Hold reload pending so connecting cannot disappear between render frames.
+    // Hold reload pending so attachment withdrawal cannot disappear between frames.
     process.kill(daemonPid, "SIGSTOP");
     try {
       tui.terminal.write(input.encode(kitty.hyper(114)));
       await waitFor(
-        () => tui.output().slice(reloadOutputLength).includes(CONNECTING_COLOR),
-        "reload to start connecting",
+        () => Bun.stripANSI(tui.output().slice(reloadOutputLength)).includes("Select session..."),
+        "reload to withdraw its old attachment",
         () => `\n${tui.output().slice(reloadOutputLength)}`,
       );
     } finally {
@@ -1439,8 +1492,11 @@ test("raw stage 1 key sequences drive the shell", async () => {
     }
     const reconnectOutputLength = tui.output().length;
     await waitFor(
-      () => tui.output().slice(reconnectOutputLength).includes(CONNECTED_COLOR),
-      "reload to reconnect",
+      () => {
+        const output = tui.output().slice(reconnectOutputLength);
+        return output.includes(CONNECTED_COLOR) && Bun.stripANSI(output).includes("Keys");
+      },
+      "reload to reconnect and restore its attachment",
       () => `\n${tui.output().slice(reconnectOutputLength)}`,
     );
     tui.terminal.write(Uint8Array.of(12));
@@ -1471,10 +1527,14 @@ test("raw stage 1 key sequences drive the shell", async () => {
 
     const chooserOutputLength = tui.output().length;
     tui.terminal.write(input.encode(kitty.hyper(115)));
-    await waitFor(() => {
-      const update = tui.output().slice(chooserOutputLength);
-      return update.includes("Sessions") && tui.output().includes("HINTS");
-    }, "the session chooser");
+    await waitFor(
+      () => {
+        const update = Bun.stripANSI(tui.output().slice(chooserOutputLength));
+        return update.includes("Sessions") && update.includes("New session");
+      },
+      "the session chooser",
+      () => Bun.stripANSI(tui.output().slice(chooserOutputLength)).replace(/\s+/g, " "),
+    );
     const cancellationOutputLength = tui.output().length;
     tui.terminal.write(input.encode("\x1b"));
     await waitFor(

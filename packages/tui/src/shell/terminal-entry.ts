@@ -4,6 +4,7 @@ import type { Snapshot } from "@work-craft/server/client";
 export type PendingTerminalEntry = {
   kind: "item" | "tab" | "restart" | "split";
   itemId: string;
+  sessionId: string;
   tabId?: string;
   paneId?: string;
   epoch: string;
@@ -22,12 +23,12 @@ export type PendingTerminalEntry = {
 
 /** New snapshot selections may transfer the origin, never supply the response's exact IDs. */
 export function canProjectTabEntry(
-  entry: Pick<PendingTerminalEntry, "itemId" | "tabId" | "revision" | "creation">,
+  entry: Pick<PendingTerminalEntry, "sessionId" | "itemId" | "tabId" | "revision" | "creation">,
   snapshot: Snapshot | null,
 ): boolean {
-  const selected = snapshot?.surfaces.find(
-    (surface) => surface.itemId === entry.itemId,
-  )?.activeTabId;
+  const selected = snapshot?.navigation.find(
+    (navigation) => navigation.sessionId === entry.sessionId && navigation.itemId === entry.itemId,
+  )?.tabId;
   if (snapshot === null || selected == null) {
     return false;
   }
@@ -58,7 +59,5 @@ export function entryPaneCandidates(
   if (entry.kind === "restart" || entry.kind === "split" || entry.creation !== undefined) {
     return runningIds.filter((id) => id === entry.paneId);
   }
-  return rememberedPaneId !== undefined && runningIds.includes(rememberedPaneId)
-    ? [rememberedPaneId, ...runningIds.filter((id) => id !== rememberedPaneId)]
-    : [...runningIds];
+  return runningIds.filter((id) => id === rememberedPaneId);
 }

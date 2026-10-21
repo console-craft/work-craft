@@ -79,10 +79,6 @@ test("parses resource-oriented commands", () => {
       { command: "item.setArchived", itemId: "i1", archived: false, json: false },
     ],
     [
-      ["surface", "select-tab", "s1", "t1"],
-      { command: "surface.selectTab", surfaceId: "s1", tabId: "t1", json: false },
-    ],
-    [
       ["tab", "create", "--surface", "s1", "--title", "Shell"],
       { command: "tab.create", surfaceId: "s1", title: "Shell", json: false },
     ],
@@ -150,6 +146,7 @@ test("rejects invalid resource-oriented commands", () => {
     ["surface", "ensure"],
     ["surface", "ensure", "--item", "i1", "--project", "p1"],
     ["surface", "select-tab", "s1"],
+    ["surface", "select-tab", "s1", "t1"],
     ["pane", "split", "pn1", "--direction", "diagonal"],
     ["daemon", "destroy"],
     ["daemon", "destroy", "--force", "--force"],

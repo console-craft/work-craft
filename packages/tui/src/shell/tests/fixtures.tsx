@@ -2,12 +2,24 @@ import { expect } from "bun:test";
 
 import { EmbeddedTerminalRenderable, type Renderable, TextRenderable } from "@opentui/core";
 import { extend } from "@opentui/react";
-import { type Command, type CommandResponse, type Snapshot } from "@work-craft/server/client";
+import {
+  type Command,
+  type CommandResponse,
+  type Snapshot,
+  type ViewerReport,
+  type WorkCraftClient,
+} from "@work-craft/server/client";
 import { act, type Dispatch, type ReactNode, type SetStateAction, useState } from "react";
 
 import { createWorkCraftStore, type WorkCraftState } from "@/client/store.ts";
+import { snapshotTerminals } from "@/client/terminal-buffer";
 import { WorkCraftShell } from "@/shell/shell.tsx";
-import { snapshotFixture } from "@/tests/support/fixtures.ts";
+import {
+  attachmentFixture,
+  snapshotFixture,
+  streamFixture,
+  terminalSnapshotFixture,
+} from "@/tests/support/fixtures.ts";
 import { flushMeasured } from "@/tests/support/measured-render";
 import { testRender as renderWithoutTheme } from "@/tests/support/render";
 import { ThemeProvider } from "@/ui/theming/theme-provider.tsx";
@@ -26,7 +38,11 @@ export async function testRender(
   );
   return {
     ...setup,
-    flush: (...args: Parameters<typeof setup.flush>) => flushMeasured(setup, ...args),
+    flush: async (...args: Parameters<typeof setup.flush>) => {
+      await flushMeasured(setup, ...args);
+      // The canonical viewport commits its native readiness after parent measurement.
+      await act(async () => setup.flush(...args));
+    },
   };
 }
 
@@ -55,6 +71,17 @@ export function deferred<T>(): {
 
 export function workCraftStateFixture(overrides: Partial<WorkCraftState> = {}): WorkCraftState {
   const snapshot = snapshotFixture({
+    navigation: [
+      {
+        sessionId: "session-work",
+        generation: 0,
+        workspaceId: "workspace-shared",
+        category: "implementation",
+        itemId: "root-1",
+        tabId: null,
+        paneId: null,
+      },
+    ],
     sessions: [{ id: "session-work", name: "Work", position: 0 }],
     categories: [
       {
@@ -69,32 +96,53 @@ export function workCraftStateFixture(overrides: Partial<WorkCraftState> = {}): 
     snapshot,
     status: "connected",
     connectionError: null,
-    canSendInput: (paneId, epoch) => {
+    attachment: attachmentFixture(),
+    geometry: snapshot.geometry,
+    attach: async (sessionId) => {
+      if (sessionId !== null && !fixture.snapshot?.sessions.some(({ id }) => id === sessionId)) {
+        throw new Error("session not found");
+      }
+      fixture.attachment = {
+        ...attachmentFixture(sessionId),
+        generation: (fixture.attachment?.generation ?? 0) + 1,
+      };
+    },
+    canRespond: () => false,
+    canSendInput: (paneId, stamp) => {
       const current = fixture.snapshot;
       const pane = current?.panes.find((pane) => pane.id === paneId);
       const surface = current?.surfaces.find((surface) => surface.id === pane?.surfaceId);
+      const navigation = current?.navigation.find(
+        ({ sessionId }) => sessionId === fixture.attachment?.sessionId,
+      );
       const tab = current?.tabs.find(
-        (tab) => tab.id === surface?.activeTabId && tab.surfaceId === surface?.id,
+        (tab) => tab.id === navigation?.tabId && tab.surfaceId === surface?.id,
       );
       return (
         fixture.status === "connected" &&
-        current?.epoch === epoch &&
+        current?.epoch === stamp.epoch &&
+        navigation?.paneId === paneId &&
+        navigation.generation === stamp.navigationGeneration &&
         pane?.processStatus === "running" &&
         paneIds(tab?.layout ?? null).includes(paneId)
       );
     },
-    canReactivate: (paneId, epoch) => {
+    canReactivate: (paneId, stamp) => {
       const current = fixture.snapshot;
       const pane = current?.panes.find((pane) => pane.id === paneId);
       const surface = current?.surfaces.find((surface) => surface.id === pane?.surfaceId);
       const item = current?.items.find((item) => item.id === surface?.itemId);
       const parent = current?.items.find((parent) => parent.id === item?.parentId);
+      const navigation = current?.navigation.find(
+        ({ sessionId }) => sessionId === fixture.attachment?.sessionId,
+      );
       const tab = current?.tabs.find(
-        (tab) => tab.id === surface?.activeTabId && tab.surfaceId === surface?.id,
+        (tab) => tab.id === navigation?.tabId && tab.surfaceId === surface?.id,
       );
       return (
         fixture.status === "connected" &&
-        current?.epoch === epoch &&
+        current?.epoch === stamp.epoch &&
+        navigation?.generation === stamp.navigationGeneration &&
         pane?.processStatus === "exited" &&
         item !== undefined &&
         !item.archived &&
@@ -113,28 +161,96 @@ export function workCraftStateFixture(overrides: Partial<WorkCraftState> = {}): 
     terminals: new Map(),
     ...overrides,
   };
+  fixture.snapshot = fixture.snapshot && terminalSnapshotFixture(fixture.snapshot);
+  if (overrides.attachment === undefined) {
+    fixture.attachment =
+      fixture.snapshot?.sessions.length === 1
+        ? attachmentFixture(fixture.snapshot.sessions[0]!.id)
+        : null;
+  }
+  fixture.geometry = fixture.snapshot?.geometry ?? { sequence: 0, tabs: [], panes: [] };
+  if (overrides.terminals === undefined && fixture.snapshot) {
+    fixture.terminals = snapshotTerminals(fixture.snapshot, new Map());
+  }
   return fixture;
 }
 
-export async function liveInputFixture(initial = splitSurfaceSnapshot()) {
+export async function liveInputFixture(
+  initial = splitSurfaceSnapshot(),
+  initiallyDetached = false,
+) {
+  initial = terminalSnapshotFixture(initial);
   const sent: { paneId: string; bytes: number[] }[] = [];
   const resized: { paneId: string; cols: number; rows: number }[] = [];
+  const viewports: (ViewerReport | null)[] = [];
   const commands: Command[] = [];
   const restarts: ReturnType<typeof deferred<CommandResponse>>[] = [];
   const splits: ReturnType<typeof deferred<CommandResponse>>[] = [];
   const tabCreates: ReturnType<typeof deferred<CommandResponse>>[] = [];
-  const store = createWorkCraftStore({
+  let commit: ((state: WorkCraftState) => void) | undefined;
+  const client: WorkCraftClient = {
     ensureDaemon: async () => {},
     health: async () => ({ epoch: initial.epoch, revision: initial.revision, pid: 1 }),
     snapshot: async () => initial,
     streamOnce: async () => ({ type: "snapshot", snapshot: initial }),
-    stream: async () => ({
-      close() {},
-      resize: (paneId, cols, rows) => resized.push({ paneId, cols, rows }),
-      sendInput: (paneId, bytes) => sent.push({ paneId, bytes: [...bytes] }),
-    }),
+    stream: async () =>
+      streamFixture({
+        close() {},
+        sendInput: (paneId, bytes) => sent.push({ paneId, bytes: [...bytes] }),
+        reportViewport: (report) => viewports.push(report),
+        command: (command) => client.command(command),
+      }),
     command: async (command) => {
       commands.push(command);
+      if (command.type === "session.navigate" && command.target.kind === "pane") {
+        const current = store.snapshot()!;
+        const old = current.navigation.find(({ sessionId }) => sessionId === command.sessionId)!;
+        const paneId = command.target.paneId;
+        const navigation = {
+          ...old,
+          paneId,
+          generation: old.generation + Number(old.paneId !== paneId),
+        };
+        const next = {
+          ...current,
+          revision: current.revision + Number(old.paneId !== paneId),
+          navigation: current.navigation.map((cursor) =>
+            cursor.sessionId === command.sessionId ? navigation : cursor,
+          ),
+        };
+        await store.apply({ type: "snapshot", snapshot: next });
+        commit?.(store.getState());
+        return { ok: true, revision: next.revision, result: { id: paneId, paneId, navigation } };
+      }
+      if (command.type === "session.step" && command.level === "item") {
+        const current = store.snapshot()!;
+        const old = current.navigation[0]!;
+        const items = current.items.filter(
+          (item) =>
+            !item.archived &&
+            item.workspaceId === old.workspaceId &&
+            item.category === old.category,
+        );
+        const index = items.findIndex(({ id }) => id === old.itemId);
+        const item = items[Math.max(0, Math.min(items.length - 1, index + command.direction))]!;
+        const surface = current.surfaces.find(({ itemId }) => itemId === item.id);
+        const tab = current.tabs.find(({ surfaceId }) => surfaceId === surface?.id);
+        const navigation = {
+          ...old,
+          generation: old.generation + Number(item.id !== old.itemId),
+          itemId: item.id,
+          tabId: tab?.id ?? null,
+          paneId: paneIds(tab?.layout ?? null)[0] ?? null,
+        };
+        const next = {
+          ...current,
+          revision: current.revision + Number(item.id !== old.itemId),
+          navigation: [navigation],
+        };
+        await store.apply({ type: "snapshot", snapshot: next });
+        commit?.(store.getState());
+        return { ok: true, revision: next.revision, result: { id: item.id, navigation } };
+      }
       if (command.type === "process.restart") {
         const request = deferred<CommandResponse>();
         restarts.push(request);
@@ -152,9 +268,12 @@ export async function liveInputFixture(initial = splitSurfaceSnapshot()) {
       }
       return { ok: true, revision: initial.revision, result: { id: "surface-1" } };
     },
-  });
+  };
+  const store = createWorkCraftStore(client);
   await store.start();
-  let commit!: (state: WorkCraftState) => void;
+  if (initiallyDetached) {
+    await store.getState().attach(null);
+  }
   function Fixture() {
     const [state, setState] = useState(store.getState());
     commit = setState;
@@ -162,26 +281,44 @@ export async function liveInputFixture(initial = splitSurfaceSnapshot()) {
   }
   const setup = await testRender(<Fixture />, { width: 120, height: 40, kittyKeyboard: true });
   await setup.flush();
+  if (initiallyDetached) {
+    await act(async () => {
+      await store.getState().attach("session-work");
+      commit?.(store.getState());
+    });
+    await setup.flush();
+  }
   await openFixtureItem(setup);
   act(() => setup.renderer.root.findDescendantById("terminal:pane-1")!.focus());
   await setup.flush();
   sent.length = 0;
+  commands.length = 0;
   return {
     ...setup,
     store,
     sent,
     resized,
+    viewports,
     commands,
     restarts,
     splits,
     tabCreates,
     renderCurrent() {
-      act(() => commit(store.getState()));
+      act(() => commit!(store.getState()));
     },
     async publish(snapshot: Snapshot, render = true) {
-      await store.apply({ type: "snapshot", snapshot });
+      const next = terminalSnapshotFixture(snapshot);
+      const previous = store.snapshot()?.geometry;
+      if (
+        previous &&
+        (JSON.stringify(previous.tabs) !== JSON.stringify(next.geometry.tabs) ||
+          JSON.stringify(previous.panes) !== JSON.stringify(next.geometry.panes))
+      ) {
+        next.geometry.sequence = Math.max(next.geometry.sequence, previous.sequence + 1);
+      }
+      await store.apply({ type: "snapshot", snapshot: next });
       if (render) {
-        act(() => commit(store.getState()));
+        act(() => commit!(store.getState()));
         await setup.flush();
       }
     },
@@ -189,46 +326,59 @@ export async function liveInputFixture(initial = splitSurfaceSnapshot()) {
 }
 
 export function surfaceSnapshot(): Snapshot {
-  return snapshotFixture({
-    sessions: [{ id: "session-work", name: "Work", position: 0 }],
-    categories: [
-      {
-        workspaceId: "workspace-shared",
-        kind: "implementation",
-        title: "Implementation",
-        position: 0,
-      },
-    ],
-    surfaces: [{ id: "surface-1", itemId: "item-1", activeTabId: "tab-1" }],
-    tabs: [
-      {
-        id: "tab-1",
-        surfaceId: "surface-1",
-        title: "Shell",
-        position: 0,
-        layout: { type: "pane", paneId: "pane-1" },
-      },
-    ],
-    panes: [
-      {
-        id: "pane-1",
-        surfaceId: "surface-1",
-        kind: "terminal",
-        title: "Shell",
-        cwd: "/tmp",
-        restorePolicy: { type: "shell", executable: "/bin/sh", args: [] },
-        processStatus: "running",
-        errorText: null,
-        startedAt: null,
-        exitedAt: null,
-      },
-    ],
-  });
+  return terminalSnapshotFixture(
+    snapshotFixture({
+      sessions: [{ id: "session-work", name: "Work", position: 0 }],
+      categories: [
+        {
+          workspaceId: "workspace-shared",
+          kind: "implementation",
+          title: "Implementation",
+          position: 0,
+        },
+      ],
+      navigation: [
+        {
+          sessionId: "session-work",
+          generation: 1,
+          workspaceId: "workspace-shared",
+          category: "implementation",
+          itemId: "item-1",
+          tabId: "tab-1",
+          paneId: "pane-1",
+        },
+      ],
+      surfaces: [{ id: "surface-1", itemId: "item-1" }],
+      tabs: [
+        {
+          id: "tab-1",
+          surfaceId: "surface-1",
+          title: "Shell",
+          position: 0,
+          layout: { type: "pane", paneId: "pane-1" },
+        },
+      ],
+      panes: [
+        {
+          id: "pane-1",
+          surfaceId: "surface-1",
+          kind: "terminal",
+          title: "Shell",
+          cwd: "/tmp",
+          restorePolicy: { type: "shell", executable: "/bin/sh", args: [] },
+          processStatus: "running",
+          errorText: null,
+          startedAt: null,
+          exitedAt: null,
+        },
+      ],
+    }),
+  );
 }
 
 export function splitSurfaceSnapshot(): Snapshot {
   const snapshot = surfaceSnapshot();
-  return {
+  return terminalSnapshotFixture({
     ...snapshot,
     tabs: snapshot.tabs.map((tab) => ({
       ...tab,
@@ -241,18 +391,42 @@ export function splitSurfaceSnapshot(): Snapshot {
       },
     })),
     panes: [...snapshot.panes, { ...snapshot.panes[0]!, id: "pane-2", title: "Second" }],
+  });
+}
+
+export function selectedPaneSnapshot(
+  snapshot: Snapshot,
+  paneId: string,
+  generation: number,
+): Snapshot {
+  const tab = snapshot.tabs.find((tab) => paneIds(tab.layout).includes(paneId))!;
+  const surface = snapshot.surfaces.find(({ id }) => id === tab.surfaceId)!;
+  const item = snapshot.items.find(({ id }) => id === surface.itemId)!;
+  return {
+    ...snapshot,
+    navigation: [
+      {
+        ...snapshot.navigation[0]!,
+        generation,
+        workspaceId: item.workspaceId,
+        category: item.category,
+        itemId: item.id,
+        tabId: tab.id,
+        paneId,
+      },
+    ],
   };
 }
 
 export function twoSurfaceSnapshot(): Snapshot {
   const snapshot = surfaceSnapshot();
-  return {
+  return terminalSnapshotFixture({
     ...snapshot,
     items: [
       ...snapshot.items,
       { ...snapshot.items[1]!, id: "item-2", title: "Second item", position: 1 },
     ],
-    surfaces: [...snapshot.surfaces, { id: "surface-2", itemId: "item-2", activeTabId: "tab-2" }],
+    surfaces: [...snapshot.surfaces, { id: "surface-2", itemId: "item-2" }],
     tabs: [
       ...snapshot.tabs,
       {
@@ -264,15 +438,27 @@ export function twoSurfaceSnapshot(): Snapshot {
       },
     ],
     panes: [...snapshot.panes, { ...snapshot.panes[0]!, id: "pane-2", surfaceId: "surface-2" }],
-  };
+  });
 }
 
-export function twoTabSnapshot(activeTabId = "tab-1", revision = 4, count = 2): Snapshot {
+export function twoTabSnapshot(
+  activeTabId = "tab-1",
+  revision = 4,
+  count = 2,
+  selectedPane = "b",
+): Snapshot {
   const snapshot = surfaceSnapshot();
-  return {
+  return terminalSnapshotFixture({
     ...snapshot,
     revision,
-    surfaces: [{ ...snapshot.surfaces[0]!, activeTabId }],
+    navigation: [
+      {
+        ...snapshot.navigation[0]!,
+        generation: revision,
+        tabId: activeTabId,
+        paneId: `pane-${activeTabId.slice(4)}${selectedPane}`,
+      },
+    ],
     tabs: Array.from({ length: count }, (_, index) => index + 1).map((tab) => ({
       ...snapshot.tabs[0]!,
       id: `tab-${tab}`,
@@ -289,19 +475,22 @@ export function twoTabSnapshot(activeTabId = "tab-1", revision = 4, count = 2): 
     panes: Array.from({ length: count }, (_, index) => [`${index + 1}a`, `${index + 1}b`])
       .flat()
       .map((id) => ({ ...snapshot.panes[0]!, id: `pane-${id}` })),
-  };
+  });
 }
 
 export async function localTabFixture(rememberDestination = true, count = 2, creating = false) {
   let publish!: Dispatch<SetStateAction<Snapshot>>;
   let connect!: (value: boolean) => void;
   const requests: ReturnType<typeof deferred<CommandResponse>>[] = [];
+  const requestTargets: { tabId: string; paneId: string }[] = [];
   const commands: Command[] = [];
   const received: { paneId: string; bytes: number[] }[] = [];
   function Fixture() {
-    const [snapshot, setSnapshot] = useState(
-      twoTabSnapshot(rememberDestination ? "tab-2" : "tab-1", 4, count),
-    );
+    const [snapshot, setSnapshot] = useState(() => {
+      const initial = twoTabSnapshot("tab-1", 4, count);
+      initial.geometry.tabs[0]!.ownerConnectionId = "test-connection";
+      return initial;
+    });
     const [connected, setConnected] = useState(true);
     connect = setConnected;
     publish = setSnapshot;
@@ -310,21 +499,93 @@ export async function localTabFixture(rememberDestination = true, count = 2, cre
         workCraft={workCraftStateFixture({
           snapshot,
           status: connected ? "connected" : "disconnected",
-          canSendInput: () => connected,
-          stream: {
+          stream: streamFixture({
             close() {},
-            resize() {},
             sendInput: (paneId, bytes) => received.push({ paneId, bytes: [...bytes] }),
-          },
+          }),
+          canRespond: (paneId, stamp) =>
+            connected &&
+            stamp.epoch === snapshot.epoch &&
+            snapshot.navigation[0]?.paneId === paneId &&
+            stamp.navigationGeneration === snapshot.navigation[0].generation &&
+            snapshot.geometry.tabs.find(({ tabId }) => tabId === snapshot.navigation[0]?.tabId)
+              ?.ownerConnectionId === "test-connection",
           command: async (command) => {
             commands.push(command);
+            if (command.type === "session.navigate" && command.target.kind === "workspace") {
+              const navigation = {
+                ...snapshot.navigation[0]!,
+                generation: snapshot.navigation[0]!.generation + 1,
+                workspaceId: command.target.workspaceId,
+                category: "inbox" as const,
+                itemId: null,
+                tabId: null,
+                paneId: null,
+              };
+              setSnapshot({
+                ...snapshot,
+                revision: snapshot.revision + 1,
+                navigation: [navigation],
+              });
+              return {
+                ok: true,
+                revision: snapshot.revision + 1,
+                result: { id: command.target.workspaceId, navigation },
+              };
+            }
+            if (command.type === "session.navigate" && command.target.kind === "pane") {
+              const navigation = {
+                ...snapshot.navigation[0]!,
+                paneId: command.target.paneId,
+                generation: snapshot.navigation[0]!.generation + 1,
+              };
+              const next = {
+                ...snapshot,
+                revision: snapshot.revision + 1,
+                navigation: [navigation],
+              };
+              setSnapshot(next);
+              return {
+                ok: true,
+                revision: next.revision,
+                result: { id: navigation.paneId, paneId: navigation.paneId, navigation },
+              };
+            }
             if (
-              command.type === "surface.selectTab" ||
+              (command.type === "session.step" && command.level === "tab") ||
+              (command.type === "session.navigate" && command.target.kind === "tab") ||
               command.type === "process.restart" ||
               command.type === "tab.create"
             ) {
               const request = deferred<CommandResponse>();
+              const cursor = snapshot.navigation[0]!;
+              const stepIndex = snapshot.tabs.findIndex(({ id }) => id === cursor.tabId);
+              const tabId =
+                command.type === "session.navigate" && command.target.kind === "tab"
+                  ? command.target.tabId
+                  : command.type === "session.step"
+                    ? snapshot.tabs[
+                        Math.max(
+                          0,
+                          Math.min(snapshot.tabs.length - 1, stepIndex + command.direction),
+                        )
+                      ]!.id
+                    : command.type === "tab.create"
+                      ? "tab-2"
+                      : cursor.tabId!;
+              const paneId =
+                command.type === "process.restart"
+                  ? command.paneId
+                  : `pane-${tabId.slice(4)}${tabId === "tab-1" || rememberDestination || command.type === "tab.create" ? "b" : "a"}`;
+              if (command.type === "session.step" && tabId === cursor.tabId) {
+                return {
+                  ok: true,
+                  revision: snapshot.revision,
+                  result: { id: tabId, tabId, paneId: cursor.paneId!, navigation: cursor },
+                };
+              }
               requests.push(request);
+              requestTargets.push({ tabId, paneId });
               return request.promise;
             }
             return { ok: true, revision: 4, result: { id: "surface-1" } };
@@ -336,19 +597,7 @@ export async function localTabFixture(rememberDestination = true, count = 2, cre
   const setup = await testRender(<Fixture />, { width: 120, height: 40, kittyKeyboard: true });
   await setup.flush();
   await openFixtureItem(setup);
-  if (rememberDestination) {
-    await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
-    await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
-    await setup.flush();
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("terminal:pane-2b");
-    act(() => publish(twoTabSnapshot("tab-1")));
-    await setup.flush();
-  } else {
-    act(() => setup.renderer.root.findDescendantById("terminal:pane-1a")!.focus());
-    await setup.flush();
-  }
-  await act(async () => setup.mockInput.pressKey("j", { ctrl: true }));
-  await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
+  act(() => setup.renderer.root.findDescendantById("terminal:pane-1b")!.focus());
   await setup.flush();
   expect(setup.renderer.currentFocusedRenderable?.id).toBe("terminal:pane-1b");
   commands.length = 0;
@@ -359,12 +608,20 @@ export async function localTabFixture(rememberDestination = true, count = 2, cre
     received,
     connect: (value: boolean) => act(() => connect(value)),
     publish: (snapshot: Snapshot) => act(() => publish(snapshot)),
-    respond: (index = 0, revision = 5) =>
+    respond: (index = 0, revision = 5, paneId = requestTargets[index]!.paneId) =>
       act(async () =>
         requests[index]!.resolve({
           ok: true,
           revision,
-          result: { id: "tab-2", ...(creating ? { tabId: "tab-2", paneId: "pane-2b" } : {}) },
+          result: {
+            id: requestTargets[index]!.tabId,
+            ...requestTargets[index],
+            paneId,
+            navigation: {
+              ...twoTabSnapshot(requestTargets[index]!.tabId, revision).navigation[0]!,
+              paneId,
+            },
+          },
         }),
       ),
     next: () => act(async () => setup.mockInput.pressKey(creating ? "n" : "]", { hyper: true })),
@@ -379,8 +636,5 @@ export async function openFixtureItem(
   await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
   await act(async () => setup.mockInput.pressKey("l"));
   await act(async () => setup.mockInput.pressKey("j"));
-  await setup.flush();
-  // Hyper selection intentionally does not create local terminal-entry intent.
-  await act(async () => setup.mockInput.pressKey("j", { hyper: true }));
   await setup.flush();
 }

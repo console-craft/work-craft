@@ -1,19 +1,25 @@
 import { expect, test } from "bun:test";
 
-import {
-  appendTerminalChunk,
-  snapshotTerminals,
-  type TerminalBuffer,
-} from "@/client/terminal-buffer";
-import { snapshotFixture } from "@/tests/support/fixtures";
+import { appendTerminalChunk, snapshotTerminals } from "@/client/terminal-buffer";
+import { snapshotFixture, terminalBufferFixture } from "@/tests/support/fixtures";
 
 test("snapshot history appends only missing bytes and retains unchanged map identity", () => {
   const history = new TextEncoder().encode("old");
-  const original: TerminalBuffer = { epoch: "epoch-a", history, historyCursor: 3, chunks: [] };
+  const original = terminalBufferFixture({ history, historyCursor: 3 });
   const current = new Map([["p", original]]);
   const snapshot = snapshotFixture({
     terminalHistories: [
-      { paneId: "p", cursor: 6, data: Buffer.from("oldnew").toString("base64"), truncated: false },
+      {
+        paneId: "p",
+        cursor: 6,
+        data: Buffer.from("oldnew").toString("base64"),
+        truncated: false,
+        startCursor: 0,
+        prefixBytes: 0,
+        initialSize: { cols: 80, rows: 24 },
+        initialGridSequence: 0,
+        resizes: [],
+      },
     ],
   });
   const updated = snapshotTerminals(snapshot, current);
@@ -35,19 +41,19 @@ test("snapshot history appends only missing bytes and retains unchanged map iden
 });
 
 test("chunk retention trims the oldest partial chunk without changing its terminal cursor", () => {
-  const original: TerminalBuffer = {
+  const original = terminalBufferFixture({
     epoch: "e",
     history: new Uint8Array(),
     historyCursor: 0,
     chunks: [],
-  };
-  const first = appendTerminalChunk(original, 4, new Uint8Array([1, 2, 3, 4]));
-  const retained = appendTerminalChunk(first, 1_048_578, new Uint8Array(1_048_574).fill(5));
+  });
+  const first = appendTerminalChunk(original, 4, new Uint8Array([1, 2, 3, 4]), 0);
+  const retained = appendTerminalChunk(first, 1_048_578, new Uint8Array(1_048_574).fill(5), 0);
   expect(retained.chunks.reduce((size, chunk) => size + chunk.data.byteLength, 0)).toBe(1_048_576);
   expect(retained.chunks[0]!.cursor).toBe(4);
   expect([...retained.chunks[0]!.data]).toEqual([3, 4]);
   expect([...first.chunks[0]!.data]).toEqual([1, 2, 3, 4]);
-  const replaced = appendTerminalChunk(retained, 2_097_155, new Uint8Array(1_048_577).fill(6));
+  const replaced = appendTerminalChunk(retained, 2_097_155, new Uint8Array(1_048_577).fill(6), 0);
   expect(replaced.chunks).toHaveLength(1);
   expect(replaced.chunks[0]!.data.byteLength).toBe(1_048_576);
   expect(replaced.chunks[0]!.cursor).toBe(2_097_155);

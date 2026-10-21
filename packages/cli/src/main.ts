@@ -7,7 +7,7 @@ import {
   resolvePaths,
 } from "@work-craft/server/client";
 
-import { type CliArgs, parseArgs, USAGE, UsageError } from "./args.ts";
+import { type CliArgs, parseArgs, RemovedCommandError, USAGE, UsageError } from "./args.ts";
 import { formatResult, formatSnapshot, formatStatus, readStatus } from "./format.ts";
 
 function printJson(value: unknown): void {
@@ -77,12 +77,6 @@ function serverCommand(args: CliArgs): Command | undefined {
       };
     case "item.setArchived":
       return { type: "item.setArchived", itemId: args.itemId, archived: args.archived };
-    case "surface.selectTab":
-      return {
-        type: "surface.selectTab",
-        surfaceId: args.surfaceId,
-        tabId: args.tabId,
-      };
     case "tab.create":
       return { type: "tab.create", surfaceId: args.surfaceId, title: args.title };
     case "pane.split":
@@ -107,6 +101,9 @@ async function main(argv: string[]): Promise<number> {
     args = parseArgs(argv);
   } catch (error) {
     if (error instanceof UsageError) {
+      if (error instanceof RemovedCommandError) {
+        process.stderr.write(`${error.message}\n`);
+      }
       process.stderr.write(USAGE);
       return 2;
     }

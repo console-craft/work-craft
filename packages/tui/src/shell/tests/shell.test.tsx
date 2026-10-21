@@ -1,13 +1,14 @@
 import { expect, test } from "bun:test";
 
 import { BoxRenderable, parseColor } from "@opentui/core";
-import { type Command, type Snapshot } from "@work-craft/server/client";
+import { type Command, type CommandResponse, type Snapshot } from "@work-craft/server/client";
 import { act, type Dispatch, type SetStateAction, useState } from "react";
 
 import { WorkCraftShell } from "@/shell/shell.tsx";
 import {
+  deferred,
+  liveInputFixture,
   openFixtureItem,
-  splitSurfaceSnapshot,
   statusText,
   surfaceSnapshot,
   testRender,
@@ -97,9 +98,20 @@ test("session attachment focuses workspace without resetting focus on refresh", 
 });
 
 test("workspace browsing follows rendered order after a shared-workspace session switch", async () => {
+  const commands: Command[] = [];
   const base = snapshotFixture();
   const snapshot = {
     ...base,
+    navigation: base.sessions.map(({ id }) => ({
+      ...base.navigation[0]!,
+      sessionId: id,
+      generation: 1,
+      workspaceId: "a",
+      category: null,
+      itemId: null,
+      tabId: null,
+      paneId: null,
+    })),
     workspaces: [
       { id: "a", name: "Alpha" },
       { id: "b", name: "Beta" },
@@ -115,7 +127,15 @@ test("workspace browsing follows rendered order after a shared-workspace session
     ],
   };
   const setup = await testRender(
-    <WorkCraftShell workCraft={workCraftStateFixture({ snapshot })} />,
+    <WorkCraftShell
+      workCraft={workCraftStateFixture({
+        snapshot,
+        command: async (command) => {
+          commands.push(command);
+          return { ok: true, revision: 4, result: { id: "c" } };
+        },
+      })}
+    />,
     { width: 120, height: 40, kittyKeyboard: true },
   );
   try {
@@ -138,11 +158,11 @@ test("workspace browsing follows rendered order after a shared-workspace session
       setup.mockInput.pressEnter();
     });
     await setup.flush();
-    expect(
-      (
-        setup.renderer.root.findDescendantById("workspace:c") as BoxRenderable
-      ).backgroundColor.toInts(),
-    ).toEqual(parseColor(defaultTheme.colors.foreground).toInts());
+    expect(commands.at(-1)).toEqual({
+      type: "session.navigate",
+      sessionId: "session-personal",
+      target: { kind: "workspace", workspaceId: "c" },
+    });
   } finally {
     act(() => setup.renderer.destroy());
   }
@@ -264,10 +284,32 @@ test("Hyper category selection preserves focus and a hidden navigator", async ()
     ...snapshotFixture(),
     sessions: [{ id: "session-work", name: "Work", position: 0 }],
   };
-  const setup = await testRender(
-    <WorkCraftShell workCraft={workCraftStateFixture({ snapshot })} />,
-    { width: 120, height: 40, kittyKeyboard: true },
-  );
+  function Fixture() {
+    const [current, setSnapshot] = useState(snapshot);
+    return (
+      <WorkCraftShell
+        workCraft={workCraftStateFixture({
+          snapshot: current,
+          command: async (command) => {
+            expect(command).toEqual({
+              type: "session.step",
+              sessionId: "session-work",
+              level: "category",
+              direction: 1,
+            });
+            const navigation = {
+              ...current.navigation[0]!,
+              generation: 2,
+              category: "today" as const,
+            };
+            setSnapshot({ ...current, revision: 5, navigation: [navigation] });
+            return { ok: true, revision: 5, result: { id: "session-work", navigation } };
+          },
+        })}
+      />
+    );
+  }
+  const setup = await testRender(<Fixture />, { width: 120, height: 40, kittyKeyboard: true });
   try {
     await setup.flush();
     act(() => setup.renderer.root.findDescendantById("region:category")!.focus());
@@ -286,10 +328,11 @@ test("Hyper category selection preserves focus and a hidden navigator", async ()
   }
 });
 
-test("buffered workspace activation hands subsequent keys to category", async () => {
+test("workspace activation drills down locally while shared selection waits for acknowledgment", async () => {
   const base = workCraftStateFixture().snapshot!;
   const snapshot = {
     ...base,
+    navigation: [{ ...base.navigation[0]!, category: "inbox" as const, itemId: null }],
     categories: [
       { workspaceId: "workspace-shared", kind: "inbox" as const, title: "Inbox", position: 0 },
       { workspaceId: "workspace-shared", kind: "today" as const, title: "Today", position: 1 },
@@ -297,19 +340,53 @@ test("buffered workspace activation hands subsequent keys to category", async ()
       { workspaceId: "workspace-work", kind: "today" as const, title: "Today", position: 1 },
     ],
   };
-  const setup = await testRender(
-    <WorkCraftShell workCraft={workCraftStateFixture({ snapshot })} />,
-    { width: 120, height: 40, kittyKeyboard: true },
-  );
+  const response = deferred<CommandResponse>();
+  let publish!: Dispatch<SetStateAction<Snapshot>>;
+  function Fixture() {
+    const [current, setSnapshot] = useState<Snapshot>(snapshot);
+    publish = setSnapshot;
+    return (
+      <WorkCraftShell
+        workCraft={workCraftStateFixture({
+          snapshot: current,
+          command: async (command) => {
+            if (command.type === "session.navigate" && command.target.kind === "category") {
+              const navigation = {
+                ...current.navigation[0]!,
+                generation: 3,
+                category: command.target.category,
+              };
+              setSnapshot({ ...current, revision: 6, navigation: [navigation] });
+              return { ok: true, revision: 6, result: { id: "session-work", navigation } };
+            }
+            expect(command).toEqual({
+              type: "session.navigate",
+              sessionId: "session-work",
+              target: { kind: "workspace", workspaceId: "workspace-work" },
+            });
+            return response.promise;
+          },
+        })}
+      />
+    );
+  }
+  const setup = await testRender(<Fixture />, { width: 120, height: 40, kittyKeyboard: true });
   try {
     await setup.flush();
     act(() => {
       setup.mockInput.pressKey("l");
       setup.mockInput.pressEnter();
-      setup.mockInput.pressKey("j");
     });
     await setup.flush();
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:category");
+    const navigation = { ...snapshot.navigation[0]!, generation: 2, workspaceId: "workspace-work" };
+    act(() => publish({ ...snapshot, revision: 5, navigation: [navigation] }));
+    await act(async () =>
+      response.resolve({ ok: true, revision: 5, result: { id: "workspace-work", navigation } }),
+    );
+    await setup.flush();
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:category");
+    await act(async () => setup.mockInput.pressKey("j"));
     expect(
       (
         setup.renderer.root.findDescendantById("workspace:workspace-work") as BoxRenderable
@@ -494,10 +571,7 @@ test("mouse category activation drills down and item release enters while Hyper 
 });
 
 test("buffered spatial movement uses the actual native source", async () => {
-  const setup = await testRender(
-    <WorkCraftShell workCraft={workCraftStateFixture({ snapshot: splitSurfaceSnapshot() })} />,
-    { width: 120, height: 40, kittyKeyboard: true },
-  );
+  const setup = await liveInputFixture();
   try {
     await setup.flush();
     act(() => setup.renderer.root.findDescendantById("region:category")!.focus());
@@ -509,6 +583,22 @@ test("buffered spatial movement uses the actual native source", async () => {
     await act(async () => setup.mockInput.pressKey("s", { hyper: true }));
     await act(async () => setup.mockInput.pressEscape());
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("terminal:pane-2");
+  } finally {
+    act(() => setup.renderer.destroy());
+    setup.store.stop();
+  }
+});
+
+test("spatial entry retains its intent while a newly mounted canonical terminal becomes native-ready", async () => {
+  const setup = await testRender(
+    <WorkCraftShell workCraft={workCraftStateFixture({ snapshot: surfaceSnapshot() })} />,
+    { width: 120, height: 40, kittyKeyboard: true },
+  );
+  try {
+    act(() => setup.renderer.root.findDescendantById("region:navigator")!.focus());
+    await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
+    await setup.flush();
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("terminal:pane-1");
   } finally {
     act(() => setup.renderer.destroy());
   }
@@ -681,10 +771,7 @@ test.each(["Enter", "Space", "Hyper+s"] as const)(
 );
 
 test("buffered movement through tabs restores the last native pane", async () => {
-  const setup = await testRender(
-    <WorkCraftShell workCraft={workCraftStateFixture({ snapshot: splitSurfaceSnapshot() })} />,
-    { width: 120, height: 40, kittyKeyboard: true },
-  );
+  const setup = await liveInputFixture();
   try {
     await setup.flush();
     await openFixtureItem(setup);
@@ -692,6 +779,7 @@ test("buffered movement through tabs restores the last native pane", async () =>
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("terminal:pane-2");
   } finally {
     act(() => setup.renderer.destroy());
+    setup.store.stop();
   }
 });
 
@@ -759,9 +847,9 @@ test("a direct tab request while undersized cancels automatic workbench restorat
     const tab = setup.renderer.root.findDescendantById("tab:tab-1")!;
     await act(async () => setup.mockMouse.click(tab.screenX + 1, tab.screenY));
     expect(commands.at(-1)).toEqual({
-      type: "surface.selectTab",
-      surfaceId: "surface-1",
-      tabId: "tab-1",
+      type: "session.navigate",
+      sessionId: "session-work",
+      target: { kind: "tab", tabId: "tab-1" },
     });
     act(() => setup.resize(120, 40));
     await setup.flush();
@@ -884,22 +972,20 @@ test("undersizing a focused workbench moves focus to its tab", async () => {
   act(() => setup.renderer.destroy());
 });
 
-test("changing the active item leaves stale workbench focus on the tab strip", async () => {
-  const setup = await testRender(
-    <WorkCraftShell workCraft={workCraftStateFixture({ snapshot: twoSurfaceSnapshot() })} />,
-    { width: 120, height: 40, kittyKeyboard: true },
-  );
+test("shared item navigation follows the selected pane when local focus is already in the workbench", async () => {
+  const setup = await liveInputFixture(twoSurfaceSnapshot());
   await setup.flush();
   await openFixtureItem(setup);
   await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
   await act(async () => setup.mockInput.pressKey("j", { hyper: true }));
   await setup.flush();
 
-  expect(setup.renderer.root.findDescendantById("terminal:pane-2")?.focused).toBe(false);
+  expect(setup.renderer.root.findDescendantById("terminal:pane-2")?.focused).toBe(true);
 
   await act(async () => setup.mockInput.pressKey("j", { ctrl: true }));
   expect(setup.renderer.root.findDescendantById("terminal:pane-2")?.focused).toBe(true);
   act(() => setup.renderer.destroy());
+  setup.store.stop();
 });
 
 test("disconnected durable commands are disabled while reload remains available", async () => {
@@ -959,30 +1045,20 @@ test("shell-only state changes preserve terminal renderable identity", async () 
 });
 
 test("spatial focus moves between workbench panes", async () => {
-  const commands: Command[] = [];
-  const setup = await testRender(
-    <WorkCraftShell
-      workCraft={workCraftStateFixture({
-        snapshot: splitSurfaceSnapshot(),
-        command: async (command) => {
-          commands.push(command);
-          return { ok: true, revision: 1, result: { id: "result-1" } };
-        },
-      })}
-    />,
-    { width: 120, height: 40, kittyKeyboard: true },
-  );
+  const setup = await liveInputFixture();
   await setup.flush();
   await openFixtureItem(setup);
-  commands.length = 0;
+  setup.commands.length = 0;
   await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
   await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
   await act(async () => setup.mockInput.pressKey(" ", { ctrl: true }));
   await act(async () => setup.mockInput.pressKey("v"));
-  expect(commands.at(-1)).toEqual({
+  expect(setup.commands.at(-1)).toEqual({
     type: "pane.split",
     paneId: "pane-2",
     direction: "vertical",
+    activation: { sessionId: "session-work", generation: 2 },
   });
   act(() => setup.renderer.destroy());
+  setup.store.stop();
 });

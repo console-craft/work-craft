@@ -133,7 +133,9 @@ export type Snapshot = {
   sessionWorkspaces: { sessionId: string; workspaceId: string; position: number }[];
   categories: { workspaceId: string; kind: CategoryKind; title: string; position: number }[];
   items: WorkItem[];
-  surfaces: { id: string; itemId: string; activeTabId: string | null }[];
+  navigation: SessionNavigation[];
+  geometry: TerminalGeometry;
+  surfaces: { id: string; itemId: string }[];
   tabs: {
     id: string;
     surfaceId: string;
@@ -153,7 +155,17 @@ export type Snapshot = {
     startedAt: string | null;
     exitedAt: string | null;
   }[];
-  terminalHistories: { paneId: string; cursor: number; data: string; truncated: boolean }[];
+  terminalHistories: {
+    paneId: string;
+    cursor: number;
+    data: string;
+    truncated: boolean;
+    startCursor: number;
+    prefixBytes: number;
+    initialSize: TerminalSize | null;
+    initialGridSequence: number | null;
+    resizes: GridMarker[];
+  }[];
 };
 
 export type CommandResult = {
@@ -167,11 +179,15 @@ export type CommandResult = {
   paneId?: string;
   stopping?: true;
   destroying?: true;
+  navigation?: SessionNavigation;
 };
 
 export type CommandResponse = { ok: true; revision: number; result: CommandResult };
 
 export type Command =
+  | { type: "session.navigate"; sessionId: string; target: NavigationTarget }
+  | { type: "session.step"; sessionId: string; level: NavigationLevel; direction: -1 | 1 }
+  | { type: "session.openItem"; sessionId: string; itemId: string; cwd?: string }
   | { type: "session.create"; name: string }
   | { type: "session.update"; sessionId: string; name?: string; position?: number }
   | { type: "session.delete"; sessionId: string }
@@ -189,20 +205,31 @@ export type Command =
     }
   | { type: "surface.ensure"; itemId: string; cwd?: string }
   | { type: "item.setArchived"; itemId: string; archived: boolean }
-  | { type: "tab.create"; surfaceId: string; title: string }
-  | { type: "surface.selectTab"; surfaceId: string; tabId: string }
-  | { type: "pane.split"; paneId: string; direction: "horizontal" | "vertical"; cwd?: string }
-  | { type: "process.restart"; paneId: string }
+  | { type: "tab.create"; surfaceId: string; title: string; activation?: ActivationContext }
+  | {
+      type: "pane.split";
+      paneId: string;
+      direction: "horizontal" | "vertical";
+      cwd?: string;
+      activation?: ActivationContext;
+    }
+  | { type: "process.restart"; paneId: string; activation?: ActivationContext }
   | { type: "daemon.stop" }
   | { type: "daemon.destroy" };
 
-export type ClientMessage =
-  | { type: "terminal.input"; paneId: string; data: string }
-  | { type: "terminal.resize"; paneId: string; cols: number; rows: number };
+export type ClientMessage = InteractiveMessage;
 
 export type ServerMessage =
+  | InteractiveServerMessage
   | { type: "snapshot"; snapshot: Snapshot }
-  | { type: "terminal.output"; epoch: string; paneId: string; cursor: number; data: string }
+  | {
+      type: "terminal.output";
+      epoch: string;
+      paneId: string;
+      cursor: number;
+      data: string;
+      geometrySequence: number;
+    }
   | { type: "process.status"; epoch: string; paneId: string; status: PaneStatus; error?: string };
 
 export type ValidationField = "name" | "title" | "path";
@@ -247,14 +274,6 @@ function idValue(value: unknown, field: string): string {
   return stringValue(value, field, true);
 }
 
-function base64Value(value: unknown, field: string): string {
-  const encoded = stringValue(value, field);
-  if (Buffer.from(encoded, "base64").toString("base64") !== encoded) {
-    throw new ProtocolError(`${field} must be base64`);
-  }
-  return encoded;
-}
-
 function optionalString(value: unknown, field: string): string | undefined {
   return value === undefined ? undefined : stringValue(value, field);
 }
@@ -269,7 +288,34 @@ function categoryValue(value: unknown): CategoryKind {
 export function parseCommand(value: unknown): Command {
   const input = objectValue(value);
   const type = stringValue(input.type, "type");
+  const activation = input.activation === undefined ? undefined : activationValue(input.activation);
   switch (type) {
+    case "session.navigate":
+      return {
+        type,
+        sessionId: idValue(input.sessionId, "sessionId"),
+        target: navigationTarget(input.target),
+      };
+    case "session.step":
+      if (
+        !["category", "item", "tab"].includes(input.level as string) ||
+        (input.direction !== -1 && input.direction !== 1)
+      ) {
+        throw new ProtocolError("step requires category/item/tab and direction -1 or 1");
+      }
+      return {
+        type,
+        sessionId: idValue(input.sessionId, "sessionId"),
+        level: input.level as NavigationLevel,
+        direction: input.direction,
+      };
+    case "session.openItem":
+      return {
+        type,
+        sessionId: idValue(input.sessionId, "sessionId"),
+        itemId: idValue(input.itemId, "itemId"),
+        ...(input.cwd === undefined ? {} : { cwd: optionalString(input.cwd, "cwd") }),
+      };
     case "session.create":
       return { type, name: stringValue(input.name, "name", true) };
     case "session.update": {
@@ -345,15 +391,14 @@ export function parseCommand(value: unknown): Command {
     case "tab.create":
       return {
         type,
+        ...(activation === undefined ? {} : { activation }),
         surfaceId: idValue(input.surfaceId, "surfaceId"),
         title: stringValue(input.title, "title", true),
       };
     case "surface.selectTab":
-      return {
-        type,
-        surfaceId: idValue(input.surfaceId, "surfaceId"),
-        tabId: idValue(input.tabId, "tabId"),
-      };
+      throw new ProtocolError(
+        "surface.selectTab was removed; use session.navigate with a sessionId and tab target",
+      );
     case "pane.split": {
       if (input.direction !== "horizontal" && input.direction !== "vertical") {
         throw new ProtocolError("direction must be horizontal or vertical");
@@ -361,12 +406,17 @@ export function parseCommand(value: unknown): Command {
       return {
         type,
         paneId: idValue(input.paneId, "paneId"),
+        ...(activation === undefined ? {} : { activation }),
         direction: input.direction,
         ...(input.cwd === undefined ? {} : { cwd: optionalString(input.cwd, "cwd") }),
       };
     }
     case "process.restart":
-      return { type, paneId: idValue(input.paneId, "paneId") };
+      return {
+        type,
+        paneId: idValue(input.paneId, "paneId"),
+        ...(activation === undefined ? {} : { activation }),
+      };
     case "daemon.stop":
     case "daemon.destroy":
       return { type };
@@ -375,36 +425,34 @@ export function parseCommand(value: unknown): Command {
   }
 }
 
-export function parseClientMessage(value: unknown): ClientMessage {
+export { parseInteractiveMessage as parseClientMessage } from "./interactive-protocol.ts";
+
+function activationValue(value: unknown): ActivationContext {
   const input = objectValue(value);
-  const type = stringValue(input.type, "type");
-  switch (type) {
-    case "terminal.input":
-      return {
-        type,
-        paneId: idValue(input.paneId, "paneId"),
-        data: base64Value(input.data, "data"),
-      };
-    case "terminal.resize": {
-      const cols = input.cols;
-      const rows = input.rows;
-      if (
-        !Number.isInteger(cols) ||
-        (cols as number) <= 0 ||
-        !Number.isInteger(rows) ||
-        (rows as number) <= 0
-      ) {
-        throw new ProtocolError("cols and rows must be positive integers");
-      }
-      return {
-        type,
-        paneId: idValue(input.paneId, "paneId"),
-        cols: cols as number,
-        rows: rows as number,
-      };
-    }
+  if (!Number.isSafeInteger(input.generation) || (input.generation as number) < 0) {
+    throw new ProtocolError("activation generation must be a non-negative safe integer");
+  }
+  return {
+    sessionId: idValue(input.sessionId, "sessionId"),
+    generation: input.generation as number,
+  };
+}
+
+function navigationTarget(value: unknown): NavigationTarget {
+  const input = objectValue(value);
+  switch (input.kind) {
+    case "workspace":
+      return { kind: input.kind, workspaceId: idValue(input.workspaceId, "workspaceId") };
+    case "category":
+      return { kind: input.kind, category: categoryValue(input.category) };
+    case "item":
+      return { kind: input.kind, itemId: idValue(input.itemId, "itemId") };
+    case "tab":
+      return { kind: input.kind, tabId: idValue(input.tabId, "tabId") };
+    case "pane":
+      return { kind: input.kind, paneId: idValue(input.paneId, "paneId") };
     default:
-      throw new ProtocolError(`unknown client message type: ${type}`);
+      throw new ProtocolError("unknown navigation target kind");
   }
 }
 

@@ -3,6 +3,26 @@ import { expect, test } from "bun:test";
 import { migrateStage2 } from "../persistence/stage-2-migration.ts";
 import { stage2Fixture } from "../persistence/stage-2.test-support.ts";
 import { HistoryGeometry } from "./history-geometry.ts";
+import { TerminalHistory } from "./history.ts";
+
+test("marker-only truncation preserves the next byte cursor after reopen", async () => {
+  const { db, geometry } = fixture(2);
+  try {
+    for (const cols of [80, 90, 100]) {
+      geometry.record("pane-2", 7, { cols, rows: 24 });
+    }
+    db.transaction(() => geometry.flush("pane-2", 7, 7))();
+    geometry.committed("pane-2");
+    const history = new TerminalHistory(db);
+    try {
+      expect(history.append("pane-2", new Uint8Array([120]))).toBe(8);
+    } finally {
+      await history.close();
+    }
+  } finally {
+    db.close();
+  }
+});
 
 function fixture(maxMarkers = 1024) {
   const db = stage2Fixture();

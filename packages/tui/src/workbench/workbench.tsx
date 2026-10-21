@@ -8,8 +8,12 @@ import { Box } from "@/ui/primitives/box.tsx";
 import { WORKBENCH_PADDING_X } from "@/workbench/layout.ts";
 import { SurfaceView } from "@/workbench/surface-view.tsx";
 import { TabBar } from "@/workbench/tab-bar.tsx";
+import type { TerminalPaneProps } from "@/workbench/terminal-pane";
 
-export type WorkbenchProps = {
+export type WorkbenchProps = Pick<
+  TerminalPaneProps,
+  "stamp" | "canRespond" | "inputEvent" | "onMouseInput" | "onResync"
+> & {
   connected: boolean;
   reactivatingPaneIds: ReadonlySet<string>;
   canReactivate(paneId: string): boolean;
@@ -29,7 +33,6 @@ export type WorkbenchProps = {
   inputEnabled?: boolean;
   entryEnabled?: boolean;
   canReceiveInput?(paneId?: string): boolean;
-  canResize?(): boolean;
   onSourceFailure?(source: { paneId: string; message: string }): void;
   onFocusTab(id: string): void;
   onActivateTab(id: string): void;
@@ -44,7 +47,11 @@ export function Workbench({
   reactivatingPaneIds,
   canReactivate,
   onReactivatePane,
-  canResize,
+  stamp,
+  canRespond,
+  inputEvent,
+  onMouseInput,
+  onResync,
   inputEnabled,
   entryEnabled,
   canReceiveInput,
@@ -99,7 +106,12 @@ export function Workbench({
             focusedPaneId={focusedPaneId}
             inputEnabled={inputEnabled}
             canReceiveInput={canReceiveInput}
-            canResize={canResize}
+            activeTabId={activeTabId}
+            stamp={stamp}
+            canRespond={canRespond}
+            inputEvent={inputEvent}
+            onMouseInput={onMouseInput}
+            onResync={onResync}
             snapshot={snapshot}
             stream={stream}
             surface={surface}

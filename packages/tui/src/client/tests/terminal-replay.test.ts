@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test";
 
-import { type TerminalReplayBuffer, terminalReplaySteps } from "@/client/terminal-replay";
+import type { TerminalBuffer } from "@/client/terminal-buffer";
+import { terminalReplaySteps } from "@/client/terminal-replay";
 
 const encode = (text: string) => new TextEncoder().encode(text);
 
-function buffer(overrides: Partial<TerminalReplayBuffer> = {}): TerminalReplayBuffer {
+function buffer(overrides: Partial<TerminalBuffer> = {}): TerminalBuffer {
   return {
     epoch: "e",
     history: encode("abcdefgh"),

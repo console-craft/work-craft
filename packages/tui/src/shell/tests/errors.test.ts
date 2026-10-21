@@ -24,9 +24,12 @@ test("error source identities keep command owners distinct from entry and backgr
   expect(commandSourceKey({ type: "process.restart", paneId: "p" }, "workbench")).toBe(
     "p:process.restart",
   );
-  expect(commandSourceKey({ type: "surface.selectTab", surfaceId: "s", tabId: "t" }, "tabs")).toBe(
-    "s:surface.selectTab",
-  );
+  expect(
+    commandSourceKey(
+      { type: "session.navigate", sessionId: "s", target: { kind: "tab", tabId: "t" } },
+      "tabs",
+    ),
+  ).toBe("tabs:session.navigate");
   expect(commandSourceKey({ type: "session.create", name: "New" }, "session")).toBe(
     "session:session.create",
   );
@@ -87,7 +90,7 @@ test("failure projection preserves ordering, eight-second expiry and observation
 
 test("record failures expire with archived or removed ancestry, not transient form errors", () => {
   const snapshot = snapshotFixture({
-    surfaces: [{ id: "s", itemId: "item-1", activeTabId: "t" }],
+    surfaces: [{ id: "s", itemId: "item-1" }],
     tabs: [
       { id: "t", surfaceId: "s", title: "Tab", position: 0, layout: { type: "pane", paneId: "p" } },
     ],

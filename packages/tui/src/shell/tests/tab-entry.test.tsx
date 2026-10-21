@@ -27,9 +27,10 @@ test("tab entry waits across a frame before the new terminal has native layout",
   try {
     await setup.next();
     await setup.respond();
-    setup.publish(twoTabSnapshot("tab-2", 5));
+    setup.publish(twoTabSnapshot("tab-2", 5, 2, "a"));
     const terminal = setup.renderer.root.findDescendantById("terminal:pane-2a")!;
-    expect(terminal.width).toBe(0);
+    expect(terminal.width).toBe(80);
+    expect(terminal.parent!.getLayout().width > 0).toBe(false);
     act(() => setup.renderer.emit(CliRenderEvents.FRAME, { frameId: 100 }));
     expect(statusText(setup)).not.toContain("too small");
     await setup.flush();
@@ -101,19 +102,27 @@ for (const [width, height, eligible] of [
       expect(button.focusable).toBe(eligible);
       const original = setup.renderer.root.findDescendantById("terminal:pane-1")!;
       expect(original.parent!.width).toBe(width);
-      expect(original.visible).toBe(false);
-      expect(original.parent!.height).toBe(height);
+      expect(original.parent!.parent!.getLayout().height).toBe(Math.max(0, height - 4));
+      expect([original.width, original.height]).toEqual([80, 24]);
       if (eligible) {
         act(() => button.focus());
         await setup.flush();
         await act(async () => setup.mockInput.pressEnter());
-        expect(setup.commands.at(-1)).toEqual({ type: "process.restart", paneId: "pane-1" });
+        expect(setup.commands.at(-1)).toEqual({
+          type: "process.restart",
+          paneId: "pane-1",
+          activation: { sessionId: "session-work", generation: 1 },
+        });
         const next = structuredClone(initial);
         next.revision = 5;
         next.panes[0]!.processStatus = "running";
         await setup.publish(next);
         await act(async () =>
-          setup.restarts[0]!.resolve({ ok: true, revision: 5, result: { id: "pane-1" } }),
+          setup.restarts[0]!.resolve({
+            ok: true,
+            revision: 4,
+            result: { id: "pane-1", navigation: next.navigation[0] },
+          }),
         );
         await setup.flush();
         expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:tabs");
@@ -137,25 +146,28 @@ for (const order of ["response first", "snapshot first"] as const) {
       await setup.flush();
       act(() => setup.renderer.stdin.emit("data", Buffer.from("\x1b[C\x1b[C\r")));
       expect(setup.commands).toEqual([
-        { type: "surface.selectTab", surfaceId: "surface-1", tabId: "tab-2" },
-        { type: "surface.selectTab", surfaceId: "surface-1", tabId: "tab-3" },
+        {
+          type: "session.navigate",
+          sessionId: "session-work",
+          target: { kind: "tab", tabId: "tab-3" },
+        },
       ]);
       expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:tabs");
       if (order === "response first") {
-        await setup.respond(1, 6);
-        setup.publish(twoTabSnapshot("tab-3", 5, 3));
+        await setup.respond(0, 6);
+        setup.publish(twoTabSnapshot("tab-3", 5, 3, "a"));
         await setup.flush();
         expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:tabs");
       }
-      setup.publish(twoTabSnapshot("tab-3", 6, 3));
+      setup.publish(twoTabSnapshot("tab-3", 6, 3, "a"));
       await setup.flush();
       if (order === "snapshot first") {
         expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:tabs");
-        await setup.respond(1, 6);
+        await setup.respond(0, 6);
       }
       await setup.flush();
       expect(setup.renderer.currentFocusedRenderable?.id).toBe("terminal:pane-3a");
-      await setup.respond(0, 5);
+      expect(setup.commands).toHaveLength(1);
       await setup.flush();
       expect(setup.renderer.currentFocusedRenderable?.id).toBe("terminal:pane-3a");
     } finally {
@@ -174,12 +186,16 @@ for (const pointer of ["wheel", "arrow", "edge arrow"] as const) {
         await setup.flush();
         act(() => setup.renderer.stdin.emit("data", Buffer.from("\x1b[C\r")));
         expect(setup.commands).toEqual([
-          { type: "surface.selectTab", surfaceId: "surface-1", tabId: "tab-2" },
+          {
+            type: "session.navigate",
+            sessionId: "session-work",
+            target: { kind: "tab", tabId: "tab-2" },
+          },
         ]);
         if (stage === "after response") {
           await setup.respond();
         } else if (stage === "snapshot first") {
-          setup.publish(twoTabSnapshot("tab-2", 5, 12));
+          setup.publish(twoTabSnapshot("tab-2", 5, 12, "a"));
         }
         await setup.flush();
         const area = setup.renderer.root.findDescendantById(
@@ -204,7 +220,7 @@ for (const pointer of ["wheel", "arrow", "edge arrow"] as const) {
         if (stage !== "after response") {
           await setup.respond();
         }
-        setup.publish(twoTabSnapshot("tab-2", 5, 12));
+        setup.publish(twoTabSnapshot("tab-2", 5, 12, "a"));
         await setup.flush();
         expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:tabs");
         expect(setup.renderer.root.findDescendantById("terminal:pane-2a")).toBeDefined();
@@ -221,15 +237,15 @@ for (const pointer of ["wheel", "arrow", "edge arrow"] as const) {
         } else {
           expect(area.scrollLeft).toBeGreaterThan(before);
         }
-        setup.publish(twoTabSnapshot("tab-2", 6, 12));
+        setup.publish(twoTabSnapshot("tab-2", 6, 12, "a"));
         await setup.flush();
         expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:tabs");
         expect(setup.received).toEqual([]);
         await act(async () => setup.mockInput.pressEnter());
         expect(setup.commands.at(-1)).toEqual({
-          type: "surface.selectTab",
-          surfaceId: "surface-1",
-          tabId: "tab-2",
+          type: "session.navigate",
+          sessionId: "session-work",
+          target: { kind: "tab", tabId: "tab-2" },
         });
         await setup.respond(1, 6);
         await setup.flush();
@@ -263,7 +279,7 @@ for (const pointer of ["wheel", "arrow", "edge arrow"] as const) {
         await act(async () => setup.mockMouse.click(arrow.screenX, arrow.screenY));
       }
       expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:category");
-      setup.publish(twoTabSnapshot("tab-2", 5, 12));
+      setup.publish(twoTabSnapshot("tab-2", 5, 12, "a"));
       await setup.respond();
       await setup.flush();
       expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:category");
@@ -312,7 +328,13 @@ for (const pointer of ["wheel", "arrow", "edge arrow"] as const) {
         // Without duplicate attempts, scrolling is the only newer intent before readiness.
         setup.publish(twoTabSnapshot("tab-1", 7, 12));
         await setup.flush();
-        expect(setup.commands).toEqual([{ type: "process.restart", paneId: "pane-1b" }]);
+        expect(setup.commands).toEqual([
+          {
+            type: "process.restart",
+            paneId: "pane-1b",
+            activation: { sessionId: "session-work", generation: 5 },
+          },
+        ]);
         expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:tabs");
         expect(setup.received).toEqual([]);
       } finally {
@@ -332,9 +354,13 @@ test("fresh Enter after contained strip scrolling reuses the unresolved durable 
     await act(async () => setup.mockMouse.click(edge.screenX, edge.screenY));
     await act(async () => setup.mockInput.pressEnter());
     expect(setup.commands).toEqual([
-      { type: "surface.selectTab", surfaceId: "surface-1", tabId: "tab-2" },
+      {
+        type: "session.navigate",
+        sessionId: "session-work",
+        target: { kind: "tab", tabId: "tab-2" },
+      },
     ]);
-    setup.publish(twoTabSnapshot("tab-2", 5, 12));
+    setup.publish(twoTabSnapshot("tab-2", 5, 12, "a"));
     await setup.respond();
     await setup.flush();
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("terminal:pane-2a");
@@ -344,14 +370,20 @@ test("fresh Enter after contained strip scrolling reuses the unresolved durable 
   }
 });
 
-test("strip browsing selects without entry and a rejected latest selection restores active cursor", async () => {
+test("strip browsing stays local and a rejected explicit selection restores the active cursor", async () => {
   const setup = await localTabFixture();
   try {
     act(() => setup.renderer.root.findDescendantById("region:tabs")!.focus());
     await setup.flush();
     await act(async () => setup.mockInput.pressKey("ARROW_RIGHT"));
+    expect(setup.commands).toEqual([]);
+    await act(async () => setup.mockInput.pressEnter());
     expect(setup.commands).toEqual([
-      { type: "surface.selectTab", surfaceId: "surface-1", tabId: "tab-2" },
+      {
+        type: "session.navigate",
+        sessionId: "session-work",
+        target: { kind: "tab", tabId: "tab-2" },
+      },
     ]);
     expect(setup.renderer.root.findDescendantById("terminal:pane-1b")).toBeDefined();
     await act(async () => setup.requests[0]!.reject(new Error("Selection rejected")));
@@ -360,9 +392,9 @@ test("strip browsing selects without entry and a rejected latest selection resto
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:tabs");
     await act(async () => setup.mockInput.pressEnter());
     expect(setup.commands.at(-1)).toEqual({
-      type: "surface.selectTab",
-      surfaceId: "surface-1",
-      tabId: "tab-1",
+      type: "session.navigate",
+      sessionId: "session-work",
+      target: { kind: "tab", tabId: "tab-1" },
     });
   } finally {
     act(() => setup.renderer.destroy());
@@ -376,18 +408,20 @@ test("rapid reversal ignores older failure and mouse intent supersedes pending s
     await setup.flush();
     act(() => setup.renderer.stdin.emit("data", Buffer.from("\x1b[C\x1b[D\r")));
     expect(setup.commands).toEqual([
-      { type: "surface.selectTab", surfaceId: "surface-1", tabId: "tab-2" },
-      { type: "surface.selectTab", surfaceId: "surface-1", tabId: "tab-1" },
+      {
+        type: "session.navigate",
+        sessionId: "session-work",
+        target: { kind: "tab", tabId: "tab-1" },
+      },
     ]);
     const tab = setup.renderer.root.findDescendantById("tab:tab-2")!;
     await act(async () => setup.mockMouse.click(tab.screenX + 1, tab.screenY));
-    expect(setup.commands).toHaveLength(3);
+    expect(setup.commands).toHaveLength(2);
     await act(async () => setup.requests[0]!.reject(new Error("Obsolete selection")));
-    await setup.respond(1, 6);
     setup.publish(twoTabSnapshot("tab-1", 6));
     await setup.flush();
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:tabs");
-    await setup.respond(2, 7);
+    await setup.respond(1, 7);
     setup.publish(twoTabSnapshot("tab-2", 7));
     await setup.flush();
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("terminal:pane-2b");
@@ -403,14 +437,16 @@ test("a newer control-source Hyper selection cannot be rolled back by the old st
     act(() => setup.renderer.root.findDescendantById("region:tabs")!.focus());
     await setup.flush();
     await act(async () => setup.mockInput.pressKey("ARROW_RIGHT"));
+    await act(async () => setup.mockInput.pressEnter());
     await setup.next();
     await act(async () => setup.requests[0]!.reject(new Error("Obsolete browse")));
     await setup.flush();
+    expect(statusText(setup)).not.toContain("Obsolete browse");
     await act(async () => setup.mockInput.pressEnter());
     expect(setup.commands.at(-1)).toEqual({
-      type: "surface.selectTab",
-      surfaceId: "surface-1",
-      tabId: "tab-2",
+      type: "session.navigate",
+      sessionId: "session-work",
+      target: { kind: "tab", tabId: "tab-2" },
     });
     expect(statusText(setup)).not.toContain("Obsolete browse");
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:tabs");
@@ -428,9 +464,9 @@ test("clicking and reclicking the active tab enters via one guarded no-op select
       expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:tabs");
       expect(setup.commands).toHaveLength(revision - 4);
       expect(setup.commands.at(-1)).toEqual({
-        type: "surface.selectTab",
-        surfaceId: "surface-1",
-        tabId: "tab-1",
+        type: "session.navigate",
+        sessionId: "session-work",
+        target: { kind: "tab", tabId: "tab-1" },
       });
       await setup.respond(revision - 5, revision);
       setup.publish(twoTabSnapshot("tab-1", revision));
@@ -459,23 +495,26 @@ test("a newer explicit Enter reuses an active-tab selection without losing its r
   }
 });
 
-test("entry after a settled browse obtains a fresh revision instead of reusing an obsolete selection", async () => {
+test("entry after settled local browsing obtains a fresh receipt instead of reusing obsolete selection", async () => {
   const setup = await localTabFixture();
   try {
     act(() => setup.renderer.root.findDescendantById("region:tabs")!.focus());
     await setup.flush();
     await act(async () => setup.mockInput.pressKey("ARROW_RIGHT"));
-    await setup.respond(0, 5);
+    expect(setup.commands).toEqual([]);
     setup.publish(twoTabSnapshot("tab-2", 5));
     await setup.flush();
     setup.publish(twoTabSnapshot("tab-1", 6));
     await setup.flush();
     await act(async () => setup.mockInput.pressKey(" "));
     expect(setup.commands).toEqual([
-      { type: "surface.selectTab", surfaceId: "surface-1", tabId: "tab-2" },
-      { type: "surface.selectTab", surfaceId: "surface-1", tabId: "tab-2" },
+      {
+        type: "session.navigate",
+        sessionId: "session-work",
+        target: { kind: "tab", tabId: "tab-2" },
+      },
     ]);
-    await setup.respond(1, 7);
+    await setup.respond(0, 7);
     setup.publish(twoTabSnapshot("tab-2", 7));
     await setup.flush();
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("terminal:pane-2b");
@@ -564,12 +603,9 @@ test("archived parent suppresses strip entry hints and requests without disablin
     expect(getControlHints(list)).toEqual([]);
     expect(setup.renderer.currentFocusedRenderable).toBe(list);
     await act(async () => setup.mockInput.pressKey("ARROW_RIGHT"));
-    expect(setup.commands).toEqual([
-      { type: "surface.selectTab", surfaceId: "surface-1", tabId: "tab-2" },
-    ]);
+    expect(setup.commands).toEqual([]);
     expect(setup.renderer.currentFocusedRenderable).toBe(list);
     setup.publish(twoTabSnapshot("tab-2", 6));
-    await setup.respond(0, 6);
     await setup.flush();
     expect(setup.renderer.currentFocusedRenderable).toBe(list);
   } finally {
@@ -689,7 +725,10 @@ for (const order of ["response first", "snapshot first"] as const) {
     try {
       const originalTerminal = setup.renderer.currentFocusedRenderable;
       await setup.previous();
-      expect(setup.commands).toEqual([]);
+      expect(setup.commands).toEqual([
+        { type: "session.step", sessionId: "session-work", level: "tab", direction: -1 },
+      ]);
+      setup.commands.length = 0;
       expect(setup.renderer.currentFocusedRenderable === originalTerminal).toBe(true);
       await setup.next();
       if (order === "response first") {
@@ -707,7 +746,7 @@ for (const order of ["response first", "snapshot first"] as const) {
       expect(setup.renderer.currentFocusedRenderable?.id).toBe("terminal:pane-2b");
       expect(setup.renderer.currentFocusedRenderable === destination).toBe(true);
       expect(setup.commands).toEqual([
-        { type: "surface.selectTab", surfaceId: "surface-1", tabId: "tab-2" },
+        { type: "session.step", sessionId: "session-work", level: "tab", direction: 1 },
       ]);
       await setup.previous();
       await setup.respond(1, 6);
@@ -783,11 +822,15 @@ test("tab entry recovery clears only its own source after a deliberate successfu
     await setup.respond(1, 6);
     setup.publish(twoTabSnapshot("tab-1", 6));
     await setup.flush();
-    await act(async () => setup.mockInput.pressKey("j", { ctrl: true }));
+    await act(async () => setup.mockInput.pressEnter());
+    await setup.respond(2, 6);
+    await setup.flush();
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("terminal:pane-1b");
     expect(statusText(setup)).toContain("Terminal entry failed");
     await setup.next();
-    await setup.respond(2, 7);
+    await setup.respond(3, 7);
     setup.publish(twoTabSnapshot("tab-2", 7));
+    await setup.flush();
     await setup.flush();
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("terminal:pane-2b");
     expect(statusText(setup)).not.toContain("Terminal entry failed");
@@ -829,7 +872,9 @@ function createdTabSnapshot(
   return {
     ...snapshot,
     revision,
-    surfaces: [{ ...snapshot.surfaces[0]!, activeTabId: "created-tab" }],
+    navigation: [
+      { ...snapshot.navigation[0]!, generation: 2, tabId: "created-tab", paneId: "created-pane" },
+    ],
     tabs: [
       ...snapshot.tabs,
       {
@@ -861,7 +906,12 @@ for (const [origin, order, readiness] of [
       const source = setup.renderer.currentFocusedRenderable;
       await act(async () => setup.mockInput.pressKey("n", { hyper: true }));
       expect(setup.commands.filter((command) => command.type.startsWith("tab."))).toEqual([
-        { type: "tab.create", surfaceId: "surface-1", title: "Shell" },
+        {
+          type: "tab.create",
+          surfaceId: "surface-1",
+          title: "Shell",
+          activation: { sessionId: "session-work", generation: 1 },
+        },
       ]);
       if (order === "snapshot first") {
         await setup.publish(createdTabSnapshot(2, readiness));
@@ -872,7 +922,12 @@ for (const [origin, order, readiness] of [
         setup.tabCreates[0]!.resolve({
           ok: true,
           revision: 3,
-          result: { id: "created-tab", tabId: "created-tab", paneId: "created-pane" },
+          result: {
+            id: "created-tab",
+            tabId: "created-tab",
+            paneId: "created-pane",
+            navigation: createdTabSnapshot(2).navigation[0],
+          },
         }),
       );
       await setup.flush();
@@ -889,7 +944,11 @@ for (const [origin, order, readiness] of [
       await act(async () => setup.mockInput.typeText("x"));
       expect(setup.sent).toEqual([{ paneId: "created-pane", bytes: [120] }]);
       expect(setup.renderer.currentFocusedRenderable?.id).toBe("terminal:created-pane");
-      expect(setup.commands.filter((command) => command.type === "surface.selectTab")).toEqual([]);
+      expect(
+        setup.commands.filter(
+          (command) => command.type === "session.navigate" || command.type === "session.step",
+        ),
+      ).toEqual([]);
     } finally {
       act(() => {
         setup.store.stop();
@@ -921,7 +980,12 @@ test("native Hyper+n waits for exact returned pane native eligibility without en
       setup.tabCreates[0]!.resolve({
         ok: true,
         revision: 2,
-        result: { id: "created-tab", tabId: "created-tab", paneId: "created-pane" },
+        result: {
+          id: "created-tab",
+          tabId: "created-tab",
+          paneId: "created-pane",
+          navigation: ready.navigation[0],
+        },
       }),
     );
     await setup.flush();
@@ -1063,7 +1127,12 @@ for (const transition of [
       }
       changed.revision = 2;
       if (transition === "existing tab") {
-        changed.surfaces[0]!.activeTabId = "other-tab";
+        changed.navigation[0] = {
+          ...changed.navigation[0]!,
+          generation: 2,
+          tabId: "other-tab",
+          paneId: null,
+        };
       } else if (transition === "context") {
         changed.items = [];
       } else if (transition === "item archive" || transition === "parent archive") {
@@ -1111,14 +1180,13 @@ for (const origin of ["terminal:pane-1", "region:tabs", "region:category"] as co
             focused.push(setup.renderer.currentFocusedRenderable?.id);
           });
           await act(async () => setup.mockInput.pressKey("n", { hyper: true }));
-          await act(async () => setup.mockInput.pressKey("n", { hyper: true }));
-          expect(setup.tabCreates).toHaveLength(2);
-          const old = createdTabSnapshot(2);
-          old.surfaces[0]!.activeTabId = "old-tab";
+          const old = createdTabSnapshot(2, "starting");
+          old.navigation[0] = { ...old.navigation[0]!, tabId: "old-tab", paneId: "old-pane" };
           old.tabs[1]!.id = "old-tab";
           old.tabs[1]!.layout = { type: "pane", paneId: "old-pane" };
           old.panes[1]!.id = "old-pane";
           const newest = createdTabSnapshot(4, "starting");
+          newest.navigation[0]!.generation = 3;
           newest.tabs[1]!.position = 2;
           newest.tabs.push(old.tabs[1]!);
           newest.panes.push(old.panes[1]!);
@@ -1129,8 +1197,18 @@ for (const origin of ["terminal:pane-1", "region:tabs", "region:category"] as co
                 revision: index === 0 ? 2 : 4,
                 result:
                   index === 0
-                    ? { id: "old-tab", tabId: "old-tab", paneId: "old-pane" }
-                    : { id: "created-tab", tabId: "created-tab", paneId: "created-pane" },
+                    ? {
+                        id: "old-tab",
+                        tabId: "old-tab",
+                        paneId: "old-pane",
+                        navigation: old.navigation[0],
+                      }
+                    : {
+                        id: "created-tab",
+                        tabId: "created-tab",
+                        paneId: "created-pane",
+                        navigation: newest.navigation[0],
+                      },
               }),
             );
             await setup.flush();
@@ -1138,10 +1216,9 @@ for (const origin of ["terminal:pane-1", "region:tabs", "region:category"] as co
           if (oldOrder === "response first") {
             await respond(0);
           }
-          if (newOrder === "response first") {
-            await respond(1);
-          }
           await setup.publish(old);
+          await act(async () => setup.mockInput.pressKey("n", { hyper: true }));
+          expect(setup.tabCreates).toHaveLength(2);
           expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBeUndefined();
           if (oldOrder === "snapshot first") {
             await respond(0);
@@ -1151,6 +1228,9 @@ for (const origin of ["terminal:pane-1", "region:tabs", "region:category"] as co
             origin === "terminal:pane-1" ? "region:tabs" : origin,
           );
           expect(focused).not.toContain("terminal:old-pane");
+          if (newOrder === "response first") {
+            await respond(1);
+          }
           await setup.publish(newest);
           if (newOrder === "snapshot first") {
             await respond(1);
@@ -1167,12 +1247,24 @@ for (const origin of ["terminal:pane-1", "region:tabs", "region:category"] as co
           expect(setup.renderer.currentFocusedRenderable?.id).toBe("terminal:created-pane");
           expect(focused).not.toContain("terminal:old-pane");
           expect(setup.commands.filter((command) => command.type === "tab.create")).toEqual([
-            { type: "tab.create", surfaceId: "surface-1", title: "Shell" },
-            { type: "tab.create", surfaceId: "surface-1", title: "Shell" },
+            {
+              type: "tab.create",
+              surfaceId: "surface-1",
+              title: "Shell",
+              activation: { sessionId: "session-work", generation: 1 },
+            },
+            {
+              type: "tab.create",
+              surfaceId: "surface-1",
+              title: "Shell",
+              activation: { sessionId: "session-work", generation: 2 },
+            },
           ]);
-          expect(setup.commands.filter((command) => command.type === "surface.selectTab")).toEqual(
-            [],
-          );
+          expect(
+            setup.commands.filter(
+              (command) => command.type === "session.navigate" || command.type === "session.step",
+            ),
+          ).toEqual([]);
         } finally {
           act(() => {
             setup.store.stop();
@@ -1220,7 +1312,12 @@ for (const newer of [false, true]) {
             setup.tabCreates[1]!.resolve({
               ok: true,
               revision: 2,
-              result: { id: "created-tab", tabId: "created-tab", paneId: "created-pane" },
+              result: {
+                id: "created-tab",
+                tabId: "created-tab",
+                paneId: "created-pane",
+                navigation: createdTabSnapshot(2).navigation[0],
+              },
             }),
           );
           await setup.publish(createdTabSnapshot(3));
@@ -1250,7 +1347,7 @@ test("a rejected tab command reports in status with a persistent tab indicator",
       workCraft={workCraftStateFixture({
         snapshot: surfaceSnapshot(),
         command: async (command) => {
-          if (command.type === "surface.ensure") {
+          if (command.type === "session.openItem") {
             return { ok: true, revision: 1, result: { id: "surface-1" } };
           }
           throw new Error("tab failed");

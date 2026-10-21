@@ -5,16 +5,44 @@ import { extend } from "@opentui/react";
 import type { LayoutNode, Snapshot } from "@work-craft/server/client";
 import { act, type ReactNode, useState } from "react";
 
-import { snapshotFixture } from "@/tests/support/fixtures.ts";
+import { snapshotTerminals } from "@/client/terminal-buffer";
+import {
+  snapshotFixture,
+  streamFixture,
+  terminalBufferFixture,
+  terminalSnapshotFixture,
+} from "@/tests/support/fixtures.ts";
 import { flushMeasured } from "@/tests/support/measured-render";
 import { testRender as renderWithoutTheme } from "@/tests/support/render";
 import { Box } from "@/ui/primitives/box.tsx";
 import { ThemeProvider } from "@/ui/theming/theme-provider.tsx";
 import { defaultTheme } from "@/ui/theming/themes/default.ts";
-import { SurfaceView, terminalPaneKey } from "@/workbench/surface-view.tsx";
+import {
+  SurfaceView as NativeSurfaceView,
+  type SurfaceViewProps,
+  terminalPaneKey,
+} from "@/workbench/surface-view.tsx";
 import { Workbench } from "@/workbench/workbench.tsx";
 
 extend({ terminal: EmbeddedTerminalRenderable });
+
+function SurfaceView(
+  props: Omit<SurfaceViewProps, "activeTabId"> & { activeTabId?: string | null },
+) {
+  const snapshot = terminalSnapshotFixture(props.snapshot);
+  return (
+    <NativeSurfaceView
+      {...props}
+      snapshot={snapshot}
+      activeTabId={
+        props.activeTabId === undefined
+          ? (snapshot.navigation[0]?.tabId ?? null)
+          : props.activeTabId
+      }
+      terminals={snapshotTerminals(snapshot, props.terminals)}
+    />
+  );
+}
 
 test("a missing authoritative tab renders empty rather than entering a fallback terminal", async () => {
   const snapshot = surfaceSnapshot();
@@ -22,7 +50,8 @@ test("a missing authoritative tab renders empty rather than entering a fallback 
     <SurfaceView
       {...recoveryProps}
       snapshot={snapshot}
-      surface={{ ...snapshot.surfaces[0]!, activeTabId: "missing" }}
+      surface={snapshot.surfaces[0]!}
+      activeTabId="missing"
       stream={null}
       terminals={new Map()}
       focusedPaneId={null}
@@ -43,6 +72,16 @@ test("a missing authoritative tab renders empty rather than entering a fallback 
 });
 
 const recoveryProps = {
+  stamp: {
+    epoch: "epoch-a",
+    attachmentGeneration: 1,
+    navigationGeneration: 1,
+    geometrySequence: 0,
+  },
+  canRespond: () => false,
+  inputEvent: () => ({ kind: "key" as const }),
+  onMouseInput: () => {},
+  onResync: () => {},
   connected: true,
   reactivatingPaneIds: new Set<string>(),
   canReactivate: () => true,
@@ -71,7 +110,17 @@ function surfaceSnapshot(): Snapshot {
         position: 0,
       },
     ],
-    surfaces: [{ id: "surface-1", itemId: "item-1", activeTabId: "tab-1" }],
+    navigation: [
+      {
+        ...snapshotFixture().navigation[0]!,
+        generation: 1,
+        category: "implementation",
+        itemId: "item-1",
+        tabId: "tab-1",
+        paneId: "pane-1",
+      },
+    ],
+    surfaces: [{ id: "surface-1", itemId: "item-1" }],
     tabs: [
       {
         id: "tab-1",
@@ -140,6 +189,8 @@ for (const source of ["history", "chunks"] as const) {
         layout: { type: "pane", paneId: "pane-2" },
       });
       snapshot.panes.push({ ...snapshot.panes[0]!, id: "pane-2" });
+      const size = { cols: width, rows: height - 1 };
+      snapshot.geometry.panes = snapshot.panes.map(({ id }) => ({ paneId: id, size }));
       const output = new TextEncoder().encode(
         `\x1b[2J\x1b[${row + 1};1HLEFT\x1b[${width - 10}GRIGHT\r\n$ `,
       );
@@ -154,21 +205,30 @@ for (const source of ["history", "chunks"] as const) {
           <SurfaceView
             {...recoveryProps}
             snapshot={snapshot}
-            surface={{ ...snapshot.surfaces[0]!, activeTabId: tabId }}
+            surface={snapshot.surfaces[0]!}
+            activeTabId={tabId}
             stream={null}
             terminals={
               new Map([
                 [
                   "pane-1",
-                  {
+                  terminalBufferFixture({
                     epoch: snapshot.epoch,
+                    initialSize: size,
                     history: source === "history" ? output : new Uint8Array(),
                     historyCursor: source === "history" ? output.byteLength : 0,
                     chunks:
                       source === "chunks" && delivered
-                        ? [{ cursor: output.byteLength, data: output }]
+                        ? [
+                            {
+                              cursor: output.byteLength,
+                              data: output,
+                              geometrySequence: 0,
+                              origin: "live",
+                            },
+                          ]
                         : [],
-                  },
+                  }),
                 ],
               ])
             }
@@ -214,12 +274,12 @@ for (const direction of ["horizontal", "vertical"] as const) {
         sourceReadyEvents.push(terminal);
       }
     };
-    const buffer = {
+    const buffer = terminalBufferFixture({
       epoch: snapshot.epoch,
       history: new TextEncoder().encode("retained sentinel\r\n"),
       historyCursor: 19,
       chunks: [],
-    };
+    });
     let publish!: (value: Snapshot) => void;
     let present!: (value: {
       width: number;
@@ -245,17 +305,15 @@ for (const direction of ["horizontal", "vertical"] as const) {
             {...recoveryProps}
             snapshot={current}
             surface={current.surfaces[0]!}
-            stream={{
+            stream={streamFixture({
               close() {},
               sendInput: (id) => sent.push(id),
-              resize: (id) => resized.push(id),
-            }}
+            })}
             terminals={new Map([["pane-1", buffer]])}
             focusedPaneId="pane-1"
             workbenchFocused
             undersized={size.undersized}
             canReceiveInput={() => !size.covered}
-            canResize={() => !size.covered}
             onFocusPane={() => {}}
             onTerminalReady={ready}
           />
@@ -332,20 +390,11 @@ for (const direction of ["horizontal", "vertical"] as const) {
           resized.length = 0;
           sourceTerminal.onData!(Uint8Array.of(65), "input");
           sourceTerminal.onData!(Uint8Array.of(66), "response");
-          sourceTerminal.onTerminalResize!(80, 20);
           expect(sent).toEqual([]);
           expect(resized).toEqual([]);
         }
         if (size.width >= 20 && !size.undersized) {
-          expect([sourceTerminal.width, sourceTerminal.height]).toEqual(
-            direction === "vertical"
-              ? size.width === 100
-                ? [59, 11]
-                : [53, 10]
-              : size.width === 100
-                ? [30, 22]
-                : [27, 20],
-          );
+          expect([sourceTerminal.width, sourceTerminal.height]).toEqual([80, 24]);
         }
       }
       expect(sourceTerminal.screen().text).toContain("retained sentinel");
@@ -356,19 +405,19 @@ for (const direction of ["horizontal", "vertical"] as const) {
         sourceTerminal.screenY,
         sourceTerminal.width,
         sourceTerminal.height,
-      ]).toEqual(direction === "vertical" ? [0, 1, 53, 10] : [0, 1, 27, 20]);
+      ]).toEqual([0, 1, 80, 24]);
       expect([
         secondTerminal.screenX,
         secondTerminal.screenY,
         secondTerminal.width,
         secondTerminal.height,
-      ]).toEqual(direction === "vertical" ? [54, 1, 36, 35] : [0, 23, 90, 13]);
+      ]).toEqual(direction === "vertical" ? [54, 1, 80, 24] : [0, 23, 80, 24]);
       expect([
         thirdTerminal.screenX,
         thirdTerminal.screenY,
         thirdTerminal.width,
         thirdTerminal.height,
-      ]).toEqual(direction === "vertical" ? [0, 13, 53, 23] : [28, 1, 62, 20]);
+      ]).toEqual(direction === "vertical" ? [0, 13, 80, 24] : [28, 1, 80, 24]);
       expect(sourceTerminal.focusable).toBe(true);
       sent.length = 0;
       sourceTerminal.onData!(Uint8Array.of(67), "input");
@@ -428,7 +477,7 @@ for (const [width, height, eligible] of [
         {...recoveryProps}
         snapshot={snapshot}
         surface={snapshot.surfaces[0]!}
-        stream={{ close() {}, sendInput: (id) => sent.push(id), resize: (id) => resized.push(id) }}
+        stream={streamFixture({ sendInput: (id) => sent.push(id) })}
         terminals={new Map()}
         focusedPaneId="pane-1"
         workbenchFocused
@@ -443,15 +492,14 @@ for (const [width, height, eligible] of [
       const terminal = setup.renderer.root.findDescendantById(
         "terminal:pane-1",
       ) as EmbeddedTerminalRenderable;
-      expect([terminal.screenY, terminal.width, terminal.height]).toEqual([1, width, height - 1]);
+      expect([terminal.width, terminal.height]).toEqual([80, 24]);
       expect(terminal.focusable).toBe(eligible);
       sent.length = 0;
       resized.length = 0;
       terminal.onData!(Uint8Array.of(65), "input");
       terminal.onData!(Uint8Array.of(66), "response");
-      terminal.onTerminalResize!(80, 20);
-      expect(sent).toEqual(eligible ? ["pane-1", "pane-1"] : []);
-      expect(resized).toEqual(eligible ? ["pane-1"] : []);
+      expect(sent).toEqual(eligible ? ["pane-1"] : []);
+      expect(resized).toEqual([]);
     } finally {
       act(() => setup.renderer.destroy());
     }
@@ -466,12 +514,12 @@ for (const status of ["exited", "failed", "interrupted"] as const) {
     const selected: string[] = [];
     let live = true;
     let publish!: (snapshot: Snapshot) => void;
-    const buffer = {
+    const buffer = terminalBufferFixture({
       epoch: snapshot.epoch,
       history: new TextEncoder().encode("preserved output\r\n"),
       historyCursor: 18,
       chunks: [],
-    };
+    });
     function Fixture() {
       const [current, setCurrent] = useState(snapshot);
       publish = setCurrent;
@@ -479,11 +527,10 @@ for (const status of ["exited", "failed", "interrupted"] as const) {
         <SurfaceView
           {...recoveryProps}
           snapshot={current}
-          stream={{
+          stream={streamFixture({
             close() {},
             sendInput: (_id, data) => sent.push([...data]),
-            resize: (_id, cols, rows) => resized.push([cols, rows]),
-          }}
+          })}
           surface={current.surfaces[0]!}
           terminals={
             new Map([
@@ -494,7 +541,14 @@ for (const status of ["exited", "failed", "interrupted"] as const) {
                   chunks:
                     current.panes[0]!.processStatus === "running"
                       ? []
-                      : [{ cursor: 30, data: new TextEncoder().encode("after exit\r\n") }],
+                      : [
+                          {
+                            cursor: 30,
+                            data: new TextEncoder().encode("after exit\r\n"),
+                            geometrySequence: 0,
+                            origin: "live",
+                          },
+                        ],
                 },
               ],
             ])
@@ -599,10 +653,12 @@ test("only vertical dividers are visible while horizontal divider spacing is ret
     const first = setup.renderer.root.findDescendantById("terminal:pane-1")!;
     const second = setup.renderer.root.findDescendantById("terminal:pane-2")!;
     if (direction === "vertical") {
-      expect([first.width, second.width]).toEqual([15, 14]);
+      expect([first.parent!.width, second.parent!.width]).toEqual([15, 14]);
     } else {
       expect(frame.split("\n")[4]!.trim()).toBe("");
-      expect([first.screenY, first.height, second.screenY, second.height]).toEqual([1, 3, 6, 2]);
+      expect([first.screenY, first.parent!.height, second.screenY, second.parent!.height]).toEqual([
+        1, 3, 6, 2,
+      ]);
     }
     act(() => setup.renderer.destroy());
   }
@@ -739,11 +795,12 @@ test("transparent undimmed output reserves its double top border and bottom reco
       const alert = root.findDescendantById("pane-alert:pane-1")!;
       expect(original.opacity).toBe(1);
       expect((original as EmbeddedTerminalRenderable).transparentBackground).toBe(true);
-      expect([original.screenY, original.height]).toEqual([1, 8]);
+      expect([original.screenY, original.parent!.height]).toEqual([1, 8]);
+      expect(original.height).toBe(24);
       expect(alert.height).toBe(3);
       expect(alert.opacity).toBe(1);
       expect(alert.screenY + alert.height).toBe(12);
-      expect(original.screenY + original.height).toBe(alert.screenY);
+      expect(original.parent!.screenY + original.parent!.height).toBe(alert.screenY);
       expect(setup.captureCharFrame()).toContain(title);
       expect(setup.captureCharFrame()).not.toContain("FULL ERROR");
       const button = root.findDescendantById("reactivate:pane-1");
@@ -772,14 +829,14 @@ test("transparent undimmed output reserves its double top border and bottom reco
       await setup.flush();
       const button = root.findDescendantById("reactivate:pane-1")!;
       expect(button.focusable).toBe(eligible);
-      expect(original.visible).toBe(false);
+      expect(original.parent!.getLayout().height).toBe(0);
       expect(root.findDescendantById("terminal:pane-1")).toBe(original);
       expect(setup.captureCharFrame().split("\n").slice(height).join("\n").trim()).toBe("");
     }
     act(() => present("running", true));
     await setup.flush();
     expect(original.opacity).toBe(1);
-    expect(original.height).toBe(11);
+    expect(original.parent!.height).toBe(11);
     expect(root.findDescendantById("pane-alert:pane-1")).toBeUndefined();
     expect(root.findDescendantById("terminal:pane-1")).toBe(original);
   } finally {

@@ -1,10 +1,27 @@
-import { decodeBytes, type Snapshot } from "@work-craft/server/client";
+import {
+  decodeBytes,
+  type GridMarker,
+  type Snapshot,
+  type TerminalSize,
+} from "@work-craft/server/client";
+
+import { terminalReplaySteps } from "@/client/terminal-replay";
 
 export type TerminalBuffer = {
   epoch: string;
   history: Uint8Array;
   historyCursor: number;
-  chunks: { cursor: number; data: Uint8Array }[];
+  historyStartCursor: number;
+  historyPrefixBytes: number;
+  initialSize: TerminalSize | null;
+  initialGridSequence: number | null;
+  resizes: GridMarker[];
+  chunks: {
+    cursor: number;
+    data: Uint8Array;
+    geometrySequence: number;
+    origin: "history" | "live";
+  }[];
 };
 
 const MAX_TERMINAL_BYTES = 1024 * 1024;
@@ -18,32 +35,49 @@ export function snapshotTerminals(
   for (const history of snapshot.terminalHistories) {
     const previous = current.get(history.paneId);
     let next = previous;
-    if (previous?.epoch !== snapshot.epoch) {
-      next = {
-        epoch: snapshot.epoch,
-        history: decodeBytes(history.data),
-        historyCursor: history.cursor,
-        chunks: [],
-      };
+    const replacement: TerminalBuffer = {
+      epoch: snapshot.epoch,
+      history: decodeBytes(history.data),
+      historyCursor: history.cursor,
+      historyStartCursor: history.startCursor,
+      historyPrefixBytes: history.prefixBytes,
+      initialSize: history.initialSize,
+      initialGridSequence: history.initialGridSequence,
+      resizes: history.resizes,
+      chunks: [],
+    };
+    if (previous?.epoch !== snapshot.epoch || terminalReplaySteps(previous, null).needsSnapshot) {
+      next = replacement;
     } else {
       const latestCursor = previous.chunks.at(-1)?.cursor ?? previous.historyCursor;
+      const markers = [
+        ...new Map(
+          [...previous.resizes, ...history.resizes].map((marker) => [marker.sequence, marker]),
+        ).values(),
+      ].toSorted((a, b) => a.sequence - b.sequence);
+      next =
+        markers.length > 1024 ||
+        (history.initialGridSequence ?? 0) >
+          (previous.resizes.at(-1)?.sequence ?? previous.initialGridSequence ?? 0)
+          ? replacement
+          : markers.length === previous.resizes.length
+            ? previous
+            : { ...previous, resizes: markers };
       if (history.cursor > latestCursor) {
         const data = decodeBytes(history.data);
         const missingBytes = history.cursor - latestCursor;
-        const retainedStart = history.cursor - Math.min(history.cursor, MAX_TERMINAL_BYTES);
         next =
-          latestCursor >= retainedStart && missingBytes <= data.byteLength
+          next !== replacement &&
+          latestCursor >= history.startCursor &&
+          missingBytes <= data.byteLength - history.prefixBytes
             ? appendTerminalChunk(
-                previous,
+                next,
                 history.cursor,
                 data.slice(data.byteLength - missingBytes),
+                snapshot.geometry.sequence,
+                "history",
               )
-            : {
-                epoch: snapshot.epoch,
-                history: data,
-                historyCursor: history.cursor,
-                chunks: [],
-              };
+            : replacement;
       }
     }
     changed ||= next !== previous;
@@ -56,8 +90,10 @@ export function appendTerminalChunk(
   buffer: TerminalBuffer,
   cursor: number,
   data: Uint8Array,
+  geometrySequence: number,
+  origin: "history" | "live" = "live",
 ): TerminalBuffer {
-  const chunks = [...buffer.chunks, { cursor, data }];
+  const chunks = [...buffer.chunks, { cursor, data, geometrySequence, origin }];
   let excess =
     chunks.reduce((total, chunk) => total + chunk.data.byteLength, 0) - MAX_TERMINAL_BYTES;
   while (excess > 0) {

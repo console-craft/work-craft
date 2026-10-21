@@ -1,8 +1,13 @@
 import { homedir } from "node:os";
 
-import type { EmbeddedTerminalRenderable } from "@opentui/core";
+import type { EmbeddedTerminalRenderable, MouseEvent } from "@opentui/core";
 import { useKeyboard, usePaste, useRenderer, useTerminalDimensions } from "@opentui/react";
-import { type CategoryKind, projectPaneLayout } from "@work-craft/server/client";
+import {
+  type CategoryKind,
+  type InputStamp,
+  projectPaneLayout,
+  type TerminalInputContext,
+} from "@work-craft/server/client";
 import { type ReactNode, useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 
 import type { WorkCraftState } from "@/client/store.ts";
@@ -65,11 +70,6 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     liveState.current = next;
     renderDispatch(action);
   }
-  // Pane memory must advance before a buffered key leaves and re-enters the workbench.
-  const lastPaneByTabRef = useRef(state.lastPaneByTab);
-  useLayoutEffect(() => {
-    lastPaneByTabRef.current = state.lastPaneByTab;
-  }, [state.lastPaneByTab]);
   const expandedRootIdsRef = useRef(state.expandedRootIds);
   useLayoutEffect(() => {
     expandedRootIdsRef.current = state.expandedRootIds;
@@ -106,6 +106,8 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
   const snapshot = workCraft.snapshot;
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
+  const workCraftRef = useRef(workCraft);
+  workCraftRef.current = workCraft;
   const operationSequence = useRef(0);
   const errors = useShellErrors({
     snapshot,
@@ -117,9 +119,9 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
 
   useEffect(() => {
     if (snapshot !== null) {
-      dispatch({ type: "snapshot.reconcile", snapshot });
+      dispatch({ type: "snapshot.reconcile", snapshot, attachment: workCraft.attachment });
     }
-  }, [snapshot]);
+  }, [snapshot, workCraft.attachment]);
 
   useEffect(() => {
     if (routerState.invalidMessageUntil === null) {
@@ -135,7 +137,37 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     return () => clearTimeout(timeout);
   }, [routerState.invalidMessageUntil]);
 
-  const model = deriveShellModel({ snapshot, state });
+  const model = deriveShellModel({ snapshot, state, attachment: workCraft.attachment });
+  const navigation = model.navigation;
+  const stamp: InputStamp | null =
+    snapshot && navigation && workCraft.attachment
+      ? {
+          epoch: snapshot.epoch,
+          attachmentGeneration: workCraft.attachment.generation,
+          navigationGeneration: navigation.generation,
+          geometrySequence:
+            workCraft.geometry.tabs.find(({ tabId }) => tabId === navigation.tabId)?.generation ??
+            0,
+        }
+      : null;
+  const activitySequence = useRef(0);
+  const physicalInput = useRef<
+    Pick<Extract<TerminalInputContext, { source: "input" }>, "kind" | "activitySequence">
+  >({ kind: "focus" });
+  function captureInput(kind: "key" | "paste" | "mouse", active = true): void {
+    const event = { kind, ...(active ? { activitySequence: ++activitySequence.current } : {}) };
+    physicalInput.current = event;
+    queueMicrotask(() => {
+      if (physicalInput.current === event) {
+        physicalInput.current = { kind: "focus" };
+      }
+    });
+  }
+  function controlActivity(): void {
+    if (stamp && canReceiveWorkbenchInput() && workCraft.stream) {
+      workCraft.stream.activity(stamp, ++activitySequence.current);
+    }
+  }
   const {
     activeCategoryTitle,
     activeSession,
@@ -187,9 +219,10 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     connected: workCraft.status === "connected",
   };
   function readEnvironment(): ShellEnvironment {
+    const workCraft = workCraftRef.current;
     const snapshot = snapshotRef.current;
     const state = liveState.current;
-    const model = deriveShellModel({ snapshot, state });
+    const model = deriveShellModel({ snapshot, state, attachment: workCraft.attachment });
     return {
       snapshot,
       state,
@@ -219,7 +252,11 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     if (paneId === undefined) {
       return true;
     }
-    const currentModel = deriveShellModel({ snapshot: snapshotRef.current, state: local });
+    const currentModel = deriveShellModel({
+      snapshot: snapshotRef.current,
+      state: local,
+      attachment: workCraft.attachment,
+    });
     if (!currentModel.activeTab?.layout) {
       return false;
     }
@@ -251,20 +288,23 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
       !layout.undersized &&
       viewport !== undefined &&
       hasTerminalViewport(viewport) &&
-      workCraft.canSendInput(paneId, snapshot?.epoch ?? "")
+      stamp !== null &&
+      workCraft.canSendInput(paneId, stamp)
     );
   }
   function canReactivate(paneId: string): boolean {
     if (
       !canReceiveWorkbenchInput() ||
       commands.isReactivating(paneId) ||
-      !workCraft.canReactivate(paneId, snapshotRef.current?.epoch ?? "")
+      !stamp ||
+      !workCraft.canReactivate(paneId, stamp)
     ) {
       return false;
     }
     const currentModel = deriveShellModel({
       snapshot: snapshotRef.current,
       state: liveState.current,
+      attachment: workCraft.attachment,
     });
     if (!currentModel.activeTab?.layout || !currentModel.paneIds.includes(paneId)) {
       return false;
@@ -291,9 +331,6 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     canReceiveInput: canReceiveWorkbenchInput,
     canReactivate,
     clearLeader: () => updateRouterState({ ...routerStateRef.current, leaderStartedAt: null }),
-    rememberPane(tabId, paneId) {
-      lastPaneByTabRef.current = { ...lastPaneByTabRef.current, [tabId]: paneId };
-    },
   });
   const { focus, focusedPaneId } = shellFocus;
   const completionContext = completionContextFor(model, state.dialog);
@@ -322,17 +359,87 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
 
   function reconcile(): void {
     if (snapshot !== null) {
-      dispatch({ type: "snapshot.reconcile", snapshot });
+      dispatch({ type: "snapshot.reconcile", snapshot, attachment: workCraft.attachment });
     }
   }
 
   function setFocus(target: FocusTarget): void {
+    const current = readEnvironment();
+    const navigation = current.model.navigation;
+    if (
+      target.region === "workbench" &&
+      navigation &&
+      target.paneId !== navigation.paneId &&
+      current.model.paneIds.includes(target.paneId)
+    ) {
+      void commands
+        .run(
+          {
+            type: "session.navigate",
+            sessionId: navigation.sessionId,
+            target: { kind: "pane", paneId: target.paneId },
+          },
+          "workbench",
+        )
+        .then((result) => {
+          if (result) {
+            dispatch({ type: "focus.set", focus: target });
+          }
+        });
+      return;
+    }
     shellFocus.setFocus(target);
   }
 
-  useTerminalEntryCompletion(entry, environment, focusedPaneId, nativeFocus);
+  useTerminalEntryCompletion(entry, environment, nativeFocus);
 
-  usePaste(() => entry.cancelInput());
+  usePaste(() => {
+    entry.cancelInput();
+    if (
+      focusTargetFor(renderer.currentFocusedRenderable)?.region === "workbench" &&
+      canReceiveWorkbenchInput(focusedPaneId ?? undefined)
+    ) {
+      captureInput("paste");
+    } else {
+      controlActivity();
+    }
+  });
+
+  const viewerEligible =
+    workCraft.status === "connected" &&
+    !resizeBlocked &&
+    !undersized &&
+    navigatorMode !== "drawer" &&
+    state.dialog === null;
+  useLayoutEffect(() => {
+    if (!stamp || !workCraft.stream) {
+      return;
+    }
+    workCraft.stream.reportViewport(
+      navigation?.tabId && viewerEligible
+        ? {
+            epoch: stamp.epoch,
+            attachmentGeneration: stamp.attachmentGeneration,
+            navigationGeneration: stamp.navigationGeneration,
+            tabId: navigation.tabId,
+            canvas: {
+              cols: shellLayout.workbenchContent.width,
+              rows: shellLayout.workbenchContent.height,
+            },
+            eligible: true,
+          }
+        : null,
+      stamp,
+    );
+  }, [
+    workCraft.stream,
+    workCraft.attachment?.generation,
+    navigation?.generation,
+    navigation?.tabId,
+    shellLayout.workbenchContent.width,
+    shellLayout.workbenchContent.height,
+    viewerEligible,
+  ]);
 
   useKeyboard((key) => {
     // Further input supersedes a deferred handoff; local activation can start a new one.
@@ -349,18 +456,16 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
       entry.cancelInput();
     }
     const keyFocus = focusTargetFor(renderer.currentFocusedRenderable) ?? focus;
-    if (keyFocus.region === "workbench") {
-      if (activeTab) {
-        lastPaneByTabRef.current = { ...lastPaneByTabRef.current, [activeTab.id]: keyFocus.paneId };
-      }
-    }
     const keyPaneId = keyFocus.region === "workbench" ? keyFocus.paneId : focusedPaneId;
     const keyState = {
       ...liveState.current,
       focus: keyFocus,
-      lastPaneByTab: lastPaneByTabRef.current,
     };
-    const keyModel = deriveShellModel({ snapshot, state: keyState });
+    const keyModel = deriveShellModel({
+      snapshot,
+      state: keyState,
+      attachment: workCraft.attachment,
+    });
     const keyContext: CommandContext = {
       ...commandContext,
       focus: keyFocus,
@@ -389,6 +494,16 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
       hyper: key.hyper,
     };
     const routed = routeKey(routerStateRef.current, keyLike, keyContext, Date.now());
+    if (
+      (!routed.handled || routed.passthroughLeader) &&
+      keyFocus.region === "workbench" &&
+      !keyFocus.control &&
+      canReceiveWorkbenchInput(keyFocus.paneId)
+    ) {
+      captureInput("key");
+    } else {
+      controlActivity();
+    }
     updateRouterState(routed.state);
     if (
       !routed.handled &&
@@ -473,15 +588,23 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
   ];
   const statusProps: StatusBarProps = { mode, hints, text: presentation.text };
   const workspaceProps = {
-    activeId: state.activeWorkspaceId,
+    activeId: navigation?.workspaceId ?? null,
     focused: state.dialog === null && focus.region === "workspace",
     workspaces,
     onActivate: (id: string) => {
       if (renderer.width < 80) {
         return;
       }
-      dispatch({ type: "workspace.activate", id });
-      reconcile();
+      if (navigation) {
+        void commands.run(
+          {
+            type: "session.navigate",
+            sessionId: navigation.sessionId,
+            target: { kind: "workspace", workspaceId: id },
+          },
+          "workspace",
+        );
+      }
       setFocus({ region: "category" });
     },
   };
@@ -496,15 +619,23 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
       }),
   };
   const categoryProps = {
-    active: state.activeCategory,
+    active: navigation?.category ?? null,
     categories: renderedCategories,
     focused: state.dialog === null && focus.region === "category",
     onActivate: (category: CategoryKind) => {
       if (renderer.width < 80) {
         return;
       }
-      dispatch({ type: "category.activate", category });
-      reconcile();
+      if (navigation) {
+        void commands.run(
+          {
+            type: "session.navigate",
+            sessionId: navigation.sessionId,
+            target: { kind: "category", category },
+          },
+          "category",
+        );
+      }
       dispatch({ type: "navigator.reveal" });
       const destination = calculateShellLayout({
         terminalWidth: dimensions.width,
@@ -590,7 +721,18 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     onReactivatePane: commands.reactivate,
     inputEnabled: !resizeBlocked && navigatorMode !== "drawer" && state.dialog === null,
     canReceiveInput: canReceiveWorkbenchInput,
-    canResize: () => renderer.width >= 80,
+    stamp,
+    canRespond: (paneId: string) =>
+      stamp !== null &&
+      canReceiveWorkbenchInput() &&
+      !readEnvironment().layout.undersized &&
+      workCraft.canRespond(paneId, stamp),
+    inputEvent: () => physicalInput.current,
+    onMouseInput: (event: MouseEvent) =>
+      captureInput("mouse", event.type === "down" && event.button === 0),
+    onResync: () => {
+      void workCraft.reload();
+    },
     activeTabId: activeTab?.id ?? null,
     focusedPaneId,
     snapshot,
@@ -650,7 +792,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
           dialog: state.dialog,
           canRestoreFocus: () => entry.canRestoreFocus(state.dialog!),
           visible: !resizeBlocked,
-          canCancel: state.dialog.kind === "create" || state.activeSessionId !== null,
+          canCancel: state.dialog.kind === "create" || activeSession !== undefined,
           sessions,
           promptValue: state.promptValue,
           error: state.fieldError,
@@ -669,8 +811,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
             if (renderer.width < 80) {
               return;
             }
-            dispatch({ type: "session.activate", id });
-            reconcile();
+            void commands.attach(id);
           },
           onPromptChange: (value: string) => {
             if (renderer.width >= 80) {
@@ -693,6 +834,15 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
       minHeight={0}
       overflow="hidden"
       visible={dimensions.width > 0 && dimensions.height > 0}
+      onMouse={(event) => {
+        if (
+          event.type === "down" &&
+          event.button === 0 &&
+          !event.target?.id.startsWith("terminal:")
+        ) {
+          controlActivity();
+        }
+      }}
     >
       <Header workspace={workspaceProps} session={sessionProps} height={shellLayout.body.y} />
       <HStack
@@ -727,7 +877,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
             zIndex={10}
           >
             <Navigator
-              key={`${state.activeWorkspaceId}:${state.activeCategory}`}
+              key={`${navigation?.workspaceId}:${navigation?.category}`}
               {...navigatorProps}
             />
           </Box>
