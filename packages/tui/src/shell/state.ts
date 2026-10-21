@@ -13,15 +13,29 @@ import { type CreateKind, deriveShellModel } from "@/shell/model.ts";
 
 export type ShellRegion = "workspace" | "session" | "category" | "navigator" | "tabs" | "workbench";
 
+/** The originating epoch and cursor stay frozen while a draft is edited. */
+export type DialogScope = Readonly<{
+  epoch: string;
+  navigation: Readonly<SessionNavigation> | null;
+  parentId: string | null;
+}>;
+
 export type DialogState =
   | { kind: "sessions"; returnFocus: FocusTarget; awaitingAttachment?: true }
   | {
       kind: "create";
       createKind: CreateKind;
       returnFocus: FocusTarget;
-      scope: { epoch: string; navigation: SessionNavigation | null; parentId: string | null };
+      scope: DialogScope;
     }
-  | { kind: "archive"; itemId: string; title: string; path: string; returnFocus: FocusTarget }
+  | {
+      kind: "archive";
+      itemId: string;
+      title: string;
+      path: string;
+      returnFocus: FocusTarget;
+      navigationGeneration: number;
+    }
   | null;
 
 export type ShellState = {
@@ -289,10 +303,11 @@ export function reconcileShellState(
         snapshot.panes.some(
           (pane) =>
             pane.id === selectedPaneId &&
-            pane.processStatus ===
-              (state.focus.region === "workbench" && state.focus.control === "reactivate"
-                ? "exited"
-                : "running"),
+            (pane.processStatus === "starting" ||
+              pane.processStatus ===
+                (state.focus.region === "workbench" && state.focus.control === "reactivate"
+                  ? "exited"
+                  : "running")),
         )
         ? { ...state.focus, paneId: selectedPaneId }
         : { region: "tabs" as const }

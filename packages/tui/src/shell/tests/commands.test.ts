@@ -393,6 +393,7 @@ test("Archive pins the unavailable candidate without opening or mutating it", as
         kind: "archive",
         itemId: "item-1",
         title: f.snapshot.items.find((item) => item.id === "item-1")!.title,
+        navigationGeneration: f.snapshot.navigation[0]!.generation,
       }),
     }),
   ]);

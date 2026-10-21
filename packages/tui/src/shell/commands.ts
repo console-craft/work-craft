@@ -479,6 +479,7 @@ export async function executeCommand({
           type: "dialog.open",
           dialog: {
             kind: "archive",
+            navigationGeneration: navigation!.generation,
             itemId: item.id,
             title: item.title,
             path: item.data.path,
@@ -522,7 +523,11 @@ export async function executeCommand({
       dispatch({
         type: "navigator.toggle",
         hasWorkbench: model.paneIds.length > 0,
-        paneId: navigation?.paneId,
+        paneId: snapshot?.panes.some(
+          (pane) => pane.id === navigation?.paneId && pane.processStatus === "running",
+        )
+          ? navigation?.paneId
+          : null,
       });
       return;
     case "tab.previous":

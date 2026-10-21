@@ -125,6 +125,7 @@ export function resolveShellFocus(input: {
   rememberedPaneId: string | null;
   paneIds: readonly string[];
   runningPaneIds: readonly string[];
+  startingPaneIds?: readonly string[];
   reactivatePaneIds?: readonly string[];
   undersized: boolean;
 }): { focus: FocusTarget; focusedPaneId: string | null } {
@@ -141,7 +142,7 @@ export function resolveShellFocus(input: {
       !(
         input.focus.control === "reactivate"
           ? (input.reactivatePaneIds ?? [])
-          : input.runningPaneIds
+          : [...input.runningPaneIds, ...(input.startingPaneIds ?? [])]
       ).includes(input.focus.paneId))
       ? { region: "tabs" as const }
       : input.focus;

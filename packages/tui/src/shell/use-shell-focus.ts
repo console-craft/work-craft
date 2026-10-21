@@ -75,6 +75,18 @@ export function useShellFocus({
     if (focus?.region === "navigator") {
       lastNavigatorControl.current = focus.control ?? "results";
     }
+    if (
+      focus &&
+      focus.region !== "workbench" &&
+      focus.region !== "tabs" &&
+      read().state.focus.region === "workbench" &&
+      read().state.dialog === null &&
+      !entry.hasPending() &&
+      !entry.isClosingDrawer()
+    ) {
+      // A new chrome endpoint cancels remote follow even before the terminal is ready.
+      dispatch({ type: "focus.set", focus });
+    }
   }
   useLayoutEffect(() => {
     function onResize(): void {
@@ -145,6 +157,9 @@ export function useShellFocus({
     paneIds,
     runningPaneIds: paneIds.filter((id) =>
       snapshot?.panes.some((pane) => pane.id === id && pane.processStatus === "running"),
+    ),
+    startingPaneIds: paneIds.filter((id) =>
+      snapshot?.panes.some((pane) => pane.id === id && pane.processStatus === "starting"),
     ),
     reactivatePaneIds: paneIds.filter(canReactivate),
     undersized,

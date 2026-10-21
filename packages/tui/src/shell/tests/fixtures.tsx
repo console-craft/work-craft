@@ -183,10 +183,12 @@ export async function liveInputFixture(
   const sent: { paneId: string; bytes: number[] }[] = [];
   const resized: { paneId: string; cols: number; rows: number }[] = [];
   const viewports: (ViewerReport | null)[] = [];
+  const activities: unknown[] = [];
   const commands: Command[] = [];
   const restarts: ReturnType<typeof deferred<CommandResponse>>[] = [];
   const splits: ReturnType<typeof deferred<CommandResponse>>[] = [];
   const tabCreates: ReturnType<typeof deferred<CommandResponse>>[] = [];
+  const registrations: ReturnType<typeof deferred<CommandResponse>>[] = [];
   let commit: ((state: WorkCraftState) => void) | undefined;
   const client: WorkCraftClient = {
     ensureDaemon: async () => {},
@@ -198,10 +200,16 @@ export async function liveInputFixture(
         close() {},
         sendInput: (paneId, bytes) => sent.push({ paneId, bytes: [...bytes] }),
         reportViewport: (report) => viewports.push(report),
+        activity: (...args) => activities.push(args),
         command: (command) => client.command(command),
       }),
     command: async (command) => {
       commands.push(command);
+      if (command.type === "directory.register") {
+        const request = deferred<CommandResponse>();
+        registrations.push(request);
+        return request.promise;
+      }
       if (command.type === "session.navigate" && command.target.kind === "pane") {
         const current = store.snapshot()!;
         const old = current.navigation.find(({ sessionId }) => sessionId === command.sessionId)!;
@@ -299,10 +307,12 @@ export async function liveInputFixture(
     sent,
     resized,
     viewports,
+    activities,
     commands,
     restarts,
     splits,
     tabCreates,
+    registrations,
     renderCurrent() {
       act(() => commit!(store.getState()));
     },
