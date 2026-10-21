@@ -18,6 +18,9 @@ import { resolvePaths } from "./daemon/paths.ts";
 
 export { decodeBytes } from "./api/protocol.ts";
 export type {
+  SessionNavigation,
+  NavigationTarget,
+  NavigationLevel,
   CategoryKind,
   Command,
   CommandResponse,

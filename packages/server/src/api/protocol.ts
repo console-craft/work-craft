@@ -8,6 +8,25 @@ export type CategoryKind =
 
 export type PaneStatus = "starting" | "running" | "exited" | "interrupted" | "failed";
 
+export type SessionNavigation = {
+  sessionId: string;
+  generation: number;
+  workspaceId: string | null;
+  category: CategoryKind | null;
+  itemId: string | null;
+  tabId: string | null;
+  paneId: string | null;
+};
+
+export type NavigationTarget =
+  | { kind: "workspace"; workspaceId: string }
+  | { kind: "category"; category: CategoryKind }
+  | { kind: "item"; itemId: string }
+  | { kind: "tab"; tabId: string }
+  | { kind: "pane"; paneId: string };
+
+export type NavigationLevel = "category" | "item" | "tab";
+
 export type LayoutNode =
   | { type: "pane"; paneId: string }
   | {
