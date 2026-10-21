@@ -39,9 +39,51 @@ export type ViewerReport = {
 };
 export type TerminalGeometry = {
   sequence: number;
-  tabs: { tabId: string; ownerConnectionId: string | null; canvas: TerminalSize | null }[];
+  tabs: {
+    tabId: string;
+    generation: number;
+    ownerConnectionId: string | null;
+    canvas: TerminalSize | null;
+  }[];
   panes: { paneId: string; size: TerminalSize }[];
 };
+
+export type ActivationContext = { sessionId: string; generation: number };
+export type ClientAttachment = {
+  connectionId: string;
+  generation: number;
+  sessionId: string | null;
+};
+export type InputStamp = {
+  epoch: string;
+  attachmentGeneration: number;
+  navigationGeneration: number;
+  /** Per-tab generation; unrelated tab activity must not invalidate these bytes. */
+  geometrySequence: number;
+};
+export type TerminalInputContext = InputStamp &
+  (
+    | { source: "response" }
+    | { source: "input"; kind: "key" | "paste" | "mouse" | "focus"; activitySequence?: number }
+  );
+export type InteractiveMessage =
+  | { type: "client.attach"; requestId: number; sessionId: string | null }
+  | { type: "client.command"; requestId: number; attachmentGeneration: number; command: unknown }
+  | { type: "client.viewport"; stamp: InputStamp; report: ViewerReport | null }
+  | { type: "client.activity"; stamp: InputStamp; sequence: number }
+  | { type: "terminal.input"; paneId: string; data: string; context: TerminalInputContext };
+
+export type InteractiveServerMessage =
+  | { type: "client.ready"; epoch: string; connectionId: string }
+  | { type: "client.attached"; requestId: number | null; attachment: ClientAttachment }
+  | { type: "command.result"; requestId: number; response: CommandResponse }
+  | { type: "command.error"; requestId: number; message: string; field?: ValidationField }
+  | {
+      type: "terminal.geometry";
+      epoch: string;
+      geometry: TerminalGeometry;
+      resizes: { paneId: string; marker: GridMarker }[];
+    };
 
 export type LayoutNode =
   | { type: "pane"; paneId: string }

@@ -161,6 +161,25 @@ test("only eligible viewers of the same tab compete across sessions", () => {
   ]);
 });
 
+test("activity in another tab does not invalidate this tab's input geometry generation", () => {
+  const data = catalog();
+  data.tabs.push({
+    ...data.tabs[0]!,
+    id: "other-tab",
+    layout: { type: "pane", paneId: "other-pane" },
+  });
+  data.panes.push({ ...data.panes[0]!, id: "other-pane" });
+  const sizing = createTerminalSizing(data);
+  sizing.report("A", report());
+  sizing.attachmentActivity("A");
+  expect(sizing.current().tabs[0]).toMatchObject({ generation: 1 });
+  sizing.report("B", { ...report(80, 20), tabId: "other-tab" });
+  sizing.attachmentActivity("B");
+  expect(sizing.current().sequence).toBe(2);
+  expect(sizing.current().tabs[0]).toMatchObject({ generation: 1 });
+  expect(sizing.current().tabs[1]).toMatchObject({ generation: 1 });
+});
+
 for (const size of [
   { cols: 59, rows: 30 },
   { cols: 100, rows: 5 },

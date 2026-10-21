@@ -20,6 +20,12 @@ export { decodeBytes } from "./api/protocol.ts";
 export { projectPaneLayout } from "./application/layout.ts";
 export type { PaneRect, PaneGeometry } from "./application/layout.ts";
 export type {
+  ActivationContext,
+  ClientAttachment,
+  InputStamp,
+  TerminalInputContext,
+  InteractiveMessage,
+  InteractiveServerMessage,
   TerminalSize,
   TerminalGeometry,
   GridMarker,

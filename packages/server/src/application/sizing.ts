@@ -71,7 +71,12 @@ export function createTerminalSizing(initial: SizingCatalog): TerminalSizing {
   let activityOrder = 0;
   let geometry: TerminalGeometry = {
     sequence: 0,
-    tabs: catalog.tabs.map(({ id }) => ({ tabId: id, ownerConnectionId: null, canvas: null })),
+    tabs: catalog.tabs.map(({ id }) => ({
+      tabId: id,
+      generation: 0,
+      ownerConnectionId: null,
+      canvas: null,
+    })),
     panes: catalog.panes.map(({ id }) => ({ paneId: id, size: { cols: 80, rows: 24 } })),
   };
 
@@ -103,16 +108,26 @@ export function createTerminalSizing(initial: SizingCatalog): TerminalSizing {
       );
       candidates.sort((a, b) => b[1].order - a[1].order);
       const owner = candidates[0];
-      const canvas =
-        owner?.[1].report?.canvas ??
-        geometry.tabs.find(({ tabId }) => tabId === tab.id)?.canvas ??
-        null;
+      const previous = geometry.tabs.find(({ tabId }) => tabId === tab.id);
+      const canvas = owner?.[1].report?.canvas ?? previous?.canvas ?? null;
+      let gridChanged = false;
       if (owner?.[1].report) {
         for (const { paneId, size } of projectedGrids(catalog, owner[1].report)) {
+          gridChanged ||= !sameSize(sizes.get(paneId), size);
           sizes.set(paneId, size);
         }
       }
-      return { tabId: tab.id, ownerConnectionId: owner?.[0] ?? null, canvas };
+      const ownerConnectionId = owner?.[0] ?? null;
+      const changed =
+        gridChanged ||
+        ownerConnectionId !== (previous?.ownerConnectionId ?? null) ||
+        !sameSize(canvas, previous?.canvas);
+      return {
+        tabId: tab.id,
+        generation: (previous?.generation ?? 0) + Number(changed),
+        ownerConnectionId,
+        canvas,
+      };
     });
     const panes = [...sizes].map(([paneId, size]) => ({ paneId, size }));
     const resizes = panes.filter(
