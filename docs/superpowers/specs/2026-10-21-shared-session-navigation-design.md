@@ -13,6 +13,70 @@ They explicitly confirmed the shared-editor expectation: clients viewing the sam
 pane see one Neovim process, including the same edits and logical cursor position,
 not independently running editors synchronized after the fact.
 
+### Current Implementation Verification (2026-10-21)
+
+Implementation Tasks 1–11 are committed through `d7c39ba`, with final review fixes
+in `9d78619`. The normal entrypoint,
+daemon and CLI use schema 5, daemon-owned per-session navigation, stamped interactive
+streams, latest-active sizing and bounded ordered grid replay. No parallel app path
+or extra terminal emulator was introduced; tests decode actual subprocess frames
+with the existing native emulator.
+
+The final full `bun run check` passed **1,659 tests across 116 files**, zero failures,
+lint/format/type checks, compiled build and compiled CLI/TUI/daemon smoke. The
+pre-review post-commit normal-entrypoint/shared-client/recovery/API group passed 37 tests.
+Original coverage was retained except superseded global tab selection, optimistic
+activation, local-grid resizing and automatic sibling-entry expectations, which
+were replaced with explicit session authority and exact-destination assertions.
+
+Two normal TUIs at 160×45 and 100×32 share one deterministic program PID and logical
+cursor. Tests cover passive smaller-view clipping, `stty size`/activity ownership,
+one live query reply/no replay replies, tab navigation, retained PIDs/output, a
+single-client session switch, current-context reconnect and exactly one shell
+recovery spawn per pane with saved cursors/memories/geometry. Neovim smoke launches
+`nvim -u NONE -i NONE -n` once, verifies shared edits in both rendered frames and
+one file, and reads one editor's PID/line/column from both clients. This installed
+Neovim uses a frontend plus its `--embed` editor child, not two editor sessions.
+
+Native feasibility exposed two repaired gaps: passive local resize now recomputes
+the crop without new child output, and mode-2048 capability replies are downgraded
+until the native emulator actually emits in-band resize reports. This lets Neovim
+observe ordinary SIGWINCH resizing instead of retaining obsolete dimensions. Raw
+legacy history is preserved but unknown past geometry cannot be reconstructed;
+history and markers remain bounded (1 MiB/1,024 markers per pane by default), with
+explicit reset/truncation on budget exhaustion.
+
+Independent whole-branch review found five Important issues, no Critical or Minor
+findings. All five were reproduced with failing regressions and repaired in one
+fix pass, followed by the full gate above:
+
+- Delayed create completion reads live authority, not the last React commit.
+  Attached creates return their exact committed cursor; automatic follow-up Open
+  carries its navigation generation, which the daemon validates before mutation.
+  Automatic workspace selection uses the same guard; explicit navigation remains unguarded.
+- Live output buffers/replay retain output-time reply stamps. A delayed mirror
+  cannot borrow new ownership to answer an old query, including across sessions.
+  Output overtaken by geometry resync fails closed rather than inventing authority.
+- First-workspace completion recognizes only its exact empty-session→new-workspace
+  Inbox normalization at generation +1, in either response/snapshot order.
+- Both enabled and disabled mode-2048 capability replies report unsupported.
+- Interactive authorization uses history-free metadata rather than reading and
+  encoding every pane's retained output on each input.
+
+Two-client program/Neovim acceptance also passed three consecutive runs after the
+fixes. The replay test now establishes the sending client's actual input readiness
+and first-tab focus before a fresh query; stale replays cannot satisfy its count.
+Stage 2 is implemented and verified for progression; no merge or push is implied.
+The pre-existing server `no-unsafe-finally` warning remains. Automated macOS results
+do not certify human/physical-terminal, Linux or long-duration behavior. Stage 3/4
+operations, mixed panes and editor-specific cold restoration remain outside scope.
+One final run failed an unchanged Menu click-crossing assertion; isolated repetition
+reproduced two failures in 240 tests. The menu/UI/render harness have no Stage 2 diff.
+Its cause remains unresolved; a green full rerun does not certify that flake repaired.
+A commit-hook run also timed out waiting for terminal focus after reload in
+`raw stage 1 key sequences drive the shell`. Five isolated repeats and the next
+full hook passed unchanged; that observation is not a demonstrated repair.
+
 Workflow:
 
 - [x] Clarify intent and establish the tmux-inspired baseline.
@@ -23,11 +87,12 @@ Workflow:
 - [x] Complete an independent builder check and resolve consequential questions.
 - [x] Obtain approval of this full design.
 - [x] Write an implementation plan after approval.
+- [x] Implement the twelve-task plan, resolve independent review and verify the normal entrypoint.
 
 The self-reviewed [implementation plan](../plans/2026-10-21-shared-session-navigation.md)
 is saved in the repository's intentionally workspace-local/gitignored plans
-directory. Native implementation starts with the plan's explicit terminal
-feasibility gate before schema/protocol cutover.
+directory. Native implementation passed the plan's explicit terminal feasibility
+gate before schema/protocol cutover.
 
 Worktree: `/Users/ovi/.local/share/opencode/worktree/c4185d/stage-2-shared-session-navigation`.
 Baseline `bun run check` passed 1,519 tests, zero failures, lint/format/types,

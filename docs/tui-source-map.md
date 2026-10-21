@@ -30,10 +30,33 @@ enforces these restrictions for value/type imports, re-exports and dynamic impor
 and forbids production imports of tests or support. Test-specific allowances apply
 only inside `tests/`; the real-config regression is `tests/boundaries.test.ts`.
 
+## Shared Session Ownership
+
+The daemon owns the durable workspace/category/item/tab/pane cursor and tab/pane
+memories per session. `shell/state.ts` owns only local focus, candidate cursors,
+scope filters/expansion, overlays and captured draft scope; `shell/model.ts`
+projects the attached session's authoritative cursor. Remote projection must not
+publish another navigation command or claim sizing through native focus callbacks.
+
+`client/store.ts` owns the client-local attachment and live authorization stamps
+(epoch, attachment generation, navigation generation and per-tab geometry generation).
+The global geometry sequence orders stream updates; it is not an input generation.
+`client/terminal-buffer.ts` retains bounded bytes/resize markers and their live/history
+origin and original reply stamps; `client/terminal-replay.ts` orders grid changes
+between byte ranges without granting new response authority to delayed queries.
+
+`workbench/terminal-viewport.tsx` owns the concrete native emulator, canonical-grid
+replay, readiness and cursor-follow clipping into the locally measured parent.
+`terminal-pane.tsx` gates forwarding and displays recovery state. Leaves do not
+directly resize daemon PTYs: the shell reports its available canvas/eligibility
+and physical activity, then the daemon elects the latest-active eligible viewer.
+Attachment is activity; idle resize and emulator replies are not. Owner resize
+updates the grid; non-owner resize affects only its candidate and local crop.
+
 ## Three Independent Input Gates
 
-1. **Client store:** current connection, captured epoch, process state, valid
-   item/parent ancestry, archival state and active layout. Captured callbacks read
+1. **Client store:** current attachment/epoch/navigation/geometry generations,
+   process state, valid item/parent ancestry, archival state and active layout. Captured callbacks read
    current authoritative state even before React commits.
 2. **Shell:** current dialog, drawer/resize presentation, usable projected geometry
    and operation protection. Cancelling focus intent does not release restart
@@ -71,14 +94,17 @@ owners (`ui/tests/`, `ui/interaction/tests/`, `ui/theming/tests/`,
 live in `demos/component-demos/`, while showcase integration stays in
 `demos/tests/`. Do not make a wrapper directory for each source/test pair.
 Fixtures live with their narrowest consumer, such as `shell/tests/fixtures.tsx`.
-Package-wide acceptance is `tests/entrypoint.test.ts`; genuinely shared rendering
-and snapshot support live in `tests/support/`.
+Package-wide acceptance is `tests/entrypoint.test.ts` and `tests/shared-session.test.ts`;
+genuinely shared rendering and snapshot support live in `tests/support/`. The latter
+acceptance launches two normal TUIs plus a deterministic terminal program and,
+when installed, one Neovim editor session; its process/program fixtures are test-only.
 
 The shell suites separate item entry, tab entry, pane operations, dialogs,
 presentation and composition. Keep their response, snapshot, React commit, native
 frame and buffered-input controls independent. `publish(snapshot, false)` advances
-the real client store without rendering. Only callers that need two native frames
-use `flushMeasured`; the default render helper's semantics are unchanged.
+the real client store without rendering. Shared native viewports add a readiness
+commit after parent measurement: shell fixtures settle that extra frame locally;
+the default render helper and independent publish/response/frame controls are unchanged.
 
 Run from the repository root:
 
@@ -89,6 +115,7 @@ bun test packages/tui/src/ui/components/tests
 bun test packages/tui/src/ui/interaction/tests packages/tui/src/ui/theming/tests
 bun test packages/tui/src/demos/tests
 bun test packages/tui/src/tests/entrypoint.test.ts
+bun test packages/tui/src/tests/shared-session.test.ts
 bun run check
 ```
 
@@ -109,5 +136,6 @@ remains; intentional TUI control-byte sanitizers have expression-local explanati
 - [Component adoption and intentional native boundaries](superpowers/specs/2026-10-13-tui-component-adoption-design.md#adopted-components-and-intentional-native-boundaries)
 
 Older dated checkpoints and sibling-test trees are historical, not the current
-source map. No shared-navigation stage, protocol change or runtime theme UI is
-introduced by this refactor.
+source map. Stage 2's current schema/protocol/acceptance record is in the
+[shared-session companion](superpowers/specs/2026-10-21-shared-session-navigation-design.md).
+No runtime theme UI, Stage 3 completion or mixed/built-in panes are implied.
