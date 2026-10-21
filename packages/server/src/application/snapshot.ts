@@ -1,24 +1,11 @@
 import type { Database } from "bun:sqlite";
 
 import { encodeBytes } from "../api/protocol.ts";
-import type {
-  CategoryKind,
-  LayoutNode,
-  PaneStatus,
-  ShellRestorePolicy,
-  Snapshot,
-} from "../api/protocol.ts";
+import type { PaneStatus, ShellRestorePolicy, Snapshot } from "../api/protocol.ts";
 import type { TerminalHistory } from "../terminal/history.ts";
+import { CATEGORIES } from "./categories.ts";
 import { readItems, validateItemAncestry } from "./items.ts";
-
-export const CATEGORIES: readonly { kind: CategoryKind; title: string; position: number }[] = [
-  { kind: "inbox", title: "Inbox", position: 0 },
-  { kind: "today", title: "Today", position: 1 },
-  { kind: "design", title: "Design", position: 2 },
-  { kind: "implementation", title: "Implementation", position: 3 },
-  { kind: "collaboration", title: "Collaboration", position: 4 },
-  { kind: "operations", title: "Operations", position: 5 },
-];
+import { parseLayout } from "./layout.ts";
 
 function parseJson(value: string, field: string): unknown {
   try {
@@ -40,34 +27,6 @@ function nonBlankString(value: unknown, field: string): string {
     throw new Error(`Invalid ${field}: expected a non-blank string`);
   }
   return value;
-}
-
-function parseLayout(value: unknown): LayoutNode {
-  const node = recordValue(value, "tabs.layout_json");
-  if (node.type === "pane") {
-    return { type: "pane", paneId: nonBlankString(node.paneId, "tabs.layout_json paneId") };
-  }
-  if (node.type !== "split") {
-    throw new Error("Invalid tabs.layout_json type");
-  }
-  if (node.direction !== "horizontal" && node.direction !== "vertical") {
-    throw new Error("Invalid tabs.layout_json direction");
-  }
-  if (
-    typeof node.ratio !== "number" ||
-    !Number.isFinite(node.ratio) ||
-    node.ratio <= 0 ||
-    node.ratio >= 1
-  ) {
-    throw new Error("Invalid tabs.layout_json ratio: expected a number between 0 and 1");
-  }
-  return {
-    type: "split",
-    direction: node.direction,
-    ratio: node.ratio,
-    first: parseLayout(node.first),
-    second: parseLayout(node.second),
-  };
 }
 
 function parseRestorePolicy(value: string): ShellRestorePolicy {

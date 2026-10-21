@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 
 import type { WorkItem } from "../api/protocol.ts";
+import { CATEGORIES } from "./categories.ts";
 import {
   initialNavigation,
   type NavigationCatalog,
@@ -8,7 +9,6 @@ import {
   selectNavigation,
   stepNavigation,
 } from "./navigation.ts";
-import { CATEGORIES } from "./snapshot.ts";
 
 function item(id: string, position: number, parentId: string | null = null): WorkItem {
   return {

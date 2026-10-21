@@ -1,5 +1,40 @@
 import type { LayoutNode } from "../api/protocol.ts";
 
+/** Validate durable layout JSON before it can select or resize any pane. */
+export function parseLayout(value: unknown): LayoutNode {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Invalid tabs.layout_json: expected an object");
+  }
+  const node = value as Record<string, unknown>;
+  if (node.type === "pane") {
+    if (typeof node.paneId !== "string" || node.paneId.trim() === "") {
+      throw new Error("Invalid tabs.layout_json paneId");
+    }
+    return { type: "pane", paneId: node.paneId };
+  }
+  if (node.type !== "split") {
+    throw new Error("Invalid tabs.layout_json type");
+  }
+  if (node.direction !== "horizontal" && node.direction !== "vertical") {
+    throw new Error("Invalid tabs.layout_json direction");
+  }
+  if (
+    typeof node.ratio !== "number" ||
+    !Number.isFinite(node.ratio) ||
+    node.ratio <= 0 ||
+    node.ratio >= 1
+  ) {
+    throw new Error("Invalid tabs.layout_json ratio: expected a number between 0 and 1");
+  }
+  return {
+    type: "split",
+    direction: node.direction,
+    ratio: node.ratio,
+    first: parseLayout(node.first),
+    second: parseLayout(node.second),
+  };
+}
+
 export type PaneRect = { x: number; y: number; width: number; height: number };
 export type PaneGeometry = {
   panes: { paneId: string; rect: PaneRect }[];

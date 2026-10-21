@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 
-const SCHEMA = `
+export const SCHEMA4 = `
 CREATE TABLE sessions (id TEXT PRIMARY KEY, name TEXT NOT NULL, position INTEGER NOT NULL);
 CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL);
 CREATE TABLE session_workspaces (
@@ -49,7 +49,7 @@ export function openDatabase(path: string): Database {
     }
     if (version === 0) {
       db.transaction(() => {
-        db.exec(SCHEMA);
+        db.exec(SCHEMA4);
         db.exec("PRAGMA user_version = 4");
       })();
     }
