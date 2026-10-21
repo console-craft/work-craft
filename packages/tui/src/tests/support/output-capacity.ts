@@ -1,12 +1,9 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import {
-  flushProfileProbes,
-  profileProbes,
-  profileResidentKiB,
-} from "@/tests/support/output-profile";
+import { profileProbes, profileResidentKiB } from "@/tests/support/output-profile";
 import { latencySummary } from "@/tests/support/output-profile-statistics";
+import { flushProfileProbes } from "@/tests/support/output-profile-trace";
 import {
   focusSharedTerminal,
   sharedWait,
@@ -272,13 +269,12 @@ export async function measureCapacityProfile(
     }
     control?.close();
     if (options.diagnostics) {
-      const daemonPid = await fixture.client
-        .health()
-        .then((health) => health.pid)
-        .catch(() => 0);
-      await flushProfileProbes(directory, [daemonPid, a.child.pid, b.child.pid]).catch((error) =>
-        errors.push(String(error)),
-      );
+      const health = await fixture.client.health().catch(() => null);
+      const roots = [a.child.pid, b.child.pid];
+      if (health) {
+        roots.push(health.pid);
+      }
+      await flushProfileProbes(directory, roots).catch((error) => errors.push(String(error)));
     }
     await fixture.close();
   }

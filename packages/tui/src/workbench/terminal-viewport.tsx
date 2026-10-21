@@ -90,6 +90,7 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
     if (outputProbeEnabled) {
       observeOutput({
         stage: "native.plan",
+        aggregateOnly: replay.steps.length === 0,
         paneId: current.paneId,
         cursor: progress.current?.cursor,
         generation: probeInstance.current,
@@ -163,6 +164,8 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
     if (outputProbeEnabled) {
       observeOutput({
         stage: "native.create",
+        cols: bootstrap.cols,
+        rows: bootstrap.rows,
         paneId: props.paneId,
         generation: probeInstance.current,
       });
@@ -262,6 +265,8 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
           if (outputProbeEnabled) {
             observeOutput({
               stage: "native.resize",
+              cols,
+              rows,
               paneId: latest.current.paneId,
               generation: probeInstance.current,
               bytes: cols * rows,

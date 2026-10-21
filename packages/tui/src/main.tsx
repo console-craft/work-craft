@@ -38,6 +38,11 @@ if (outputProbeEnabled) {
   renderer.on(CliRenderEvents.FRAME, () => {
     const now = performance.now();
     observeOutput({ stage: "frame", durationMs: now - previous });
+    observeOutput({
+      stage: "native.scene",
+      aggregateOnly: true,
+      durationMs: renderer.lastSceneTimeMs,
+    });
     previous = now;
   });
 }

@@ -11,7 +11,14 @@ test("records 32768 events then counts discarded observations without event-time
     () => 12,
   );
   for (let index = 0; index < 32769; index++) {
-    probe.observe({ stage: "native.write", bytes: 10, durationMs: 2, pending: index });
+    probe.observe({
+      stage: "native.write",
+      bytes: 10,
+      durationMs: 2,
+      pending: index,
+      cols: 20,
+      rows: 6,
+    });
   }
   expect(writes).toEqual([]);
   probe.flush();
@@ -21,7 +28,7 @@ test("records 32768 events then counts discarded observations without event-time
     .split("\n")
     .map((line) => JSON.parse(line));
   expect(records.filter((record) => record.type === "event")).toHaveLength(32768);
-  expect(records[0]).toMatchObject({ sequence: 1, monotonicMs: 12 });
+  expect(records[0]).toMatchObject({ sequence: 1, monotonicMs: 12, cols: 20, rows: 6 });
   expect(records[32767].sequence).toBe(32768);
   expect(records.at(-1)).toMatchObject({ type: "summary", discarded: 1, valid: false });
   expect(records.at(-1).totals["native.write"]).toEqual({
@@ -62,6 +69,29 @@ test("flush failure does not throw into PTY or render callbacks", () => {
   probe.observe({ stage: "pty.read" });
   expect(() => probe.flush()).not.toThrow();
   expect(() => probe.observe({ stage: "pty.read" })).not.toThrow();
+});
+
+test("aggregate-only observations retain counters and high-water without consuming detailed trace slots", () => {
+  let text = "";
+  const probe = createOutputProbe(
+    (next) => {
+      text = next;
+    },
+    () => 0,
+  );
+  for (let index = 0; index < 40000; index++) {
+    probe.observe({ stage: "store.buffer", bytes: index, aggregateOnly: true });
+  }
+  probe.observe({ stage: "store.apply.end", cursor: 42 });
+  probe.flush();
+  const lines = text
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  expect(lines).toHaveLength(2);
+  expect(lines[0]).toMatchObject({ stage: "store.apply.end", cursor: 42 });
+  expect(lines[1]).toMatchObject({ valid: true, discarded: 0, aggregated: 40000 });
+  expect(lines[1].highWater["store.buffer"].bytes).toBe(39999);
 });
 
 test("disabled recorder creates no files or signal handlers; enabled subprocess flushes on SIGUSR2", async () => {

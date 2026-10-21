@@ -191,8 +191,16 @@ export function createWorkCraftStore(
         pending: state.attachment?.generation,
       });
     }
+    const notified = outputProbeEnabled ? performance.now() : 0;
     for (const listener of listeners) {
       listener();
+    }
+    if (outputProbeEnabled) {
+      observeOutput({
+        stage: "store.notify",
+        pending: listeners.size,
+        durationMs: performance.now() - notified,
+      });
     }
   }
 
@@ -344,6 +352,7 @@ export function createWorkCraftStore(
         const buffer = terminals.get(message.paneId)!;
         observeOutput({
           stage: "store.buffer",
+          aggregateOnly: true,
           paneId: message.paneId,
           cursor: message.cursor,
           bytes:
@@ -511,7 +520,14 @@ export function createWorkCraftStore(
           pending: queuedMessages,
           durationMs: started - enqueued,
         });
-        return applyMessage(message, activeRun, connection).finally(() => {
+        const applied = applyMessage(message, activeRun, connection);
+        observeOutput({
+          stage: "store.apply.return",
+          ...metadata,
+          aggregateOnly: true,
+          durationMs: performance.now() - started,
+        });
+        return applied.finally(() => {
           queuedMessages--;
           observeOutput({
             stage: "store.apply.end",

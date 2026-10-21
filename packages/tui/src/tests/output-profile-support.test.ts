@@ -1,5 +1,5 @@
 import { expect, spyOn, test } from "bun:test";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { appendFile, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { EmbeddedTerminalRenderable } from "@opentui/core";
@@ -13,6 +13,7 @@ import {
   latencySummary,
   observedToken,
 } from "@/tests/support/output-profile-statistics";
+import { flushProfileProbes, readProfileFooter } from "@/tests/support/output-profile-trace";
 import { createTerminalObservation } from "@/tests/support/terminal-observation";
 
 test("missing probes remain failures and nearest-rank latency does not hide them", () => {
@@ -121,6 +122,21 @@ test("capacity fixture owns exactly fifty panes, thirty tabs and ten complex pro
   }
 }, 60000);
 
+test("native comparison observes actual rendered tokens rather than child receipt alone", async () => {
+  const directory = await mkdtemp(
+    "/private/var/folders/f3/1n3tcb0x5yj4d887rrm_ns_80000gn/T/opencode/profile-native-test-",
+  );
+  try {
+    const result = await runOutputProfile("native", directory, { probes: 3, warmupMs: 0 });
+    expect(result.timedOut).toBe(false);
+    expect(
+      result.probes.every((probe) => probe.visibleMs !== null && probe.visibleMs >= probe.sentMs),
+    ).toBe(true);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("application comparison matches the native grid and flushes enabled child traces", async () => {
   const directory = await mkdtemp(
     "/private/var/folders/f3/1n3tcb0x5yj4d887rrm_ns_80000gn/T/opencode/profile-application-test-",
@@ -169,6 +185,30 @@ test("a producer startup timeout still reaps its owned subprocess", async () => 
       child.kill();
       await child.exited;
     }
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("diagnostic ownership rejects PID zero before inspecting or signalling manifests", async () => {
+  await expect(flushProfileProbes("/path-not-read", [0])).rejects.toThrow("owned root PID");
+  await expect(flushProfileProbes("/path-not-read", [1])).rejects.toThrow("owned root PID");
+});
+
+test("diagnostic completion reads a bounded tail and never accepts an old footer after partial append", async () => {
+  const directory = await mkdtemp(
+    "/private/var/folders/f3/1n3tcb0x5yj4d887rrm_ns_80000gn/T/opencode/profile-footer-test-",
+  );
+  const path = join(directory, "trace.jsonl");
+  try {
+    await writeFile(path, "old data\n".repeat(1000000) + '{"type":"summary"}\n');
+    const previous = (await stat(path)).size;
+    expect(await readProfileFooter(path, 0)).toBe(true);
+    expect(await readProfileFooter(path, previous)).toBe(false);
+    await appendFile(path, '{"type":"event"');
+    expect(await readProfileFooter(path, previous)).toBe(false);
+    await appendFile(path, '\n{"type":"summary"}\n');
+    expect(await readProfileFooter(path, previous)).toBe(true);
+  } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });

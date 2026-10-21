@@ -164,6 +164,9 @@ export class RuntimeRegistry {
   }
 
   resize(paneId: string, cols: number, rows: number): void {
+    if (outputProbeEnabled) {
+      observeOutput({ stage: "pty.resize", paneId, cols, rows });
+    }
     this.liveRuntime(paneId).terminal.resize(cols, rows);
   }
 

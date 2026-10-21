@@ -100,6 +100,15 @@ test("normal daemon and TUIs flush correlated stages without logging terminal te
         ),
       )
     ).join("");
+    const stages = new Set(
+      text
+        .trim()
+        .split("\n")
+        .flatMap((line) => {
+          const record = JSON.parse(line);
+          return record.type === "summary" ? Object.keys(record.totals) : [record.stage];
+        }),
+    );
     for (const stage of [
       "pty.read",
       "history.append",
@@ -107,11 +116,13 @@ test("normal daemon and TUIs flush correlated stages without logging terminal te
       "socket.receive",
       "store.enqueue",
       "store.apply.end",
+      "store.apply.return",
+      "store.notify",
       "native.write.end",
       "native.create",
       "frame",
     ]) {
-      expect(text).toContain(`"stage":"${stage}"`);
+      expect(stages.has(stage)).toBe(true);
     }
     expect(text).not.toContain("PRIVATE_PROBE_READY");
   } finally {

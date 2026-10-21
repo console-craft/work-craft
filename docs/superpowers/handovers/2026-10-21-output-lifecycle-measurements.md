@@ -121,3 +121,148 @@ open: a live daemon could retain full parser state and send disposable clients
 rendered state instead of pretending a cell snapshot restores a client parser.
 That would explicitly change response/input encoding ownership and protocol;
 it is a candidate for the measured amendment, not approved production work.
+
+## Frozen Comparison Results
+
+The three direct/native control runs and three application controls plus three
+traced application runs completed serially. Every run used the same 80x24 child
+grid, 4 KiB/100 ms synthetic redraw workload, 10-second warm-up and 200 inputs at
+an intended 100 ms cadence. No samples were missing. The application attribution
+comparison uses one normal client (the second fixture client is stopped), whereas
+the burst/capacity cases exercise two. Source checkpoint: `f3c9067`; artifacts are
+the named `*-control-*` / `application-traced-*` subdirectories.
+
+| Path                        | Input-to-child p95, three runs | Input-to-visible p95, three runs | Input-to-visible p99     |
+| --------------------------- | ------------------------------ | -------------------------------- | ------------------------ |
+| Direct PTY                  | 0.291 / 0.305 / 0.236 ms       | Not observed (no host display)   | Not observed             |
+| Native embedded terminal    | 0.322 / 0.286 / 0.286 ms       | 19.00 / 20.14 / 19.65 ms         | 23.14 / 23.48 / 23.63 ms |
+| Work Craft, probes disabled | 8.71 / 8.80 / 7.52 ms          | 29.65 / 30.24 / 29.74 ms         | 36.08 / 36.41 / 34.30 ms |
+| Work Craft, probes enabled  | 7.63 / 8.74 / 8.21 ms          | 29.08 / 30.69 / 29.12 ms         | 34.95 / 36.51 / 36.54 ms |
+
+This small workload is healthy; it does **not** reproduce the user's real editor
+pair or establish the 50-pane capacity target. Probe overhead on this workload
+was within the observed run-to-run variation, not proven zero. Native/direct
+paths do not import production recorders, so repeating an identical 'traced'
+variant there would not measure their overhead. Their observer costs are reported
+separately: native `write()` envelopes totalled roughly 63–64 ms per run; the
+application's outer emulator envelopes totalled 15–16 ms per run. These are
+different amounts of emitted output and are not interchangeable CPU benchmarks.
+
+Sampled RSS maxima: one application client process tree 369–377 MiB; daemon
+53–58 MiB. The harness grew across sequential test runs (about 55–138 MiB in the
+sampled process) and is reported separately, not charged to either application
+client. Sampling before/after a run does not establish an unsampled absolute peak.
+Child receipt timestamps use the same-host `performance.timeOrigin` wall mapping;
+raw latency is not skew-corrected. Results retain per-probe clock brackets and
+their uncertainty. Millisecond-scale cross-process attribution is limited by that
+uncertainty; the multi-second burst delay is not explained by it.
+
+## Correlated Burst Evidence
+
+The unchanged four-pane burst also ran with probes enabled. Maximum latencies
+were 10,279.93 ms, 7,179.82 ms and 5,414.85 ms, all failures. This variation is
+retained, not selected for a favourable baseline.
+
+The first trace overflowed its 32,768 detailed-event slots in both native/client
+recorders; only its aggregate totals may be used. To obtain complete correlation
+without increasing the budget, later probes deliberately aggregate empty replay
+planning and retained-buffer samples. They still count every observation, duration
+and high-water; the footer explicitly reports aggregated observations. Byte/grid
+delivery and native write events remain detailed. Overflow still invalidates a
+trace. This is metric aggregation, never dropped terminal instructions.
+
+All five component traces in `burst-traced-3` completed with valid footers, zero
+discarded observations and 4,325 matched output cursor intervals per viewer:
+
+| Measurement                                         | Viewer 1  | Viewer 2  |
+| --------------------------------------------------- | --------- | --------- |
+| Daemon-read → native-write p50                      | 2,832 ms  | 2,760 ms  |
+| Daemon-read → native-write p95                      | 6,765 ms  | 6,609 ms  |
+| Daemon-read → native-write maximum                  | 7,279 ms  | 7,122 ms  |
+| Synchronous store apply envelopes, total            | 401 ms    | 383 ms    |
+| Store apply including scheduled continuation, total | 11,444 ms | 11,315 ms |
+| Native replay planning, total                       | 2,550 ms  | 2,478 ms  |
+| Native writes, total                                | 88 ms     | 87 ms     |
+| Native scene time sampled at frame events, total    | 229 ms    | 232 ms    |
+
+These timers overlap; **do not add the rows together**. The scheduled apply
+envelope can include React/scheduler/GC work before its continuation executes;
+it is not 11 seconds of synchronous buffer insertion. Direct store listener
+notification itself totalled only about 13 ms per viewer. Frame intervals are
+wall-time cadence, not CPU render duration. The scene statistic is a native
+renderer observation, not a complete React commit measurement.
+
+The daemon read the workload's bulk bytes over about 3,952 ms. Its history append
+envelopes totalled 11.6 ms, message encoding 6.8 ms, and snapshot reads about 30 ms
+over the whole run. The two application transport queues peaked at two callbacks,
+while the server-side socket backlog reached about 3.58 MiB for a peer. The delay
+is therefore not an HTTP recovery wait in this run: each viewer fetched one
+startup snapshot, had four native instances without recovery churn, and parsed
+all final bytes. A fast-looking JavaScript queue does not imply a fast client:
+scheduled client work can delay socket receipt itself.
+
+There were 18,355–18,363 replay planning calls for 4,325 native byte writes. The
+leading hypothesis is amplification through whole-application output publication
+and retained-range replay, with substantial client-side work scheduled between
+apply and continuation. Exact division among React reconciliation, JS allocation/
+GC and replay is not yet isolated. A one-variable notification-cadence experiment
+is required before selecting that mechanism as the performance fix.
+
+Producer write-call timestamps were not present in the historical burst program;
+the fixed producer cadence, daemon byte/cursor observations and final producer
+completion provide its bounded workload reference. No claim of exact per-write
+producer scheduling or physical WezTerm latency is inferred from that test.
+
+## Capacity Attempt: Failed, Soak Incomplete
+
+The frozen 50-pane topology ran with two normal clients, 10 synthetic interactive
+programs and eight hidden 4 KiB/100 ms producers. The first item is the original
+fixture's generic Design surface; the other nine are registered Coding directories.
+This exercises actual shared runtime/navigation paths, not real Git worktree
+discovery cost or 10 real editor/AI sessions.
+
+| Phase                              | Observation                                                                                                                                                                                         |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Initial 40 idle shells, 200 probes | All 200 inputs reached the child; child latency p95 43.51 ms, p99 55.07 ms, max 76.19 ms. 16 visible observations missing; full-sample visible p95 is unbounded, not a percentile of only successes |
+| 100 switches                       | One destination not observed within four seconds; presentation p95 3,197.97 ms. This is not proof of input-ready switching; subsequent child input was not probed after every switch                |
+| Paused mirror, 20 probes           | All 20 child/display observations missing. Input readiness after the preceding navigation was not independently established, so this does not isolate the effect of the paused peer                 |
+| Forty stopped panes, 200 probes    | All 40 exits were confirmed, but native terminal entry timed out and all 200 child/display observations were missing. This phase is an input-readiness failure, not a valid latency distribution    |
+| Planned 10-minute soak             | Recorded through 499,058 ms (8 min 19 s), then a daemon request timed out. Whole case ran 862 s including setup/switches/earlier probes; it did not complete the soak                               |
+
+Sampled process-tree RSS already reached about 967 / 983 MiB per client at the
+initial idle-shell phase (harness 107 MiB), before the first periodic trace flush.
+After switching, the first client reached about 1,892 MiB, then 2,081 MiB after
+the mirror phase. The other client reached about 1,520 MiB in later samples.
+Daemon sampled maximum was about 236 MiB. These exceed the client target; no
+memory plateau or leak diagnosis is certified. Ten producer PIDs' combined RSS
+was recorded separately (roughly 155–196 MiB), not included in client/daemon RSS.
+
+Resource pressure became substantial: swap went from zero before the gate to
+4,875.56 MiB used after the capacity attempt. No reboot, purge or user-process
+termination was performed. Later `process.memoryUsage().rss` probe values were
+inconsistent with contemporaneous `ps` RSS (including values larger than physical
+RAM); resident-budget comparisons use the sampled `ps` values, not those probe
+RSS numbers. The sudden later drop in sampled RSS is not evidence of repair.
+
+Two harness defects were discovered and corrected after this failed attempt:
+
+- Flush completion reread whole growing trace files. Later logs reached roughly
+  46–59 MiB per component and the harness itself reached about 393 MiB in a sample.
+  This can add observer pressure; the corrected completion check reads at most a
+  64 KiB tail and tests incomplete append versus a genuinely new footer.
+- A failed health lookup used PID 0 as a sentinel. An ancestry walk from zero is
+  not an ownership check. Flush now rejects invalid/root PIDs before inspecting
+  manifests; the caller omits an unknown daemon instead of inventing its PID.
+  The known daemon, both native TUI and all ten producer PIDs were verified exited
+  after cleanup. No unrelated process signalling was observed.
+
+The later capacity traces overflowed their detail bounds; only aggregate counters
+may be used from those windows. They show repeated global snapshot recovery and
+thousands of pending transport callbacks under pressure, unlike the simpler burst
+case. Native writes remained a small timed envelope compared with scheduled apply
+and replay planning. These aggregates are not a complete correlated timeline.
+
+The primary capacity/memory failures precede the growing-log reader problem, but
+the defects and host pressure prevent treating this as a clean sustained-capacity
+benchmark. No passing 10-minute soak is claimed. Repeating it until green without
+addressing the measured amplification would not be a product repair.

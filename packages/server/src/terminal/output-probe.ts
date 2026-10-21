@@ -10,6 +10,9 @@ export type OutputObservation = {
   generation?: number;
   pending?: number;
   durationMs?: number;
+  cols?: number;
+  rows?: number;
+  aggregateOnly?: boolean;
 };
 
 /** Temporary measurement gate: metadata only, bounded storage, no hot-path I/O. */
@@ -23,6 +26,7 @@ export function createOutputProbe(
   let events: object[] = [];
   let sequence = 0;
   let discarded = 0;
+  let aggregated = 0;
   let highWater: Record<string, { bytes: number; pending: number }> = Object.create(null);
   let totals: Record<string, { count: number; bytes: number; durationMs: number }> =
     Object.create(null);
@@ -38,6 +42,10 @@ export function createOutputProbe(
       high.bytes = Math.max(high.bytes, event.bytes ?? 0);
       high.pending = Math.max(high.pending, event.pending ?? 0);
       sequence++;
+      if (event.aggregateOnly) {
+        aggregated++;
+        return;
+      }
       if (events.length >= 32768) {
         discarded++;
         return;
@@ -53,6 +61,8 @@ export function createOutputProbe(
         "generation",
         "pending",
         "durationMs",
+        "cols",
+        "rows",
       ] as const) {
         if (event[key] !== undefined && Number.isFinite(event[key])) {
           metadata[key] = event[key]!;
@@ -86,6 +96,7 @@ export function createOutputProbe(
           type: "summary",
           pid: process.pid,
           discarded,
+          aggregated,
           truncated,
           valid: discarded === 0 && truncated === 0,
           totals,
@@ -100,6 +111,7 @@ export function createOutputProbe(
       }
       events = [];
       discarded = 0;
+      aggregated = 0;
       totals = Object.create(null);
       highWater = Object.create(null);
     },

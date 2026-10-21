@@ -1,4 +1,4 @@
-import { readdir, readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { EmbeddedTerminalRenderable } from "@opentui/core";
@@ -9,6 +9,7 @@ import {
   latencySummary,
   observedToken,
 } from "@/tests/support/output-profile-statistics";
+import { flushProfileProbes } from "@/tests/support/output-profile-trace";
 import {
   focusSharedTerminal,
   sharedWait,
@@ -25,53 +26,6 @@ export type ProfileResult = {
   rawBytes: number;
   timedOut: boolean;
 };
-
-/** Flush only manifests belonging to the current fixture roots, never arbitrary PIDs. */
-export async function flushProfileProbes(directory: string, roots: number[]): Promise<void> {
-  const rows = Bun.spawnSync(["ps", "-axo", "pid=,ppid="])
-    .stdout.toString()
-    .trim()
-    .split("\n")
-    .map((line) => line.trim().split(/\s+/).map(Number));
-  const owned = new Set(roots);
-  for (let previous = -1; previous !== owned.size;) {
-    previous = owned.size;
-    for (const [pid, parent] of rows) {
-      if (owned.has(parent!)) {
-        owned.add(pid!);
-      }
-    }
-  }
-  const entries = await Promise.all(
-    (await readdir(directory))
-      .filter((name) => name.endsWith(".manifest.json"))
-      .map(async (name) => ({
-        name,
-        ...JSON.parse(await readFile(join(directory, name), "utf8")),
-      })),
-  );
-  const selected = entries.filter((entry) => owned.has(entry.pid));
-  const sizes = new Map<string, number>();
-  for (const entry of selected) {
-    const path = join(directory, entry.name.replace(".manifest.json", ".jsonl"));
-    sizes.set(path, (await readFile(path).catch(() => new Uint8Array())).byteLength);
-  }
-  for (const pid of new Set<number>(selected.map((entry) => entry.pid))) {
-    process.kill(pid, "SIGUSR2");
-  }
-  await sharedWait(async () => {
-    for (const [path, before] of sizes) {
-      const bytes = await readFile(path).catch(() => new Uint8Array());
-      if (
-        bytes.byteLength <= before ||
-        !new TextDecoder().decode(bytes).trimEnd().split("\n").at(-1)?.includes('"type":"summary"')
-      ) {
-        return false;
-      }
-    }
-    return true;
-  }, "owned diagnostic flush footers");
-}
 
 export function profileResidentKiB(
   daemonPid: number | null,

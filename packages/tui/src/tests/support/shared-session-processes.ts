@@ -6,6 +6,7 @@ import { EmbeddedTerminalRenderable } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createClient, type WorkCraftClient } from "@work-craft/server/client";
 
+import { flushProfileProbes } from "@/tests/support/output-profile-trace";
 import { createTerminalObservation } from "@/tests/support/terminal-observation";
 
 const ROOT = resolve(import.meta.dir, "../../../../..");
@@ -88,11 +89,13 @@ export async function startSharedSessionFixture(
   const shell = join(home, "shell");
   await writeFile(shell, `#!/bin/sh\nprintf '%s\\n' "$$" >> '${home}/shell-pids'\nexec /bin/sh\n`);
   await chmod(shell, 0o755);
+  const profileDirectory =
+    options.profileDirectory ?? process.env.WORK_CRAFT_OUTPUT_PROFILE_DIR ?? "";
   const environment = {
     ...process.env,
     WORK_CRAFT_HOME: home,
     SHELL: shell,
-    WORK_CRAFT_OUTPUT_PROFILE_DIR: options.profileDirectory ?? "",
+    WORK_CRAFT_OUTPUT_PROFILE_DIR: profileDirectory,
   };
   function spawnDaemon() {
     return Bun.spawn([process.execPath, join(ROOT, "packages/server/src/main.ts")], {
@@ -204,6 +207,17 @@ export async function startSharedSessionFixture(
     },
     async close(): Promise<void> {
       try {
+        if (profileDirectory) {
+          await flushProfileProbes(profileDirectory, [
+            daemon.pid,
+            ...Array.from(processes.keys(), (tui) => tui.child.pid),
+          ]).catch(async (error) => {
+            await writeFile(
+              join(profileDirectory, "flush-failure.json"),
+              JSON.stringify({ error: String(error) }),
+            ).catch(() => {});
+          });
+        }
         for (const tui of processes.keys()) {
           await fixture.stopTui(tui);
         }
