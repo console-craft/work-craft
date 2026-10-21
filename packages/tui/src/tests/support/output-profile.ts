@@ -24,6 +24,7 @@ export type ProfileResult = {
   probes: { sentMs: number; childMs: number | null; visibleMs: number | null }[];
   peakResidentKiB: Record<string, number>;
   rawBytes: number;
+  outerBytes: number | null;
   timedOut: boolean;
 };
 
@@ -148,6 +149,7 @@ export async function runOutputProfile(
   let send!: (text: string) => void;
   let view: (() => { text: string; cursor: boolean }) | null = null;
   let stats = () => ({ rawBytes, parseMs });
+  let readRawBytes = async () => rawBytes;
   try {
     if (mode === "application") {
       const fixture = await startSharedSessionFixture({
@@ -158,7 +160,15 @@ export async function runOutputProfile(
       const [a, b] = fixture.tuis;
       await fixture.stopTui(b);
       await focusSharedTerminal(a);
-      const initial = (await fixture.client.snapshot()).geometry.panes.find(
+      const initialSnapshot = await fixture.client.snapshot();
+      const baselineCursor = initialSnapshot.terminalHistories.find(
+        (history) => history.paneId === fixture.paneId,
+      )!.cursor;
+      readRawBytes = async () =>
+        (await fixture.client.snapshot()).terminalHistories.find(
+          (history) => history.paneId === fixture.paneId,
+        )!.cursor - baselineCursor;
+      const initial = initialSnapshot.geometry.panes.find(
         (entry) => entry.paneId === fixture.paneId,
       )!.size;
       await fixture.resizeTui(a, 160 + 80 - initial.cols, 45 + 24 - initial.rows);
@@ -291,7 +301,8 @@ export async function runOutputProfile(
     const result: ProfileResult = {
       mode,
       probes,
-      rawBytes: observed.rawBytes,
+      rawBytes: await readRawBytes(),
+      outerBytes: mode === "application" ? observed.rawBytes : null,
       timedOut: probes.some(
         (probe) => probe.childMs === null || (view !== null && probe.visibleMs === null),
       ),

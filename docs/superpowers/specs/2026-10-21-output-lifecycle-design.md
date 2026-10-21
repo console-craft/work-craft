@@ -3,7 +3,8 @@
 ## Status
 
 Approved on 2026-10-21 for planning the measurement/feasibility gate, including
-the proposed acceptance budgets. Production architecture remains unapproved. Continues on
+the proposed acceptance budgets; the user then selected native execution of that
+plan. Production architecture remains unapproved. Continues on
 `feat/shared-session-navigation` and its existing draft PR. Do not merge the
 stabilization checkpoint separately or create a new branch/worktree.
 
@@ -30,7 +31,8 @@ Workflow:
 - [x] Complete a fresh builder check and address consequential gaps.
 - [x] Obtain user approval, including the proposed performance budgets.
 - [x] Write the measurement/feasibility implementation plan.
-- [ ] Record measured findings and approve the concrete architecture amendment.
+- [x] Record measured findings and propose the concrete architecture amendment.
+- [ ] Obtain approval of the measured architecture amendment.
 - [ ] Plan and implement the approved production changes, review and verify.
 
 A fresh independent builder check found no consequential unanswered questions
@@ -374,5 +376,196 @@ The gate, not an unmeasured implementation, must settle:
   default to the current stack unless evidence says otherwise.
 
 These are intentional feasibility decisions, not permission for the implementer
-to choose a different correctness contract. Until the amendment is approved, only
-the measurement/feasibility plan is ready to be written.
+to choose a different correctness contract. Until the measured amendment below
+is approved, the production implementation plan remains blocked.
+
+## Measured Architecture Amendment — Proposed, Not Approved
+
+This amendment is the result of the native measurement gate, not permission to
+implement it. The [measurement report](../handovers/2026-10-21-output-lifecycle-measurements.md)
+records every failure, observer limitation, counterfactual and native capability.
+The ten-minute soak was attempted but aborted after 8 min 19 s; capacity acceptance
+remains unmet. This proposal does not relax any original acceptance budget.
+
+### Decision And Alternatives
+
+Recommend two ordered production slices on this same branch, with no merge until
+both correctness and capacity acceptance are satisfied:
+
+1. Separate pane output publication/consumption from React control state and keep
+   the displayed shell/native lifetime stable through transient synchronization.
+   A notification-cadence counterfactual changed the unchanged burst from
+   9–12-second stalls / ~800 MiB clients to 87–91 ms / ~200 MiB clients, then the
+   stall returned when the patch was removed. Do not ship that global timer as
+   the architectural solution.
+2. Make each live daemon runtime own one headless terminal parser using the
+   **already installed OpenTUI native implementation**, and send interested TUI
+   clients current screen projections rather than reconstructing parser state
+   from truncated raw history. TUI clients become presentation/input-event leaves,
+   not competing authorities for VT modes and automatic responses.
+
+The alternatives are weaker for this requirement. Buffer-limit increases do not
+remove the measured amplification. Hidden raw-tail replay demonstrably loses
+modes. Keeping all client parsers forever duplicates hidden work across clients
+and cannot recover a newly attached client after lost history. Export/import of
+full native VT state is not a supported installed API. A daemon-owned live parser
+does not need to serialize its full internal state just to replace a disposable
+client; the client only needs the current presentation.
+
+This explicitly supersedes the old no-server-emulator and viewer-owned-response
+constraints **only if this amendment is approved**. It introduces no second
+emulator implementation, remote service, worker, socket, binary codec or framework.
+The server would declare the existing native dependency directly; packaging must
+be proven, not inferred from it already being installed in the TUI package.
+
+### Mandatory First Feasibility Slice
+
+Before production protocol cutover, prove one real PTY → headless parser →
+cross-process screen projection → normal OpenTUI client → semantic input → same
+PTY round trip. Demonstrate Unicode/wide/combining cells, colors/attributes,
+cursor shape/visibility, clipping, resize, mouse, paste, application keys and
+one query response with two differently sized clients. Also prove independent
+client scrollback and selection/copy: the current native leaf scrolls history
+when a wheel event is not consumed by the child. A single daemon parser must not
+silently turn that local browsing into shared navigation or another viewer's
+scroll position. No private parser-handle
+scraping, fabricated VT checkpoints or dependency patch is allowed.
+
+Use the public native context, compose and buffer-lease/resolved-character APIs
+already characterized. Resolve material glyphs/styles, not context-local handles.
+The cell/row projection is not itself a VT checkpoint; full parser state remains
+in the live daemon. The short 50-parser primitive was about 67 MiB RSS, but it
+did not include the server, serialization or transport. Prove those costs before
+claiming the 256 MiB daemon budget.
+
+If complete projection/input/compiled packaging cannot be supported through the
+installed public APIs, stop before cutover and return the precise missing native
+contract for approval. Do not quietly fall back to reset-plus-tail or introduce
+another emulator. This is the same kind of feasibility gate used before Stage 2's
+canonical-grid rendering, not a licence to redesign unrelated capabilities.
+
+### Control, Bytes And Presentation
+
+- Keep React control state history-free: session attachment, durable navigation,
+  layout, process state, geometry, local shell presentation and errors. Pure output
+  does not change the root subscription or clone the all-pane map.
+- For the first slice, use concrete pane-local output subscriptions and incremental
+  cursor/marker consumption. Hidden raw delivery cannot be dropped yet; its exact
+  continuity is not solved until the daemon-parser slice is complete.
+- In the daemon-parser slice, read/retain durable raw bytes as today, then parse
+  every byte and ordered resize once per runtime, regardless of viewer interest.
+  Raw history remains available through existing CLI snapshot behavior. Ordinary
+  TUI control synchronization never serializes every pane's raw history.
+- Only visible/interested panes produce client presentation traffic. Shell reports
+  output interest separately from focus, selection and sizing eligibility. The
+  client paints material rows/spans with native OpenTUI primitives in a workbench
+  leaf; it does not replay an approximate ANSI snapshot into a second VT parser.
+- Begin with complete current-pane projections, not a general diff protocol.
+  Keep only the latest pending projection per interested pane; intermediate
+  pictures may be coalesced **after all bytes were parsed**. Every projection
+  identifies epoch, runtime generation, grid sequence, frame sequence and parsed
+  byte frontier. Never combine rows from different frame/grid identities.
+- Retain the existing bounded transport. Limit pending encoded projections to
+  2 MiB/connection, independently of the 8 MiB socket backpressure limit. An
+  over-budget frame must use scoped bounded recovery, not an unbounded bypass.
+  Before cutover, demonstrate an atomic bounded transfer for the largest accepted
+  geometry (or return a proposed explicit capacity limit for approval). Do not
+  silently change the existing 4096-by-4096 report validation contract.
+
+### Initial Scheduling Budgets
+
+These are proposed starting values from the observed mechanisms, not measured
+guarantees of the new architecture. The production plan must verify/tune them
+against the unchanged acceptance targets and report the final values:
+
+- Cap one native byte write at **8 KiB**, and aggregate parse work per event-loop
+  turn at **2 ms**, checked between writes. Resume through an I/O-yielding turn,
+  not an endless microtask chain. A single slow native call is a measured limit,
+  not something a JavaScript clock can preempt.
+- Round-robin ready panes, one write quantum before another busy pane; selected
+  pane priority may not starve siblings, hidden query processing or mirrors.
+- Publish/paint current projections at most once per **33 ms** per interested
+  pane. Skip unchanged frames, keep input/control handling independent, and use
+  the existing renderer's scheduling bridges rather than a new scheduler service.
+- Keep byte retention separate from unread work; discard consumed queue storage
+  promptly. Keep the existing 1 MiB durable raw tail; do not raise it as a recovery
+  substitute. Preserve installed native scrollback behavior until an explicit
+  compatibility decision says otherwise.
+
+### Input, Replies And Readiness
+
+Latest-active eligible viewer sizing remains unchanged. The daemon parser uses
+that canonical grid; a smaller client's painted view follows/clips the canonical
+cursor as before. Apply ordered VT/PTY resize before forwarding an activity-driven
+input at the resulting grid. Raw input trust-boundary validation stays in place.
+
+With daemon-owned parsing, the TUI forwards validated semantic key/paste/mouse/
+focus events for native encoding by the daemon's current parser, rather than
+encoding with stale client VT modes. Retain the existing stamped raw input path
+for concrete CLI/test/API callers that already supply encoded bytes. Bound event
+payloads/queues using existing input limits; no disconnected replay or redirection.
+Both paths retain epoch, attachment, navigation-away-and-back, runtime and geometry
+checks, plus the shell and local native-presentation gates.
+
+Preserve Unicode/Kitty key metadata, local selection/copy behavior, canonical mouse
+coordinates and focus reporting. Carry forward existing native capability
+workarounds (including mode 2048) until independently proven unnecessary; moving
+encoding/replies is not permission to advertise unsupported native features.
+Keep scrollback offsets and selection client-local. Projection requests may carry
+that viewer's history offset, but composing it must not change the authoritative
+VT modes, another viewer's projection, or the grid used for PTY input. Prove this
+with the public scroll/compose APIs in the first slice; return a missing API rather
+than share the viewport or remove scrolling if those primitives are insufficient.
+
+If pending output affects encoding, capture an input's required parsed frontier
+at acceptance and drain to that finite watermark before encoding. Revalidate
+authority before writing; do not wait for an infinitely moving empty queue. The
+production plan must pin bounded pending-input behavior and exercise overload
+without accepting stale keys or creating an unbounded typing queue.
+
+One daemon parser answers live device queries exactly once, including hidden
+panes with no eligible viewer. Replies are not activity. Replaying persisted
+history for display never generates responses, and obsolete runtime/epoch work
+cannot answer for a replacement child. Clients send no automatic emulator replies.
+This replaces output-time viewer response stamps, not user authorization checks.
+
+Attachment/recovery/geometry changes establish a finite required presentation
+frontier. Input entry becomes ready only after the current projection at that
+frontier has committed to the local native view at usable dimensions. Subsequent
+ordinary output must not repeatedly blur/refocus the pane. Remote navigation and
+explicit detach/deletion invalidate old readiness synchronously; stale screens
+remain presentation only, never authority.
+
+### Lifetimes, Recovery And Compatibility
+
+The daemon parser lives with the runtime, not subscribers or history baselines.
+The displayed workbench leaf is keyed by pane/runtime/reset identity, never raw
+history cursor. Same-context recovery/reattachment keeps its last coherent frame
+and shell layout mounted. A genuinely new destination may show local pending
+content, but never pass off the former pane as that destination or route its keys.
+
+Missing presentation frames recover only that pane's current projection. A slow
+HTTP recovery cannot block unrelated input, command acknowledgments or another
+pane's data. Guard epoch/runtime/grid/request generations; late recovery cannot
+roll back a newer displayed frontier. New clients obtain current projections
+without replaying truncated instructions. No arbitrary process memory is restored
+across daemon restart: preserve existing interrupted/restart separators, durable
+raw history and exactly-once cold spawn semantics, suppressing historical replies.
+Cold-history presentation and fresh-child mode isolation must be demonstrated in
+the feasibility slice; do not silently lose retained output to implement it.
+
+Protocol changes require a coherent daemon/client version, not mixed-version
+operation. Preserve existing CLI commands/plain-text/JSON results and persistence
+non-destructively; any necessary migration needs its own explicit design. Follow
+current capability owners, and update the source map only when implementation
+actually changes ownership. Remove the temporary probes after measurements are
+replaced by focused regression/acceptance tests; no production telemetry API.
+
+### Completion Remains The Original Product Contract
+
+Require real Neovim/OpenCode in WezTerm, 50-pane/10-TUI capacity, confirmed
+input-ready switches, correctly isolated stalled-viewer/recovery tests, hidden
+history rollover, full ten-minute soak, memory budgets, repeated regressions,
+connected review and `bun run check`. Repair the harness's readiness preconditions
+and use bounded footer observation before rerunning capacity. No larger timeout,
+successful counterfactual or lack of placeholder text substitutes for this work.

@@ -1,5 +1,6 @@
 import { expect, spyOn, test } from "bun:test";
 import { appendFile, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { EmbeddedTerminalRenderable } from "@opentui/core";
@@ -82,9 +83,7 @@ test("display observation retains at most 256 KiB while the native screen stays 
 });
 
 test("direct PTY comparison records child receipts without inventing display timestamps and cleans up", async () => {
-  const directory = await mkdtemp(
-    "/private/var/folders/f3/1n3tcb0x5yj4d887rrm_ns_80000gn/T/opencode/profile-direct-test-",
-  );
+  const directory = await mkdtemp(join(tmpdir(), "work-craft-profile-direct-test-"));
   try {
     const result = await runOutputProfile("direct-pty", directory, { probes: 3, warmupMs: 0 });
     expect(result.timedOut).toBe(false);
@@ -101,9 +100,7 @@ test("direct PTY comparison records child receipts without inventing display tim
 });
 
 test("capacity fixture owns exactly fifty panes, thirty tabs and ten complex producers", async () => {
-  const directory = await mkdtemp(
-    "/private/var/folders/f3/1n3tcb0x5yj4d887rrm_ns_80000gn/T/opencode/profile-capacity-test-",
-  );
+  const directory = await mkdtemp(join(tmpdir(), "work-craft-profile-capacity-test-"));
   const capacity = await startCapacityProfile(directory);
   try {
     const snapshot = await capacity.fixture.client.snapshot();
@@ -123,9 +120,7 @@ test("capacity fixture owns exactly fifty panes, thirty tabs and ten complex pro
 }, 60000);
 
 test("native comparison observes actual rendered tokens rather than child receipt alone", async () => {
-  const directory = await mkdtemp(
-    "/private/var/folders/f3/1n3tcb0x5yj4d887rrm_ns_80000gn/T/opencode/profile-native-test-",
-  );
+  const directory = await mkdtemp(join(tmpdir(), "work-craft-profile-native-test-"));
   try {
     const result = await runOutputProfile("native", directory, { probes: 3, warmupMs: 0 });
     expect(result.timedOut).toBe(false);
@@ -138,9 +133,7 @@ test("native comparison observes actual rendered tokens rather than child receip
 });
 
 test("application comparison matches the native grid and flushes enabled child traces", async () => {
-  const directory = await mkdtemp(
-    "/private/var/folders/f3/1n3tcb0x5yj4d887rrm_ns_80000gn/T/opencode/profile-application-test-",
-  );
+  const directory = await mkdtemp(join(tmpdir(), "work-craft-profile-application-test-"));
   try {
     const result = await runOutputProfile("application", directory, {
       probes: 3,
@@ -148,6 +141,7 @@ test("application comparison matches the native grid and flushes enabled child t
       diagnostics: true,
     });
     expect(result.probes).toHaveLength(3);
+    expect(result.rawBytes).toBeGreaterThan(result.outerBytes!);
     const traces = (await readdir(directory)).filter(
       (name) => name.endsWith(".jsonl") && name.startsWith("tui-"),
     );
@@ -159,9 +153,7 @@ test("application comparison matches the native grid and flushes enabled child t
 }, 30000);
 
 test("a producer startup timeout still reaps its owned subprocess", async () => {
-  const directory = await mkdtemp(
-    "/private/var/folders/f3/1n3tcb0x5yj4d887rrm_ns_80000gn/T/opencode/profile-timeout-test-",
-  );
+  const directory = await mkdtemp(join(tmpdir(), "work-craft-profile-timeout-test-"));
   const original = Bun.spawn;
   let child: Bun.Subprocess | undefined;
   const capture = spyOn(Bun, "spawn").mockImplementation(((
@@ -195,9 +187,7 @@ test("diagnostic ownership rejects PID zero before inspecting or signalling mani
 });
 
 test("diagnostic completion reads a bounded tail and never accepts an old footer after partial append", async () => {
-  const directory = await mkdtemp(
-    "/private/var/folders/f3/1n3tcb0x5yj4d887rrm_ns_80000gn/T/opencode/profile-footer-test-",
-  );
+  const directory = await mkdtemp(join(tmpdir(), "work-craft-profile-footer-test-"));
   const path = join(directory, "trace.jsonl");
   try {
     await writeFile(path, "old data\n".repeat(1000000) + '{"type":"summary"}\n');

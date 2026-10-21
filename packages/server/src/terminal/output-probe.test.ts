@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createOutputProbe } from "./output-probe.ts";
@@ -95,9 +96,7 @@ test("aggregate-only observations retain counters and high-water without consumi
 });
 
 test("disabled recorder creates no files or signal handlers; enabled subprocess flushes on SIGUSR2", async () => {
-  const directory = await mkdtemp(
-    "/private/var/folders/f3/1n3tcb0x5yj4d887rrm_ns_80000gn/T/opencode/probe-test-",
-  );
+  const directory = await mkdtemp(join(tmpdir(), "work-craft-probe-test-"));
   const module = new URL("./output-probe.ts", import.meta.url).href;
   const disabled = Bun.spawnSync(
     [

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createOutputProbe } from "@/client/output-probe";
@@ -54,9 +55,7 @@ test("client recorder strips payload and isolates sink failures", () => {
 });
 
 test("normal daemon and TUIs flush correlated stages without logging terminal text", async () => {
-  const directory = await mkdtemp(
-    "/private/var/folders/f3/1n3tcb0x5yj4d887rrm_ns_80000gn/T/opencode/probe-integration-",
-  );
+  const directory = await mkdtemp(join(tmpdir(), "work-craft-probe-integration-"));
   const fixture = await startSharedSessionFixture({ profileDirectory: directory });
   try {
     const [a] = fixture.tuis;

@@ -2,7 +2,8 @@
 
 ## Status
 
-In progress; no production performance fix or recovery architecture approved.
+Measurements recorded; independent final review pending. No production
+performance fix or recovery architecture approved.
 See the [approved measurement specification](../specs/2026-10-21-output-lifecycle-design.md).
 Execution is native on `feat/shared-session-navigation`, starting at `3298450`.
 The existing burst assertions and native response/input authority remain unchanged.
@@ -86,7 +87,7 @@ required. This exception must not be mistaken for passing CI or merge readiness.
 
 ## Native Continuation And Recovery Feasibility
 
-The enabled characterization suite passed **9 tests / 12 assertions** on the
+The enabled characterization suite passed **10 tests / 14 assertions** on the
 installed OpenTUI 0.6.6. It compares uninterrupted versus byte-split parsing for
 UTF-8, CSI/OSC, alternate screens, saved cursor, scroll regions, wrapping, styles,
 paste/application-cursor modes and query reply bytes. Style comparisons use the
@@ -147,6 +148,14 @@ variant there would not measure their overhead. Their observer costs are reporte
 separately: native `write()` envelopes totalled roughly 63–64 ms per run; the
 application's outer emulator envelopes totalled 15–16 ms per run. These are
 different amounts of emitted output and are not interchangeable CPU benchmarks.
+
+The original comparison artifacts' application `rawBytes` field incorrectly
+counted the outer rendered stream, unlike the PTY counts in direct/native modes.
+No throughput conclusion above uses that field. The collector now separates
+daemon raw-cursor bytes from `outerBytes`; the application fixture test verifies
+the static redraw stream is larger than its rendered updates. Original artifacts
+are preserved rather than rewritten with invented raw counts. Latency and RSS
+samples were independent of that reporting field.
 
 Sampled RSS maxima: one application client process tree 369–377 MiB; daemon
 53–58 MiB. The harness grew across sequential test runs (about 55–138 MiB in the
@@ -266,3 +275,101 @@ The primary capacity/memory failures precede the growing-log reader problem, but
 the defects and host pressure prevent treating this as a clean sustained-capacity
 benchmark. No passing 10-minute soak is claimed. Repeating it until green without
 addressing the measured amplification would not be a product repair.
+
+## One-variable Counterfactual: Output Publication Cadence
+
+After the capacity fixture was gone, controls and the experiment ran serially on
+the same laptop without reboot, purge or stopping user programs. The temporary
+patch changed only pure-output subscriber notification: state/authorization still
+updated synchronously on every chunk, metadata notifications remained immediate,
+and output notifications coalesced on a 50 ms timer. No bytes, markers, input
+validation, producer cadence, native writes or acceptance assertions were removed.
+
+| Run                         | Maximum input-to-visible | Sampled TUI RSS | Probes during production | Result                  |
+| --------------------------- | ------------------------ | --------------- | ------------------------ | ----------------------- |
+| Control A                   | 10,697.29 ms             | ~798 MiB each   | 4/8                      | fail                    |
+| Temporary cadence B, first  | 86.96 ms                 | ~200 / 201 MiB  | 8/8                      | pass, all 29 assertions |
+| Temporary cadence B, second | 91.18 ms                 | ~206 / 206 MiB  | 8/8                      | pass, all 29 assertions |
+| Restored control C          | 9,169.38 ms              | ~789 / 787 MiB  | 3/8                      | fail                    |
+| Restored control D          | 11,865.63 ms             | ~768 / 772 MiB  | 3/8                      | fail                    |
+
+The exact temporary diff is preserved in the artifact directory as
+`notification-experiment.patch` (also held in the plan's ignored workspace while
+executing). It was removed with a targeted inverse patch;
+`git diff --exit-code -- packages/tui/src/client/store.ts` confirmed restoration
+before controls C/D. Nothing from the timer experiment is shipped.
+
+This strongly supports output-publication/reconciliation/replay amplification as
+a causal mechanism for this workload's stalls and allocation pressure. It does
+not isolate every React/GC/native allocation, establish a leak, or certify the
+timer for every authority/recovery race. The production recommendation is a
+separate pane output path with bounded scheduling, not a global 50 ms delay.
+
+All three final standalone Neovim rollover runs passed, 82 assertions each.
+The three final pristine burst controls A/C/D remained red, as expected from an
+unfixed product. A passing counterfactual is not a passing branch.
+
+## Headless Capacity Primitive
+
+A separate, assertion-checked disposable native-context probe created 50 terminal
+parsers at 80x24 with the existing 10,000-line scrollback setting, kept ten active
+for 100 ticks at 100 ms cadence, and parsed 4,096,000 raw bytes. All 50 answered
+fresh device queries. Total native write envelopes were 201.98 ms; sampled RSS
+rose from 44.97 MiB to 66.66 MiB in that standalone process.
+
+This is a promising primitive for daemon ownership, not a daemon capacity test:
+it excludes SQLite/history, PTYs, transport, frame serialization and the client.
+The public native buffer-lease characterization additionally resolves Unicode
+text without exporting parser handles. Complete glyph/style projection, physical
+cursor/input integration and compiled packaging still need an end-to-end
+feasibility gate before any production cutover. No serializer, dependency install
+or alternative emulator was introduced by these experiments.
+
+## Real Application And Physical Limits
+
+Neovim 0.12.4 rollover is exercised through the normal application; OpenCode
+v2.1.1 is installed. No paid provider request was made. Real OpenCode popup flows,
+the configured Neovim/OpenCode pair in WezTerm, physical flicker and Linux were
+not certified. Those remain explicit acceptance work after the approved changes;
+deterministic producers cannot substitute for them.
+
+## Reproduction Commands And Remaining Gate
+
+Create a fresh owned `$PROFILE_DIR` under the approved temporary root; do not
+reuse another running profile's directory. Full capacity is opt-in and can cause
+substantial CPU/memory pressure on the unfixed branch. Run experiments serially.
+
+```sh
+WORK_CRAFT_OUTPUT_PROFILE_DIR="$PROFILE_DIR" bun test packages/tui/src/tests/output-profile.test.ts -t 'output profile comparison' --timeout 1200000
+WORK_CRAFT_OUTPUT_PROFILE_DIR="$PROFILE_DIR" bun test packages/tui/src/tests/output-profile.test.ts -t 'fifty-pane capacity' --timeout 1200000
+WORK_CRAFT_OUTPUT_PROFILE_DIR="$PROFILE_DIR" bun test packages/tui/src/workbench/tests/terminal-continuation.test.ts
+WORK_CRAFT_OUTPUT_PROFILE_DIR='' bun run check
+```
+
+The headless primitive's assertion-checked source is preserved alongside its
+result as `headless-50-probe.ts`. From the repository root it can be repeated
+without installation or application state:
+
+```sh
+bun "$PROFILE_DIR/headless-50-probe.ts" "$PWD" "$PROFILE_DIR/headless-50-repeat.json"
+```
+
+The notification counterfactual requires the preserved temporary patch; do not
+treat it as the production solution or leave it applied for verification. The
+approved [spec's proposed measured amendment](../specs/2026-10-21-output-lifecycle-design.md#measured-architecture-amendment--proposed-not-approved)
+is the next user decision. No production cutover or merge is authorized by this
+diagnostic report.
+
+## Final Verification Before Independent Review
+
+- Latest `bun run check` completed lint, formatting and type checks. Full tests:
+  **1,698 pass, 14 intentionally gated skips, 1 fail**, 123 files, 190.36 s.
+  Sole failure: unchanged four-pane burst maximum **9,662.19 ms**. The prior full
+  check also had only that failure (12,368.94 ms); no green suite is claimed.
+- The 14 default skips are four opt-in performance cases and ten native
+  characterization cases. The ten enabled native cases separately passed all
+  14 assertions; the performance results/failures are documented above.
+- Compiled `bun run build` and isolated `bun run build:smoke` passed separately,
+  since the expected test failure prevents the full check reaching them.
+- The pre-existing server `no-unsafe-finally` warning remains.
+- No push, merge, real-daemon restart, state reset or paid provider call occurred.

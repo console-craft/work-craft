@@ -97,6 +97,36 @@ characterize("headless mouse encoding preserves enabled modes across split instr
 });
 
 characterize(
+  "headless public buffer leases resolve Unicode text without exporting parser handles",
+  () => {
+    const lib = resolveRenderLib();
+    const context = lib.createContext({ objectCapacity: 32, renderCellsMax: 2000 });
+    const terminal = lib.createContextEmbeddedTerminal(context, { cols: 20, rows: 6 });
+    const target = lib.createContextBuffer(context, { width: 20, height: 6 });
+    try {
+      lib.contextEmbeddedTerminalWrite(context, terminal, encode("\x1b[31mλ🙂\x1b[0m"));
+      lib.contextEmbeddedTerminalCompose({ context, target, frame: null }, terminal, 0, 0);
+      const lease = lib.contextAcquireBufferLease(context, target);
+      try {
+        const size = lib.contextBufferLeaseGetRealCharSize(context, lease.handle, true);
+        const bytes = new Uint8Array(size);
+        const lengths = new Uint8Array(20 * 6);
+        expect(
+          lib.contextBufferLeaseWriteResolvedChars(context, lease.handle, bytes, true, lengths),
+        ).toBe(size);
+        expect(new TextDecoder().decode(bytes)).toContain("λ🙂");
+      } finally {
+        lib.contextReleaseBufferLease(context, lease.handle);
+      }
+    } finally {
+      lib.destroyContextBuffer(context, target);
+      lib.destroyContextEmbeddedTerminal(context, terminal);
+      lib.destroyContext(context);
+    }
+  },
+);
+
+characterize(
   "public native context can parse and answer a query without a terminal renderer",
   () => {
     const lib = resolveRenderLib();
