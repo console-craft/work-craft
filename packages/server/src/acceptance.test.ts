@@ -561,6 +561,40 @@ test.serial(
         "both initial shells",
       );
 
+      const selectedFirst = await runCli(home, [
+        "session",
+        "select",
+        session.result.id,
+        "--pane",
+        paneId,
+        "--json",
+      ]);
+      expect(selectedFirst.exitCode).toBe(0);
+      const selectedSecond = await runCli(home, [
+        "session",
+        "select",
+        secondSession.result.id,
+        "--pane",
+        split.result.paneId!,
+        "--json",
+      ]);
+      expect(selectedSecond.exitCode).toBe(0);
+      const selected = await client.snapshot();
+      expect(JSON.parse(selectedFirst.stdout).navigation).toEqual(
+        selected.navigation.find(({ sessionId }) => sessionId === session.result.id),
+      );
+      expect(JSON.parse(selectedSecond.stdout).navigation).toEqual(
+        selected.navigation.find(({ sessionId }) => sessionId === secondSession.result.id),
+      );
+      expect(
+        selected.navigation.find(({ sessionId }) => sessionId === session.result.id)?.paneId,
+      ).toBe(paneId);
+      expect(
+        selected.navigation.find(({ sessionId }) => sessionId === secondSession.result.id)?.paneId,
+      ).toBe(split.result.paneId!);
+      expect(await readShellPids(shellPidsPath)).toEqual(firstShellPids);
+      expect(firstShellPids.every(isAlive)).toBe(true);
+
       let closed!: () => void;
       const disconnected = new Promise<void>((resolve) => {
         closed = resolve;
@@ -673,6 +707,12 @@ test.serial(
         stderr: "",
         stdout:
           `Focused\n` +
+          `  Session: ${secondSession.result.id}\n` +
+          `  Workspace: ${workspace.result.id}\n` +
+          `  Category: design\n` +
+          `  Item: ${item.result.id}\n` +
+          `  Tab: ${opened.result.tabId}\n` +
+          `  Pane: ${split.result.paneId}\n` +
           `  Work\n` +
           `    Inbox\n` +
           `    Today\n` +

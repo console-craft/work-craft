@@ -1,4 +1,8 @@
-import type { CommandResponse, WorkCraftClient } from "@work-craft/server/client";
+import type {
+  CommandResponse,
+  SessionNavigation,
+  WorkCraftClient,
+} from "@work-craft/server/client";
 
 import type { CliArgs } from "./args.ts";
 
@@ -41,10 +45,25 @@ export async function readStatus(
   throw new Error("could not read coherent daemon status");
 }
 
+function navigationLines(navigation: SessionNavigation): string[] {
+  return [
+    `Session: ${navigation.sessionId}`,
+    `Workspace: ${navigation.workspaceId ?? "-"}`,
+    `Category: ${navigation.category ?? "-"}`,
+    `Item: ${navigation.itemId ?? "-"}`,
+    `Tab: ${navigation.tabId ?? "-"}`,
+    `Pane: ${navigation.paneId ?? "-"}`,
+  ];
+}
+
 export function formatSnapshot(snapshot: Snapshot): string {
   const lines: string[] = [];
   for (const session of snapshot.sessions) {
     lines.push(session.name);
+    const navigation = snapshot.navigation.find(({ sessionId }) => sessionId === session.id);
+    if (navigation) {
+      lines.push(...navigationLines(navigation).map((line) => `  ${line}`));
+    }
     for (const membership of snapshot.sessionWorkspaces
       .filter(({ sessionId }) => sessionId === session.id)
       .sort((a, b) => a.position - b.position || a.workspaceId.localeCompare(b.workspaceId))) {
@@ -80,6 +99,13 @@ type Result = CommandResponse["result"];
 
 export function formatResult(command: CliArgs["command"], result: Result): string {
   switch (command) {
+    case "session.navigate":
+    case "session.step":
+    case "session.openItem":
+      if (!result.navigation) {
+        throw new Error(`Missing navigation result for ${command}`);
+      }
+      return `${navigationLines(result.navigation).join("\n")}\n`;
     case "session.create":
     case "workspace.create":
     case "item.create":

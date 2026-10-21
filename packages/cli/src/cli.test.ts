@@ -383,7 +383,7 @@ test("creates resources and controls surfaces through canonical commands", async
       String(tab.tabId),
     ]);
     expect(legacySelection.exitCode).not.toBe(0);
-    expect(legacySelection.stderr).toContain("explicit session");
+    expect(legacySelection.stderr).toContain("session select <session-id> --tab <id>");
     const split = await runJson(home, [
       "pane",
       "split",
@@ -922,6 +922,9 @@ test("prints representative mutation and snapshot output", async () => {
       stderr: "",
       stdout:
         `Main\n` +
+        `  Session: ${sessionId}\n` +
+        `  Workspace: ${workspace.id}\n` +
+        `  Category: inbox\n  Item: -\n  Tab: -\n  Pane: -\n` +
         `  Work\n` +
         `    Inbox\n` +
         `    Today\n` +
@@ -941,6 +944,178 @@ test("rejects invalid invocation with usage and exit 2", async () => {
   const home = await tempHome();
   try {
     expect(await runCli(home, ["list"])).toEqual({ exitCode: 2, stdout: "", stderr: USAGE });
+  } finally {
+    await cleanup(home);
+  }
+});
+
+test("session CLI navigation keeps shared resources but independent selections and returns their authoritative cursor", async () => {
+  const home = await tempHome();
+  try {
+    const first = await runJson(home, ["session", "create", "--name", "First"]);
+    const second = await runJson(home, ["session", "create", "--name", "Second"]);
+    const client = createClient({ socketPath: join(home, "work-craft.sock") });
+    const a = String(first.id);
+    const b = String(second.id);
+    const workspace = await client.command({
+      type: "workspace.create",
+      sessionId: a,
+      name: "Shared",
+    });
+    const workspaceId = workspace.result.id;
+    await client.command({ type: "session.workspace.add", sessionId: b, workspaceId });
+    const root = await client.command({
+      type: "item.create",
+      workspaceId,
+      category: "design",
+      title: "Root",
+    });
+    const item = await client.command({
+      type: "item.create",
+      workspaceId,
+      category: "design",
+      parentId: root.result.id,
+      title: "Line\n\x1b[31m",
+    });
+    const opened = await client.command({
+      type: "surface.ensure",
+      itemId: item.result.id,
+      cwd: home,
+    });
+    const tab = await client.command({
+      type: "tab.create",
+      surfaceId: opened.result.surfaceId!,
+      title: "Other",
+    });
+    const before = await client.snapshot();
+    for (const [flag, target] of [
+      ["workspace", workspaceId],
+      ["category", "design"],
+      ["item", item.result.id],
+      ["tab", tab.result.tabId!],
+      ["pane", tab.result.paneId!],
+    ]) {
+      const result = await runJson(home, ["session", "select", a, `--${flag}`, target!]);
+      expect(result.navigation).toEqual(
+        (await client.snapshot()).navigation.find(({ sessionId }) => sessionId === a),
+      );
+    }
+    const other = await runJson(home, ["session", "open-item", b, "--item", item.result.id]);
+    expect(other.navigation).toMatchObject({
+      sessionId: b,
+      tabId: opened.result.tabId,
+      paneId: opened.result.paneId,
+    });
+    for (const direction of ["next", "previous"]) {
+      const result = await runJson(home, [
+        "session",
+        "step",
+        b,
+        "--level",
+        "tab",
+        "--direction",
+        direction,
+      ]);
+      expect(result.navigation).toMatchObject({
+        tabId: direction === "next" ? tab.result.tabId : opened.result.tabId,
+      });
+    }
+    const snapshot = await client.snapshot();
+    expect(snapshot.navigation.find(({ sessionId }) => sessionId === a)?.tabId).toBe(
+      tab.result.tabId!,
+    );
+    expect(snapshot.navigation.find(({ sessionId }) => sessionId === b)?.tabId).toBe(
+      opened.result.tabId!,
+    );
+    expect(snapshot.panes.map(({ id, startedAt }) => ({ id, startedAt }))).toEqual(
+      before.panes.map(({ id, startedAt }) => ({ id, startedAt })),
+    );
+    const text = await runCli(home, ["snapshot"]);
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain(`Tab: ${tab.result.tabId}`);
+    expect(text.stdout).toContain(`Tab: ${opened.result.tabId}`);
+    expect(text.stdout).toContain('"Line\\n\\u001b[31m"');
+    expect(text.stdout).not.toContain("\x1b");
+    const plain = await runCli(home, ["session", "select", a, "--category", "operations"]);
+    expect(plain).toEqual({
+      exitCode: 0,
+      stderr: "",
+      stdout: `Session: ${a}\nWorkspace: ${workspaceId}\nCategory: operations\nItem: -\nTab: -\nPane: -\n`,
+    });
+
+    const fresh = await client.command({
+      type: "item.create",
+      workspaceId,
+      category: "design",
+      title: "Fresh",
+    });
+    await mkdir(join(home, "client cwd"));
+    const relative = await runCli(
+      home,
+      ["session", "open-item", a, "--item", fresh.result.id, "--cwd", "client cwd", "--json"],
+      {},
+      home,
+    );
+    expect(relative.exitCode).toBe(0);
+    const selected = JSON.parse(relative.stdout) as { paneId: string };
+    expect((await client.snapshot()).panes.find(({ id }) => id === selected.paneId)?.cwd).toBe(
+      join(await realpath(home), "client cwd"),
+    );
+
+    const foreign = await client.command({ type: "workspace.create", sessionId: b, name: "Other" });
+    const invalid = await runCli(home, ["session", "select", a, "--workspace", foreign.result.id]);
+    expect(invalid.exitCode).toBe(1);
+    expect(invalid.stderr).not.toContain("Usage:");
+    expect(
+      (await client.snapshot()).navigation.find(({ sessionId }) => sessionId === a)?.paneId,
+    ).toBe(selected.paneId);
+    const failed = await client.command({
+      type: "item.create",
+      workspaceId,
+      category: "design",
+      title: "Failed",
+    });
+    const failure = await client.command({
+      type: "surface.ensure",
+      itemId: failed.result.id,
+      cwd: join(home, "missing"),
+    });
+    const selectFailed = await runCli(home, [
+      "session",
+      "select",
+      a,
+      "--pane",
+      failure.result.paneId!,
+      "--json",
+    ]);
+    expect(selectFailed.exitCode).toBe(0);
+    expect(JSON.parse(selectFailed.stdout).navigation.paneId).toBe(failure.result.paneId!);
+  } finally {
+    await cleanup(home);
+  }
+}, 20000);
+
+test("invalid session navigation exits with usage before starting a daemon", async () => {
+  const home = await tempHome();
+  try {
+    for (const args of [
+      ["session", "select", "s"],
+      ["session", "select", "s", "--tab", "t", "--pane", "p"],
+      ["session", "select", "s", "--tab", "t", "--tab", "t"],
+      ["session", "select", "s", "--category", "wrong"],
+      ["session", "step", "s", "--level", "pane", "--direction", "next"],
+      ["session", "step", "s", "--level", "tab", "--direction", "up"],
+      ["session", "open-item", "s", "extra", "--item", "i"],
+      ["surface", "select-tab", "surface", "tab"],
+    ]) {
+      const result = await runCli(home, args);
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("Usage:");
+      if (args[0] === "surface") {
+        expect(result.stderr).toContain("session select <session-id> --tab <id>");
+      }
+    }
+    expect(await Bun.file(join(home, "daemon.lock")).exists()).toBe(false);
   } finally {
     await cleanup(home);
   }

@@ -49,6 +49,22 @@ function serverCommand(args: CliArgs): Command | undefined {
       };
     case "session.delete":
       return { type: "session.delete", sessionId: args.sessionId };
+    case "session.navigate":
+      return { type: args.command, sessionId: args.sessionId, target: args.target };
+    case "session.step":
+      return {
+        type: args.command,
+        sessionId: args.sessionId,
+        level: args.level,
+        direction: args.direction,
+      };
+    case "session.openItem":
+      return {
+        type: args.command,
+        sessionId: args.sessionId,
+        itemId: args.itemId,
+        ...(args.cwd === undefined ? {} : { cwd: resolveClientPath(args.cwd) }),
+      };
     case "session.workspace.add":
     case "session.workspace.remove":
       return { type: args.command, sessionId: args.sessionId, workspaceId: args.workspaceId };
@@ -133,7 +149,16 @@ async function main(argv: string[]): Promise<number> {
       if (args.command === "daemon.destroy") {
         await waitForDestroyed();
       }
-      if (response.result.paneId !== undefined) {
+      if (
+        response.result.paneId !== undefined &&
+        [
+          "surface.ensure",
+          "session.openItem",
+          "tab.create",
+          "pane.split",
+          "process.restart",
+        ].includes(args.command)
+      ) {
         const pane = (await client.snapshot()).panes.find(
           ({ id }) => id === response.result.paneId,
         );

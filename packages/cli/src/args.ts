@@ -1,6 +1,6 @@
 import { parseArgs as parseNodeArgs } from "node:util";
 
-import type { CategoryKind } from "@work-craft/server/client";
+import type { CategoryKind, NavigationTarget } from "@work-craft/server/client";
 
 type OutputArgs = { json: boolean };
 
@@ -14,6 +14,14 @@ export type CliArgs =
       position?: number;
     })
   | (OutputArgs & { command: "session.delete"; sessionId: string })
+  | (OutputArgs & { command: "session.navigate"; sessionId: string; target: NavigationTarget })
+  | (OutputArgs & {
+      command: "session.step";
+      sessionId: string;
+      level: "category" | "item" | "tab";
+      direction: -1 | 1;
+    })
+  | (OutputArgs & { command: "session.openItem"; sessionId: string; itemId: string; cwd?: string })
   | (OutputArgs & {
       command: "session.workspace.add" | "session.workspace.remove";
       sessionId: string;
@@ -56,6 +64,9 @@ export const USAGE = `Usage:
   work-craft session create --name <name> [--json]
   work-craft session update <id> [--name <name>] [--position <index>] [--json]
   work-craft session delete <id> [--json]
+  work-craft session select <session-id> --workspace <id>|--category <kind>|--item <id>|--tab <id>|--pane <id> [--json]
+  work-craft session step <session-id> --level <category|item|tab> --direction <previous|next> [--json]
+  work-craft session open-item <session-id> --item <id> [--cwd <path>] [--json]
   work-craft session add-workspace <id> --workspace <id> [--json]
   work-craft session remove-workspace <id> --workspace <id> [--json]
   work-craft workspace create --session <id> --name <name> [--json]
@@ -172,6 +183,88 @@ export function parseArgs(argv: string[]): CliArgs {
   const command = `${argv[0] ?? ""}.${argv[1] ?? ""}`;
   const args = argv.slice(2);
   switch (command) {
+    case "session.select": {
+      const { values, positionals } = parseLeaf(args, {
+        workspace: { type: "string" },
+        category: { type: "string" },
+        item: { type: "string" },
+        tab: { type: "string" },
+        pane: { type: "string" },
+        ...outputOption,
+      });
+      const targets = ["workspace", "category", "item", "tab", "pane"] as const;
+      const selected = targets.filter((key) => values[key] !== undefined);
+      if (positionals.length !== 1 || selected.length !== 1) {
+        throw new UsageError("invalid arguments");
+      }
+      const kind = selected[0]!;
+      const value = required(values[kind]);
+      let target: NavigationTarget;
+      switch (kind) {
+        case "workspace":
+          target = { kind, workspaceId: value };
+          break;
+        case "category":
+          if (!categories.has(value as CategoryKind)) {
+            throw new UsageError("invalid arguments");
+          }
+          target = { kind, category: value as CategoryKind };
+          break;
+        case "item":
+          target = { kind, itemId: value };
+          break;
+        case "tab":
+          target = { kind, tabId: value };
+          break;
+        case "pane":
+          target = { kind, paneId: value };
+          break;
+      }
+      return {
+        command: "session.navigate",
+        sessionId: required(positionals[0]),
+        target,
+        json: values.json ?? false,
+      };
+    }
+    case "session.step": {
+      const { values, positionals } = parseLeaf(args, {
+        level: { type: "string" },
+        direction: { type: "string" },
+        ...outputOption,
+      });
+      if (
+        positionals.length !== 1 ||
+        (values.level !== "category" && values.level !== "item" && values.level !== "tab") ||
+        (values.direction !== "previous" && values.direction !== "next")
+      ) {
+        throw new UsageError("invalid arguments");
+      }
+      return {
+        command,
+        sessionId: required(positionals[0]),
+        level: values.level,
+        direction: values.direction === "previous" ? -1 : 1,
+        json: values.json ?? false,
+      };
+    }
+    case "session.open-item": {
+      const { values, positionals } = parseLeaf(args, {
+        item: { type: "string" },
+        cwd: { type: "string" },
+        ...outputOption,
+      });
+      if (positionals.length !== 1) {
+        throw new UsageError("invalid arguments");
+      }
+      return {
+        command: "session.openItem",
+        sessionId: required(positionals[0]),
+        itemId: required(values.item),
+        ...(values.cwd === undefined ? {} : { cwd: required(values.cwd) }),
+        json: values.json ?? false,
+      };
+    }
     case "session.create": {
       const { values, positionals } = parseLeaf(args, {
         name: { type: "string" },
@@ -313,7 +406,7 @@ export function parseArgs(argv: string[]): CliArgs {
     }
     case "surface.select-tab":
       throw new RemovedCommandError(
-        "surface select-tab was removed; use session navigation with an explicit session",
+        "surface select-tab was removed; use session select <session-id> --tab <id>",
       );
     case "tab.create": {
       const { values, positionals } = parseLeaf(args, {
