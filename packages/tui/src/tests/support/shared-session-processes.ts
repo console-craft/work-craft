@@ -34,6 +34,7 @@ export type SharedSessionFixture = {
   resizeTui(tui: SharedTuiProcess, cols: number, rows: number): Promise<void>;
   restartDaemon(): Promise<void>;
   cli(args: string[]): Promise<Record<string, unknown>>;
+  flushDiagnostics(): Promise<void>;
   close(): Promise<void>;
 };
 
@@ -114,6 +115,18 @@ export async function startSharedSessionFixture(
   const fixture = {
     home,
     client,
+    async flushDiagnostics(): Promise<void> {
+      if (!profileDirectory) {
+        return;
+      }
+      const live = [daemon, ...Array.from(processes.keys(), (tui) => tui.child)].filter(
+        (child) => child.exitCode === null && child.signalCode === null,
+      );
+      await flushProfileProbes(
+        profileDirectory,
+        live.map((child) => child.pid),
+      );
+    },
     startTui(cols: number, rows: number): SharedTuiProcess {
       let output = "";
       const decoder = new TextDecoder();
@@ -208,10 +221,7 @@ export async function startSharedSessionFixture(
     async close(): Promise<void> {
       try {
         if (profileDirectory) {
-          await flushProfileProbes(profileDirectory, [
-            daemon.pid,
-            ...Array.from(processes.keys(), (tui) => tui.child.pid),
-          ]).catch(async (error) => {
+          await fixture.flushDiagnostics().catch(async (error) => {
             await writeFile(
               join(profileDirectory, "flush-failure.json"),
               JSON.stringify({ error: String(error) }),

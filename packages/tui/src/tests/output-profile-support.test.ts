@@ -15,6 +15,7 @@ import {
   observedToken,
 } from "@/tests/support/output-profile-statistics";
 import { flushProfileProbes, readProfileFooter } from "@/tests/support/output-profile-trace";
+import * as sharedProcesses from "@/tests/support/shared-session-processes";
 import { createTerminalObservation } from "@/tests/support/terminal-observation";
 
 test("missing probes remain failures and nearest-rank latency does not hide them", () => {
@@ -185,6 +186,91 @@ test("diagnostic ownership rejects PID zero before inspecting or signalling mani
   await expect(flushProfileProbes("/path-not-read", [0])).rejects.toThrow("owned root PID");
   await expect(flushProfileProbes("/path-not-read", [1])).rejects.toThrow("owned root PID");
 });
+
+for (const scenario of ["absent root", "reused root", "reused descendant"] as const) {
+  test(`diagnostic flush never signals a ${scenario} from an old manifest`, async () => {
+    const directory = await mkdtemp(join(tmpdir(), "work-craft-profile-stale-pid-"));
+    const target = scenario === "reused descendant" ? 424201 : 424200;
+    await writeFile(
+      join(directory, "old.manifest.json"),
+      JSON.stringify({ pid: target, startedAt: "Wed Oct 21 20:00:00 2026" }),
+    );
+    const base = Bun.spawnSync(["true"]);
+    const table =
+      scenario === "absent root"
+        ? "123 1 Wed Oct 21 20:00:00 2026\n"
+        : scenario === "reused root"
+          ? "424200 1 Thu Oct 22 01:00:00 2026\n"
+          : "424200 1 Wed Oct 21 20:00:00 2026\n424201 424200 Thu Oct 22 01:00:00 2026\n";
+    const processes = spyOn(Bun, "spawnSync").mockReturnValue({
+      ...base,
+      stdout: Buffer.from(table),
+    });
+    const signal = spyOn(process, "kill").mockImplementation(() => {
+      throw new Error("unsafe stale PID signal attempted");
+    });
+    try {
+      await expect(flushProfileProbes(directory, [424200])).resolves.toBeUndefined();
+    } finally {
+      signal.mockRestore();
+      processes.mockRestore();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+}
+
+test("diagnostic flush rechecks process birth immediately before signalling", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "work-craft-profile-pid-race-"));
+  await writeFile(
+    join(directory, "old.manifest.json"),
+    JSON.stringify({ pid: 424200, startedAt: "Wed Oct 21 20:00:00 2026" }),
+  );
+  const base = Bun.spawnSync(["true"]);
+  const processes = spyOn(Bun, "spawnSync")
+    .mockReturnValueOnce({ ...base, stdout: Buffer.from("424200 1 Wed Oct 21 20:00:00 2026\n") })
+    .mockReturnValue({ ...base, stdout: Buffer.from("424200 1 Thu Oct 22 01:00:00 2026\n") });
+  const signal = spyOn(process, "kill").mockImplementation(() => {
+    throw new Error("unsafe reused PID signal attempted");
+  });
+  try {
+    await expect(flushProfileProbes(directory, [424200])).rejects.toThrow("identity changed");
+  } finally {
+    signal.mockRestore();
+    processes.mockRestore();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("capacity stream-open rejection closes the acquired real daemon, clients and home", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "work-craft-profile-stream-failure-"));
+  const fixture = await sharedProcesses.startSharedSessionFixture({ boundedObservation: true });
+  const daemonPid = (await fixture.client.health()).pid;
+  const close = fixture.close;
+  let closed = false;
+  const closing = spyOn(fixture, "close").mockImplementation(async () => {
+    await close();
+    closed = true;
+  });
+  const factory = spyOn(sharedProcesses, "startSharedSessionFixture").mockResolvedValue(fixture);
+  const stream = spyOn(fixture.client, "stream").mockRejectedValue(
+    new Error("injected stream-open failure"),
+  );
+  try {
+    await expect(startCapacityProfile(directory)).rejects.toThrow("injected stream-open failure");
+    expect(await stat(fixture.home).catch(() => null)).toBeNull();
+    for (const pid of [daemonPid, ...fixture.tuis.map((tui) => tui.child.pid)]) {
+      expect(() => process.kill(pid, 0)).toThrow();
+    }
+  } finally {
+    stream.mockRestore();
+    factory.mockRestore();
+    closing.mockRestore();
+    if (!closed) {
+      await close();
+    }
+    await rm(directory, { recursive: true, force: true });
+  }
+}, 30000);
 
 test("diagnostic completion reads a bounded tail and never accepts an old footer after partial append", async () => {
   const directory = await mkdtemp(join(tmpdir(), "work-craft-profile-footer-test-"));

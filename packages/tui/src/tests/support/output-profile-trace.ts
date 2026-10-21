@@ -28,21 +28,13 @@ export async function flushProfileProbes(directory: string, roots: number[]): Pr
   if (roots.some((pid) => !Number.isSafeInteger(pid) || pid <= 1)) {
     throw new Error("Invalid owned root PID for diagnostic flush");
   }
-  const processes = Bun.spawnSync(["ps", "-axo", "pid=,ppid="]);
-  if (!processes.success) {
-    throw new Error("Cannot establish diagnostic PID ownership");
-  }
-  const rows = processes.stdout
-    .toString()
-    .trim()
-    .split("\n")
-    .map((line) => line.trim().split(/\s+/).map(Number));
-  const owned = new Set(roots);
+  const rows = profileProcesses();
+  const owned = new Set(roots.filter((pid) => rows.has(pid)));
   for (let previous = -1; previous !== owned.size;) {
     previous = owned.size;
-    for (const [pid, parent] of rows) {
-      if (owned.has(parent!)) {
-        owned.add(pid!);
+    for (const [pid, info] of rows) {
+      if (owned.has(info.parent)) {
+        owned.add(pid);
       }
     }
   }
@@ -54,7 +46,12 @@ export async function flushProfileProbes(directory: string, roots: number[]): Pr
         ...JSON.parse(await readFile(join(directory, name), "utf8")),
       })),
   );
-  const selected = entries.filter((entry) => owned.has(entry.pid));
+  const selected = entries.filter(
+    (entry) =>
+      owned.has(entry.pid) &&
+      typeof entry.startedAt === "string" &&
+      rows.get(entry.pid)?.startedAt === entry.startedAt,
+  );
   const sizes = new Map<string, number>();
   for (const entry of selected) {
     const path = join(directory, entry.name.replace(".manifest.json", ".jsonl"));
@@ -66,6 +63,10 @@ export async function flushProfileProbes(directory: string, roots: number[]): Pr
     );
   }
   for (const pid of new Set<number>(selected.map((entry) => entry.pid))) {
+    // Match the manifest's process birth again immediately before signalling.
+    if (profileProcesses().get(pid)?.startedAt !== rows.get(pid)?.startedAt) {
+      throw new Error("Diagnostic process identity changed before flush");
+    }
     process.kill(pid, "SIGUSR2");
   }
   const deadline = performance.now() + 4000;
@@ -82,4 +83,19 @@ export async function flushProfileProbes(directory: string, roots: number[]): Pr
     await Bun.sleep(10);
   }
   throw new Error("Owned diagnostic flush did not complete");
+}
+
+function profileProcesses(): Map<number, { parent: number; startedAt: string }> {
+  const result = Bun.spawnSync(["ps", "-axo", "pid=,ppid=,lstart="]);
+  if (!result.success) {
+    throw new Error("Cannot establish diagnostic PID ownership");
+  }
+  const rows = new Map<number, { parent: number; startedAt: string }>();
+  for (const line of result.stdout.toString().split("\n")) {
+    const match = /^(\d+)\s+(\d+)\s+(.+)$/.exec(line.trim());
+    if (match) {
+      rows.set(Number(match[1]), { parent: Number(match[2]), startedAt: match[3]!.trim() });
+    }
+  }
+  return rows;
 }

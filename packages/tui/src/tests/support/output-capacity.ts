@@ -3,7 +3,6 @@ import { join } from "node:path";
 
 import { profileProbes, profileResidentKiB } from "@/tests/support/output-profile";
 import { latencySummary } from "@/tests/support/output-profile-statistics";
-import { flushProfileProbes } from "@/tests/support/output-profile-trace";
 import {
   focusSharedTerminal,
   sharedWait,
@@ -28,8 +27,9 @@ export async function startCapacityProfile(
   });
   const programPaneIds: string[] = [];
   const idlePaneIds: string[] = [];
-  const control = await fixture.client.stream({ onMessage() {} });
+  let control: Awaited<ReturnType<typeof fixture.client.stream>> | undefined;
   try {
+    control = await fixture.client.stream({ onMessage() {} });
     await fixture.resizeTui(fixture.tuis[0], 200, 60);
     await fixture.resizeTui(fixture.tuis[1], 180, 55);
     for (let item = 0; item < 10; item++) {
@@ -95,7 +95,7 @@ export async function startCapacityProfile(
     control.close();
     return { fixture, programPaneIds, idlePaneIds };
   } catch (error) {
-    control.close();
+    control?.close();
     await fixture.close();
     throw error;
   }
@@ -229,9 +229,7 @@ export async function measureCapacityProfile(
         JSON.stringify({ elapsedMs: performance.now() - started, memory, errors }),
       );
       if (options.diagnostics) {
-        await flushProfileProbes(directory, [daemonPid, a.child.pid, b.child.pid]).catch((error) =>
-          errors.push(String(error)),
-        );
+        await fixture.flushDiagnostics().catch((error) => errors.push(String(error)));
       }
       const label = ((minute - 1) % 5) * 2;
       await fixture.client.command({
@@ -269,12 +267,7 @@ export async function measureCapacityProfile(
     }
     control?.close();
     if (options.diagnostics) {
-      const health = await fixture.client.health().catch(() => null);
-      const roots = [a.child.pid, b.child.pid];
-      if (health) {
-        roots.push(health.pid);
-      }
-      await flushProfileProbes(directory, roots).catch((error) => errors.push(String(error)));
+      await fixture.flushDiagnostics().catch((error) => errors.push(String(error)));
     }
     await fixture.close();
   }

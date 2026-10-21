@@ -2,8 +2,9 @@
 
 ## Status
 
-Measurements recorded; independent final review pending. No production
-performance fix or recovery architecture approved.
+Measurement gate recorded and independently reviewed. Both Important diagnostic
+safety findings were reproduced and fixed; product performance/capacity acceptance
+remains unmet. No production performance fix or recovery architecture approved.
 See the [approved measurement specification](../specs/2026-10-21-output-lifecycle-design.md).
 Execution is native on `feat/shared-session-navigation`, starting at `3298450`.
 The existing burst assertions and native response/input authority remain unchanged.
@@ -373,3 +374,42 @@ diagnostic report.
   since the expected test failure prevents the full check reaching them.
 - The pre-existing server `no-unsafe-finally` warning remains.
 - No push, merge, real-daemon restart, state reset or paid provider call occurred.
+
+## Independent Review And Post-review Verification (2026-10-22)
+
+One fresh reviewer examined the complete branch package, focused gate diff,
+connected owners, plan, spec, report and rulings. It found no Critical issues,
+two Important diagnostic safety issues and one Minor clock-calibration issue.
+Its builder check found the proposed production slices/first feasibility gate
+sufficiently specified to plan after approval, with no new product question.
+
+The executor fixed both Important findings in one test-driven pass:
+
+1. Capacity control-stream acquisition now sits inside the fixture cleanup scope.
+   A real daemon/TUI/home rejection regression failed before the fix and passes
+   after it, verifying actual owned process exit and home removal.
+2. Flush roots come from still-live fixture subprocesses. The ancestry walk
+   excludes absent roots; manifests record `ps` process-start identity, which is
+   matched and rechecked immediately before signalling. Absent/reused root and
+   descendant regressions intercepted unsafe attempts before the fix, then passed;
+   a process-birth change between checks now fails closed immediately. No real
+   unsafe signal was sent in these tests. Legacy manifests without birth identity
+   cannot authorize a flush.
+
+Focused recorder/harness verification: **25 pass, 101 assertions**. Enabled
+native characterization: **10 pass, 14 assertions**. Post-fix `bun run check`:
+lint/format/types passed; **1,703 pass, 14 gated skips, 1 fail**, 123 files,
+188.96 s. The only failure is the unchanged burst maximum **9,288.76 ms**.
+Compiled build and isolated smoke passed again separately. No new diagnostic
+failure is hidden by that baseline exception; no green product suite is claimed.
+
+Deferred minor: direct-PTY mode has no display-based clock brackets, and historical
+sub-millisecond child timestamp differences include a negative sample. Treat those
+figures as uncalibrated, not precise input latency; future display-independent
+receipt acknowledgments should calibrate that path. This does not undermine the
+multi-second burst finding or reversible cadence experiment.
+
+The review intentionally did not certify baseline repair, confounded scenario
+isolation, production projection feasibility, physical/platform/all-day behavior,
+unrelated pre-gate UI/library work or exact React-versus-GC attribution. Those
+boundaries remain explicit; the proposed amendment is awaiting user approval.

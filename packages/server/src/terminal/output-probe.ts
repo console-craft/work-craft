@@ -124,9 +124,14 @@ let probe: ReturnType<typeof createOutputProbe> | undefined;
 if (directory && role && ["daemon", "tui", "harness"].includes(role)) {
   const name = `${role}-server-${process.pid}`;
   try {
+    const identity = Bun.spawnSync(["ps", "-o", "lstart=", "-p", String(process.pid)]);
+    const startedAt = identity.stdout.toString().trim();
+    if (!identity.success || !startedAt) {
+      throw new Error("Cannot establish diagnostic process identity");
+    }
     writeFileSync(
       join(directory, `${name}.manifest.json`),
-      JSON.stringify({ role, component: "server", pid: process.pid }),
+      JSON.stringify({ role, component: "server", pid: process.pid, startedAt }),
       { mode: 0o600, flag: "wx" },
     );
     probe = createOutputProbe(

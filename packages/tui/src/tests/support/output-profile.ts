@@ -9,7 +9,6 @@ import {
   latencySummary,
   observedToken,
 } from "@/tests/support/output-profile-statistics";
-import { flushProfileProbes } from "@/tests/support/output-profile-trace";
 import {
   focusSharedTerminal,
   sharedWait,
@@ -146,6 +145,7 @@ export async function runOutputProfile(
   let clientPids: number[] = [];
   let childPid = 0;
   let cleanup: () => Promise<void> = async () => {};
+  let flushDiagnostics: () => Promise<void> = async () => {};
   let send!: (text: string) => void;
   let view: (() => { text: string; cursor: boolean }) | null = null;
   let stats = () => ({ rawBytes, parseMs });
@@ -157,6 +157,7 @@ export async function runOutputProfile(
         profileDirectory: options.diagnostics ? directory : "",
       });
       cleanup = fixture.close;
+      flushDiagnostics = fixture.flushDiagnostics;
       const [a, b] = fixture.tuis;
       await fixture.stopTui(b);
       await focusSharedTerminal(a);
@@ -296,7 +297,7 @@ export async function runOutputProfile(
     const after = profileResidentKiB(daemonPid, clientPids, [childPid]);
     const observed = stats();
     if (options.diagnostics && mode === "application") {
-      await flushProfileProbes(directory, [daemonPid!, ...clientPids]);
+      await flushDiagnostics();
     }
     const result: ProfileResult = {
       mode,
