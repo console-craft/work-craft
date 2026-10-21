@@ -12,11 +12,14 @@ async function commandBody(request: Request): Promise<unknown> {
   }
 }
 
-export function startHttpServer(app: WorkCraftApp, socketPath: string): Bun.Server<undefined> {
-  const server = Bun.serve({
+export function startHttpServer(
+  app: WorkCraftApp,
+  socketPath: string,
+): Bun.Server<{ snapshot: "control" | "full" }> {
+  const server = Bun.serve<{ snapshot: "control" | "full" }>({
     unix: socketPath,
     async fetch(request, server) {
-      const { pathname } = new URL(request.url);
+      const { pathname, searchParams } = new URL(request.url);
       try {
         if (request.method === "GET" && pathname === "/health") {
           return Response.json(app.health());
@@ -32,8 +35,34 @@ export function startHttpServer(app: WorkCraftApp, socketPath: string): Bun.Serv
         if (request.method === "POST" && pathname === "/command") {
           return Response.json(await app.execute(await commandBody(request)));
         }
+        if (request.method === "GET" && pathname === "/control") {
+          const started = outputProbeEnabled ? performance.now() : 0;
+          const response = Response.json(app.controlSnapshot());
+          if (outputProbeEnabled) {
+            observeOutput({ stage: "control.http", durationMs: performance.now() - started });
+          }
+          return response;
+        }
+        const history = /^\/panes\/([^/]+)\/history$/.exec(pathname);
+        if (request.method === "GET" && history) {
+          const after = searchParams.get("after");
+          if (after !== null && (!/^\d+$/.test(after) || !Number.isSafeInteger(Number(after)))) {
+            throw new ProtocolError("History cursor must be a non-negative safe integer");
+          }
+          let paneId: string;
+          try {
+            paneId = decodeURIComponent(history[1]!);
+          } catch {
+            throw new ProtocolError("Invalid pane path");
+          }
+          return Response.json(app.paneHistory(paneId, after === null ? undefined : Number(after)));
+        }
         if (request.method === "GET" && pathname === "/stream") {
-          if (server.upgrade(request)) {
+          if (
+            server.upgrade(request, {
+              data: { snapshot: searchParams.get("view") === "control" ? "control" : "full" },
+            })
+          ) {
             return;
           }
           return Response.json({ error: "WebSocket upgrade failed" }, { status: 400 });
@@ -51,7 +80,7 @@ export function startHttpServer(app: WorkCraftApp, socketPath: string): Bun.Serv
     },
     websocket: {
       open(socket) {
-        app.subscribe(socket);
+        app.subscribe(socket, socket.data);
       },
       close(socket) {
         app.unsubscribe(socket);

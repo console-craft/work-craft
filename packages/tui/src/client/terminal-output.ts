@@ -1,5 +1,6 @@
 import type { TerminalBuffer } from "@/client/terminal-buffer";
 import { createTerminalConsumer } from "@/client/terminal-consumer";
+import type { ReplayProgress } from "@/client/terminal-replay";
 
 export type PaneOutput = {
   readonly paneId: string;
@@ -15,6 +16,7 @@ export type TerminalOutputs = {
 
 type OutputRegistry = TerminalOutputs & {
   buffers(): ReadonlyMap<string, TerminalBuffer>;
+  frontier(paneId: string): ReplayProgress | null;
   set(paneId: string, buffer: TerminalBuffer): void;
   replace(buffers: ReadonlyMap<string, TerminalBuffer>): void;
 };
@@ -33,6 +35,14 @@ export function createTerminalOutputs(
     }
   >();
 
+  function prepare(paneId: string, buffer: TerminalBuffer): TerminalBuffer {
+    const previous = buffers.get(paneId);
+    return channels.get(paneId)?.consumer.needsReset(buffer) &&
+      buffer.resetGeneration === previous?.resetGeneration
+      ? { ...buffer, resetGeneration: buffer.resetGeneration + 1 }
+      : buffer;
+  }
+
   function notify(paneId: string): void {
     const channel = channels.get(paneId);
     channel?.consumer.update(buffers.get(paneId));
@@ -46,6 +56,7 @@ export function createTerminalOutputs(
 
   return {
     buffers: () => buffers,
+    frontier: (paneId) => channels.get(paneId)?.consumer.frontier() ?? null,
     pane(paneId) {
       let channel = channels.get(paneId);
       if (!channel) {
@@ -83,7 +94,7 @@ export function createTerminalOutputs(
     },
     set(paneId, buffer) {
       if (buffers.get(paneId) !== buffer) {
-        buffers.set(paneId, buffer);
+        buffers.set(paneId, prepare(paneId, buffer));
         notify(paneId);
       }
     },
@@ -92,7 +103,7 @@ export function createTerminalOutputs(
         return;
       }
       const previous = buffers;
-      buffers = new Map(next);
+      buffers = new Map([...next].map(([paneId, buffer]) => [paneId, prepare(paneId, buffer)]));
       for (const paneId of new Set([...previous.keys(), ...buffers.keys()])) {
         if (previous.get(paneId) !== buffers.get(paneId)) {
           notify(paneId);

@@ -27,6 +27,8 @@ const responseStamp = {
 function buffer(text = "", overrides: Partial<TerminalBuffer> = {}): TerminalBuffer {
   return {
     epoch: "e",
+    runtimeGeneration: 0,
+    resetGeneration: 0,
     history: encode(text),
     historyStartCursor: 0,
     historyPrefixBytes: 0,

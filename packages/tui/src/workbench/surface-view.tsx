@@ -16,9 +16,11 @@ import { TerminalPane, type TerminalPaneProps } from "@/workbench/terminal-pane.
 
 export function terminalPaneKey(
   paneId: string,
-  buffer: Pick<TerminalBuffer, "epoch" | "historyCursor"> | undefined,
+  buffer:
+    | Pick<TerminalBuffer, "epoch" | "runtimeGeneration" | "resetGeneration" | "historyCursor">
+    | undefined,
 ): string {
-  return `${paneId}:${buffer?.epoch ?? "pending"}:${buffer?.historyCursor ?? 0}`;
+  return `${paneId}:${buffer?.epoch ?? "pending"}:${buffer?.runtimeGeneration ?? 0}:${buffer?.resetGeneration ?? 0}:${buffer?.historyCursor ?? 0}`;
 }
 
 export type SurfaceViewProps = Pick<
@@ -30,7 +32,7 @@ export type SurfaceViewProps = Pick<
   reactivatingPaneIds: ReadonlySet<string>;
   canReactivate(paneId: string): boolean;
   onReactivatePane(paneId: string): void;
-  snapshot: Snapshot;
+  snapshot: Omit<Snapshot, "terminalHistories">;
   stream: StreamConnection | null;
   surface: Snapshot["surfaces"][number];
   outputs: TerminalOutputs;

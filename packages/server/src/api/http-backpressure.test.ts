@@ -11,19 +11,21 @@ import { openDatabase } from "../persistence/database.ts";
 import { startHttpServer } from "./http.ts";
 import type { ServerMessage } from "./protocol.ts";
 
-async function fixture() {
+async function fixture(mode: "control" | "full" = "full") {
   const directory = await mkdtemp(join(tmpdir(), "work-craft-backpressure-"));
   const db = openDatabase(":memory:");
   const app = createApp({ db });
-  let peer!: Bun.ServerWebSocket;
+  let peer!: Bun.ServerWebSocket<unknown>;
   const subscribe = app.subscribe;
-  const capture = spyOn(app, "subscribe").mockImplementation((socket) => {
+  const capture = spyOn(app, "subscribe").mockImplementation((socket, options) => {
     peer = socket;
-    subscribe(socket);
+    subscribe(socket, options);
   });
   const socketPath = join(directory, "stream.sock");
   const server = startHttpServer(app, socketPath);
-  const socket = new WebSocket(`ws+unix:${socketPath}:/stream`);
+  const socket = new WebSocket(
+    `ws+unix:${socketPath}:/stream${mode === "control" ? "?view=control" : ""}`,
+  );
   const messages: ServerMessage[] = [];
   let closed = false;
   socket.on("message", (data) => messages.push(JSON.parse(data.toString())));
@@ -57,7 +59,7 @@ async function waitFor(predicate: () => boolean): Promise<void> {
   expect(predicate()).toBe(true);
 }
 
-function burst(peer: Bun.ServerWebSocket, chunks: number): void {
+function burst(peer: Bun.ServerWebSocket<unknown>, chunks: number): void {
   const data = Buffer.alloc(16_384, 120).toString("base64");
   for (let i = 0; i < chunks; i++) {
     peer.send(
@@ -73,50 +75,52 @@ function burst(peer: Bun.ServerWebSocket, chunks: number): void {
   }
 }
 
-test("a paused stream survives four MiB of raw pane output and still accepts commands", async () => {
-  const a = await fixture();
-  try {
-    a.socket.pause();
-    burst(a.peer, 256);
-    await Bun.sleep(100);
-    a.socket.resume();
-    await waitFor(
-      () =>
-        a.closed() || a.messages.filter(({ type }) => type === "terminal.output").length === 256,
-    );
-    expect(a.closed()).toBe(false);
-    expect(a.messages.filter(({ type }) => type === "terminal.output")).toHaveLength(256);
-    a.socket.send(JSON.stringify({ type: "client.attach", sessionId: null, requestId: 1 }));
-    await waitFor(() => a.messages.some(({ type }) => type === "client.attached"));
-    const attachment = a.messages.find((m) => m.type === "client.attached")!;
-    if (attachment.type !== "client.attached") {
-      throw new Error("Missing attachment");
+for (const mode of ["control", "full"] as const) {
+  test(`${mode}: a paused stream survives four MiB of raw pane output and still accepts commands`, async () => {
+    const a = await fixture(mode);
+    try {
+      a.socket.pause();
+      burst(a.peer, 256);
+      await Bun.sleep(100);
+      a.socket.resume();
+      await waitFor(
+        () =>
+          a.closed() || a.messages.filter(({ type }) => type === "terminal.output").length === 256,
+      );
+      expect(a.closed()).toBe(false);
+      expect(a.messages.filter(({ type }) => type === "terminal.output")).toHaveLength(256);
+      a.socket.send(JSON.stringify({ type: "client.attach", sessionId: null, requestId: 1 }));
+      await waitFor(() => a.messages.some(({ type }) => type === "client.attached"));
+      const attachment = a.messages.find((m) => m.type === "client.attached")!;
+      if (attachment.type !== "client.attached") {
+        throw new Error("Missing attachment");
+      }
+      a.socket.send(
+        JSON.stringify({
+          type: "client.command",
+          requestId: 2,
+          attachmentGeneration: attachment.attachment.generation,
+          command: { type: "session.create", name: "After burst" },
+        }),
+      );
+      await waitFor(() => a.messages.some(({ type }) => type === "command.result"));
+      expect(a.app.snapshot().sessions[0]?.name).toBe("After burst");
+    } finally {
+      await a.close();
     }
-    a.socket.send(
-      JSON.stringify({
-        type: "client.command",
-        requestId: 2,
-        attachmentGeneration: attachment.attachment.generation,
-        command: { type: "session.create", name: "After burst" },
-      }),
-    );
-    await waitFor(() => a.messages.some(({ type }) => type === "command.result"));
-    expect(a.app.snapshot().sessions[0]?.name).toBe("After burst");
-  } finally {
-    await a.close();
-  }
-});
+  });
 
-test("an excessive stalled stream is still disconnected rather than buffered indefinitely", async () => {
-  const a = await fixture();
-  try {
-    a.socket.pause();
-    burst(a.peer, 1024);
-    await Bun.sleep(100);
-    a.socket.resume();
-    await waitFor(a.closed);
-    expect(a.messages.filter(({ type }) => type === "terminal.output").length).toBeLessThan(1024);
-  } finally {
-    await a.close();
-  }
-});
+  test(`${mode}: an excessive stalled stream is still disconnected rather than buffered indefinitely`, async () => {
+    const a = await fixture(mode);
+    try {
+      a.socket.pause();
+      burst(a.peer, 1024);
+      await Bun.sleep(100);
+      a.socket.resume();
+      await waitFor(a.closed);
+      expect(a.messages.filter(({ type }) => type === "terminal.output").length).toBeLessThan(1024);
+    } finally {
+      await a.close();
+    }
+  });
+}

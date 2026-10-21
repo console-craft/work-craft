@@ -5,6 +5,7 @@ import { extend } from "@opentui/react";
 import {
   type Command,
   type CommandResponse,
+  type ControlSnapshot,
   type Snapshot,
   type ViewerReport,
   type WorkCraftClient,
@@ -17,6 +18,7 @@ import { createTerminalOutputs } from "@/client/terminal-output";
 import { WorkCraftShell } from "@/shell/shell.tsx";
 import {
   attachmentFixture,
+  controlSnapshotFixture,
   snapshotFixture,
   streamFixture,
   terminalSnapshotFixture,
@@ -70,7 +72,11 @@ export function deferred<T>(): {
   return { promise, resolve, reject };
 }
 
-export function workCraftStateFixture(overrides: Partial<WorkCraftState> = {}): WorkCraftState {
+export function workCraftStateFixture(
+  overrides: Omit<Partial<WorkCraftState>, "snapshot"> & {
+    snapshot?: Snapshot | ControlSnapshot | null;
+  } = {},
+): WorkCraftState {
   const snapshot = snapshotFixture({
     navigation: [
       {
@@ -93,9 +99,13 @@ export function workCraftStateFixture(overrides: Partial<WorkCraftState> = {}): 
       },
     ],
   });
+  const { snapshot: suppliedSnapshot, ...rest } = overrides;
+  const source = suppliedSnapshot === undefined ? snapshot : suppliedSnapshot;
+  const initial =
+    source && ("terminalHistories" in source ? terminalSnapshotFixture(source) : source);
   const fixture: WorkCraftState = {
     getState: () => fixture,
-    snapshot,
+    snapshot: initial && controlSnapshotFixture(initial),
     status: "connected",
     connectionError: null,
     attachment: attachmentFixture(),
@@ -160,11 +170,11 @@ export function workCraftStateFixture(overrides: Partial<WorkCraftState> = {}): 
     command: async () => ({ ok: true, revision: 1, result: { id: "result-1" } }),
     reload: async () => {},
     resync: async () => {},
+    resyncPane: async () => {},
     stream: null,
     outputs: createTerminalOutputs(),
-    ...overrides,
+    ...rest,
   };
-  fixture.snapshot = fixture.snapshot && terminalSnapshotFixture(fixture.snapshot);
   if (overrides.attachment === undefined) {
     fixture.attachment =
       fixture.snapshot?.sessions.length === 1
@@ -172,8 +182,8 @@ export function workCraftStateFixture(overrides: Partial<WorkCraftState> = {}): 
         : attachmentFixture(null);
   }
   fixture.geometry = fixture.snapshot?.geometry ?? { sequence: 0, tabs: [], panes: [] };
-  if (overrides.outputs === undefined && fixture.snapshot) {
-    fixture.outputs = createTerminalOutputs(snapshotTerminals(fixture.snapshot, new Map()));
+  if (overrides.outputs === undefined && initial && "terminalHistories" in initial) {
+    fixture.outputs = createTerminalOutputs(snapshotTerminals(initial, new Map()));
   }
   return fixture;
 }
@@ -197,6 +207,13 @@ export async function liveInputFixture(
     ensureDaemon: async () => {},
     health: async () => ({ epoch: initial.epoch, revision: initial.revision, pid: 1 }),
     snapshot: async () => initial,
+    controlSnapshot: async () => controlSnapshotFixture(initial),
+    paneHistory: async (paneId) => ({
+      epoch: initial.epoch,
+      paneId,
+      runtimeGeneration: 0,
+      history: initial.terminalHistories.find((history) => history.paneId === paneId)!,
+    }),
     streamOnce: async () => ({ type: "snapshot", snapshot: initial }),
     stream: async () =>
       streamFixture({
@@ -229,7 +246,7 @@ export async function liveInputFixture(
             cursor.sessionId === command.sessionId ? navigation : cursor,
           ),
         };
-        await store.apply({ type: "snapshot", snapshot: next });
+        await store.apply({ type: "control.snapshot", snapshot: next });
         commit?.(store.getState());
         return { ok: true, revision: next.revision, result: { id: paneId, paneId, navigation } };
       }
@@ -258,7 +275,7 @@ export async function liveInputFixture(
           revision: current.revision + Number(item.id !== old.itemId),
           navigation: [navigation],
         };
-        await store.apply({ type: "snapshot", snapshot: next });
+        await store.apply({ type: "control.snapshot", snapshot: next });
         commit?.(store.getState());
         return { ok: true, revision: next.revision, result: { id: item.id, navigation } };
       }
@@ -325,6 +342,7 @@ export async function liveInputFixture(
       const bytes = new TextEncoder().encode(text);
       await store.apply({
         type: "terminal.output",
+        runtimeGeneration: buffer.runtimeGeneration,
         epoch: current.snapshot!.epoch,
         paneId,
         cursor: (buffer.chunks.at(-1)?.cursor ?? buffer.historyCursor) + bytes.length,
@@ -336,8 +354,8 @@ export async function liveInputFixture(
     renderCurrent() {
       act(() => commit!(store.getState()));
     },
-    async publish(snapshot: Snapshot, render = true) {
-      const next = terminalSnapshotFixture(snapshot);
+    async publish(snapshot: Snapshot | ControlSnapshot, render = true) {
+      const next = "terminalHistories" in snapshot ? terminalSnapshotFixture(snapshot) : snapshot;
       const previous = store.snapshot()?.geometry;
       if (
         previous &&
@@ -346,7 +364,11 @@ export async function liveInputFixture(
       ) {
         next.geometry.sequence = Math.max(next.geometry.sequence, previous.sequence + 1);
       }
-      await store.apply({ type: "snapshot", snapshot: next });
+      await store.apply(
+        "terminalHistories" in next
+          ? { type: "snapshot", snapshot: next }
+          : { type: "control.snapshot", snapshot: next },
+      );
       if (render) {
         act(() => commit!(store.getState()));
         await setup.flush();
@@ -424,11 +446,11 @@ export function splitSurfaceSnapshot(): Snapshot {
   });
 }
 
-export function selectedPaneSnapshot(
-  snapshot: Snapshot,
+export function selectedPaneSnapshot<T extends Omit<Snapshot, "terminalHistories">>(
+  snapshot: T,
   paneId: string,
   generation: number,
-): Snapshot {
+): T {
   const tab = snapshot.tabs.find((tab) => paneIds(tab.layout).includes(paneId))!;
   const surface = snapshot.surfaces.find(({ id }) => id === tab.surfaceId)!;
   const item = snapshot.items.find(({ id }) => id === surface.itemId)!;

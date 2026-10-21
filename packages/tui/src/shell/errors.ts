@@ -34,7 +34,9 @@ export function layoutSourceKey(paneId: string): string {
 }
 
 /** Record-owned failures stop existing with their source; transient form errors keep their lifetime. */
-export function retainedErrorSources(snapshot: Snapshot): ReadonlySet<string> {
+export function retainedErrorSources(
+  snapshot: Omit<Snapshot, "terminalHistories">,
+): ReadonlySet<string> {
   const keys = new Set<string>();
   const roots = new Set(
     snapshot.items
@@ -86,7 +88,7 @@ export function retainsErrorSource(sourceKey: string, retained: ReadonlySet<stri
 }
 
 export function observeOperationalFailures(
-  snapshot: Snapshot | null,
+  snapshot: Omit<Snapshot, "terminalHistories"> | null,
   connectionError: string | null,
   now: number,
   nextRequestId: () => number,

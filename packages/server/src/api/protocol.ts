@@ -61,8 +61,7 @@ export type InputStamp = {
   /** Per-tab generation; unrelated tab activity must not invalidate these bytes. */
   geometrySequence: number;
 };
-export type TerminalInputContext = InputStamp &
-  (
+export type TerminalInputContext = InputStamp & { runtimeGeneration?: number } & (
     | { source: "response" }
     | { source: "input"; kind: "key" | "paste" | "mouse" | "focus"; activitySequence?: number }
   );
@@ -82,7 +81,7 @@ export type InteractiveServerMessage =
       type: "terminal.geometry";
       epoch: string;
       geometry: TerminalGeometry;
-      resizes: { paneId: string; marker: GridMarker }[];
+      resizes: { paneId: string; marker: GridMarker; runtimeGeneration: number }[];
     };
 
 export type LayoutNode =
@@ -182,6 +181,16 @@ export type CommandResult = {
   navigation?: SessionNavigation;
 };
 
+/** Runtime identity is daemon-local; epoch disambiguates daemon restarts. */
+export type PaneRuntimeIdentity = { paneId: string; runtimeGeneration: number };
+export type ControlSnapshot = Omit<Snapshot, "terminalHistories"> & {
+  terminalStates: PaneRuntimeIdentity[];
+};
+export type PaneHistoryResponse = PaneRuntimeIdentity & {
+  epoch: string;
+  history: Snapshot["terminalHistories"][number];
+};
+
 export type CommandResponse = { ok: true; revision: number; result: CommandResult };
 
 export type Command =
@@ -237,6 +246,8 @@ export type ServerMessage =
   | InteractiveServerMessage
   | { type: "snapshot"; snapshot: Snapshot }
   | { type: "snapshot.available"; epoch: string; revision: number }
+  | { type: "control.snapshot"; snapshot: ControlSnapshot }
+  | { type: "control.available"; epoch: string; revision: number }
   | {
       type: "terminal.output";
       epoch: string;
@@ -244,8 +255,16 @@ export type ServerMessage =
       cursor: number;
       data: string;
       geometrySequence: number;
+      runtimeGeneration: number;
     }
-  | { type: "process.status"; epoch: string; paneId: string; status: PaneStatus; error?: string };
+  | {
+      type: "process.status";
+      epoch: string;
+      paneId: string;
+      runtimeGeneration: number;
+      status: PaneStatus;
+      error?: string;
+    };
 
 export type ValidationField = "name" | "title" | "path";
 

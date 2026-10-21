@@ -4,8 +4,8 @@ import { observeOutput, outputProbeEnabled } from "./output-probe.ts";
 import { resolveShellSpawn, type RuntimePane } from "./restore.ts";
 
 export type RuntimeCallbacks = {
-  onOutput(paneId: string, bytes: Uint8Array): void;
-  onStatus(paneId: string, status: PaneStatus, error?: string): void;
+  onOutput(paneId: string, bytes: Uint8Array, runtimeGeneration: number): void;
+  onStatus(paneId: string, status: PaneStatus, runtimeGeneration: number, error?: string): void;
 };
 
 type LiveRuntime = {
@@ -89,15 +89,22 @@ function signalProcesses(expected: ProcessInfo[], signal: NodeJS.Signals): void 
 
 export class RuntimeRegistry {
   private readonly runtimes = new Map<string, LiveRuntime>();
+  private readonly generations = new Map<string, number>();
 
   constructor(private readonly callbacks: RuntimeCallbacks) {}
+
+  generation(paneId: string): number {
+    return this.generations.get(paneId) ?? 0;
+  }
 
   async start(pane: RuntimePane, size: TerminalSize = { cols: 80, rows: 24 }): Promise<void> {
     if (this.isLive(pane.id)) {
       throw new Error(`Pane already has a live runtime: ${pane.id}`);
     }
 
-    this.callbacks.onStatus(pane.id, "starting");
+    const generation = this.generation(pane.id) + 1;
+    this.generations.set(pane.id, generation);
+    this.callbacks.onStatus(pane.id, "starting", generation);
     let terminal: Bun.Terminal | undefined;
     let runtime: LiveRuntime | undefined;
     try {
@@ -112,7 +119,11 @@ export class RuntimeRegistry {
         terminal: {
           cols: size.cols,
           rows: size.rows,
-          data: (_terminal, bytes) => this.callbacks.onOutput(pane.id, bytes),
+          data: (_terminal, bytes) => {
+            if (this.generation(pane.id) === generation) {
+              this.callbacks.onOutput(pane.id, bytes, generation);
+            }
+          },
           exit: resolveTerminalExit,
         },
       });
@@ -125,7 +136,7 @@ export class RuntimeRegistry {
           spawnedTerminal.close();
         }
         if (publishExit && this.runtimes.get(pane.id) === runtime) {
-          this.callbacks.onStatus(pane.id, "exited");
+          this.callbacks.onStatus(pane.id, "exited", generation);
         }
         return code;
       });
@@ -138,7 +149,7 @@ export class RuntimeRegistry {
         },
       };
       this.runtimes.set(pane.id, runtime);
-      this.callbacks.onStatus(pane.id, "running");
+      this.callbacks.onStatus(pane.id, "running", generation);
     } catch (cause) {
       if (runtime === undefined) {
         terminal?.close();
@@ -151,7 +162,7 @@ export class RuntimeRegistry {
       }
       this.runtimes.delete(pane.id);
       const error = cause instanceof Error ? cause.message : String(cause);
-      this.callbacks.onStatus(pane.id, "failed", error);
+      this.callbacks.onStatus(pane.id, "failed", generation, error);
       throw cause;
     }
   }

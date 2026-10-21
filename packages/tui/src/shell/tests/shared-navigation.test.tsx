@@ -215,8 +215,8 @@ test("a genuinely unread output gap repairs history without detaching or stealin
     const stream = a.store.getState().stream;
     const attachment = a.store.getState().attachment;
     const recovered = structuredClone(a.store.snapshot()!);
-    recovered.terminalHistories[0] = {
-      ...recovered.terminalHistories[0]!,
+    const history = {
+      paneId: "pane-1",
       cursor: 2_400_000,
       startCursor: 1_500_000,
       prefixBytes: 2,
@@ -226,7 +226,12 @@ test("a genuinely unread output gap repairs history without detaching or stealin
       initialGridSequence: 0,
       resizes: [],
     };
-    a.client.snapshot = async () => recovered;
+    a.client.paneHistory = async () => ({
+      epoch: recovered.epoch,
+      paneId: "pane-1",
+      runtimeGeneration: 0,
+      history,
+    });
     await act(async () => {
       await a.output("x".repeat(1_200_000));
       await a.output("y".repeat(1_200_000));

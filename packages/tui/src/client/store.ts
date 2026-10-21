@@ -2,9 +2,11 @@ import {
   type ClientAttachment,
   type Command,
   type CommandResponse,
+  type ControlSnapshot,
   decodeBytes,
   type InputStamp,
   type LayoutNode,
+  type PaneHistoryResponse,
   type ServerMessage,
   type Snapshot,
   type StreamConnection,
@@ -15,6 +17,7 @@ import {
 import { observeOutput, outputProbeEnabled } from "@/client/output-probe";
 import {
   appendTerminalChunk,
+  mergePaneHistory,
   snapshotTerminals,
   type TerminalBuffer,
 } from "@/client/terminal-buffer";
@@ -26,7 +29,7 @@ export type WorkCraftState = {
   /** Live authority for asynchronous callbacks whose React projection may lag. */
   getState(): WorkCraftState;
   connectionError: string | null;
-  snapshot: Snapshot | null;
+  snapshot: ControlSnapshot | null;
   status: ConnectionStatus;
   /** Null awaits an acknowledgment; an acknowledged sessionId:null means explicitly detached. */
   attachment: ClientAttachment | null;
@@ -40,6 +43,7 @@ export type WorkCraftState = {
   command(command: Command): Promise<CommandResponse>;
   /** Repair retained output without withdrawing the current attachment or input context. */
   resync(): Promise<void>;
+  resyncPane(paneId: string): Promise<void>;
   reload(): Promise<void>;
   stream: StreamConnection | null;
   outputs: TerminalOutputs;
@@ -49,7 +53,7 @@ export type WorkCraftStore = {
   apply(message: ServerMessage): Promise<void>;
   getState(): WorkCraftState;
   reload(): Promise<void>;
-  snapshot(): Snapshot | null;
+  snapshot(): ControlSnapshot | null;
   start(): Promise<void>;
   stop(): void;
   subscribe(listener: () => void): () => void;
@@ -105,9 +109,148 @@ export function createWorkCraftStore(
     },
     reload,
     resync,
+    resyncPane: async (paneId) => {
+      try {
+        await resyncPane(paneId);
+      } catch (cause) {
+        update({
+          connectionError: `Terminal ${paneId}: ${cause instanceof Error ? cause.message : String(cause)}`,
+        });
+      }
+    },
     stream: null,
     outputs,
   };
+
+  type Recovery = {
+    identity: string;
+    controller: AbortController;
+    promise: Promise<void>;
+    resolve(): void;
+    reject(error: unknown): void;
+    started: boolean;
+  };
+  const recoveries = new Map<string, Recovery>();
+  let activeRecoveries = 0;
+
+  function recoveryIdentity(paneId: string): string | null {
+    const snapshot = state.snapshot;
+    const runtime = snapshot?.terminalStates.find((entry) => entry.paneId === paneId);
+    const navigation = snapshot?.navigation.find(
+      (entry) => entry.sessionId === state.attachment?.sessionId,
+    );
+    return snapshot && runtime
+      ? [
+          run,
+          connectionGeneration,
+          attachmentRequest,
+          snapshot.epoch,
+          runtime.runtimeGeneration,
+          navigation?.generation,
+          navigation?.itemId,
+          navigation?.tabId,
+        ].join(":")
+      : null;
+  }
+
+  function discardObsoleteRecoveries(): void {
+    for (const [paneId, job] of recoveries) {
+      if (state.status !== "connected" || job.identity !== recoveryIdentity(paneId)) {
+        recoveries.delete(paneId);
+        job.controller.abort();
+        job.resolve();
+      }
+    }
+  }
+
+  function pumpRecoveries(): void {
+    for (const [paneId, job] of recoveries) {
+      if (activeRecoveries >= 4) {
+        break;
+      }
+      if (job.started) {
+        continue;
+      }
+      job.started = true;
+      activeRecoveries++;
+      const buffer = outputs.buffers().get(paneId);
+      const after = buffer?.needsHistory ? undefined : outputs.frontier(paneId)?.cursor;
+      void client
+        .paneHistory(paneId, after, { signal: job.controller.signal })
+        .then((response: PaneHistoryResponse) => {
+          if (
+            recoveries.get(paneId) !== job ||
+            job.identity !== recoveryIdentity(paneId) ||
+            state.status !== "connected" ||
+            response.epoch !== state.snapshot?.epoch ||
+            response.paneId !== paneId ||
+            response.history.paneId !== paneId ||
+            response.runtimeGeneration !==
+              state.snapshot.terminalStates.find((entry) => entry.paneId === paneId)
+                ?.runtimeGeneration
+          ) {
+            return;
+          }
+          outputs.set(
+            paneId,
+            mergePaneHistory(response, outputs.buffers().get(paneId), state.geometry.sequence),
+          );
+        })
+        .then(job.resolve, job.reject)
+        .finally(() => {
+          activeRecoveries--;
+          if (recoveries.get(paneId) === job) {
+            recoveries.delete(paneId);
+          }
+          pumpRecoveries();
+        });
+    }
+  }
+
+  function resyncPane(paneId: string): Promise<void> {
+    const identity = recoveryIdentity(paneId);
+    if (!identity || state.status !== "connected") {
+      return Promise.resolve();
+    }
+    discardObsoleteRecoveries();
+    const existing = recoveries.get(paneId);
+    if (existing) {
+      return existing.promise;
+    }
+    let resolve!: () => void;
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<void>((yes, no) => {
+      resolve = yes;
+      reject = no;
+    });
+    recoveries.set(paneId, {
+      identity,
+      promise,
+      resolve,
+      reject,
+      started: false,
+      controller: new AbortController(),
+    });
+    pumpRecoveries();
+    return promise;
+  }
+
+  function requestPaneHistory(paneId: string): void {
+    void resyncPane(paneId).catch((cause) => {
+      update({
+        connectionError: `Terminal ${paneId}: ${cause instanceof Error ? cause.message : String(cause)}`,
+      });
+    });
+  }
+
+  function recoverMissingHistories(): void {
+    discardObsoleteRecoveries();
+    for (const [paneId, buffer] of outputs.buffers()) {
+      if (buffer.needsHistory) {
+        requestPaneHistory(paneId);
+      }
+    }
+  }
 
   async function attach(sessionId: string | null): Promise<void> {
     const stream = state.stream;
@@ -118,9 +261,11 @@ export function createWorkCraftStore(
     initialChoice = false;
     desiredSession = sessionId;
     update({ attachment: null });
+    discardObsoleteRecoveries();
     const attachment = await stream.attach(sessionId);
     if (request === attachmentRequest && stream === state.stream) {
       update({ attachment });
+      recoverMissingHistories();
     }
   }
 
@@ -175,6 +320,8 @@ export function createWorkCraftStore(
           parent.workspaceId === item.workspaceId &&
           parent.category === item.category)) &&
       pane?.kind === "terminal" &&
+      outputs.buffers().get(paneId)?.runtimeGeneration ===
+        snapshot.terminalStates.find((entry) => entry.paneId === paneId)?.runtimeGeneration &&
       pane.processStatus === status &&
       containsPane(tab?.layout ?? null, paneId)
     );
@@ -206,7 +353,21 @@ export function createWorkCraftStore(
     }
   }
 
-  function replaceSnapshot(snapshot: Snapshot): void {
+  function replaceSnapshot(incoming: Snapshot | ControlSnapshot): void {
+    let snapshot: ControlSnapshot;
+    if ("terminalHistories" in incoming) {
+      const { terminalHistories: _histories, ...metadata } = incoming;
+      snapshot = {
+        ...metadata,
+        terminalStates: incoming.terminalHistories.map(({ paneId }) => ({
+          paneId,
+          runtimeGeneration: outputs.buffers().get(paneId)?.runtimeGeneration ?? 0,
+        })),
+      };
+      outputs.replace(snapshotTerminals(incoming, outputs.buffers()));
+    } else {
+      snapshot = incoming;
+    }
     const current = state.snapshot;
     const sameEpoch = current?.epoch === snapshot.epoch;
     const geometry =
@@ -227,23 +388,52 @@ export function createWorkCraftStore(
       snapshot.epoch !== current.epoch ||
       snapshot.revision > current.revision
     ) {
-      outputs.replace(snapshotTerminals(snapshot, outputs.buffers()));
+      reconcileOutputs(snapshot);
       update({
         snapshot: geometry === snapshot.geometry ? snapshot : { ...snapshot, geometry },
         geometry,
       });
     } else if (snapshot.epoch === current.epoch && snapshot.revision === current.revision) {
-      outputs.replace(snapshotTerminals(snapshot, outputs.buffers()));
+      reconcileOutputs(snapshot);
       if (geometry !== state.geometry) {
         update({ geometry, snapshot: { ...current, geometry } });
       }
     } else if (sameEpoch && geometry !== state.geometry) {
       update({ geometry, snapshot: { ...current!, geometry } });
     }
+    recoverMissingHistories();
+  }
+
+  function reconcileOutputs(snapshot: ControlSnapshot): void {
+    const next = new Map<string, TerminalBuffer>();
+    for (const { paneId, runtimeGeneration } of snapshot.terminalStates) {
+      const previous = outputs.buffers().get(paneId);
+      next.set(
+        paneId,
+        previous?.epoch === snapshot.epoch && previous.runtimeGeneration === runtimeGeneration
+          ? previous
+          : {
+              epoch: snapshot.epoch,
+              runtimeGeneration,
+              resetGeneration: 0,
+              needsHistory: true,
+              history: new Uint8Array(),
+              historyCursor: 0,
+              historyStartCursor: 0,
+              historyPrefixBytes: 0,
+              initialSize:
+                snapshot.geometry.panes.find((entry) => entry.paneId === paneId)?.size ?? null,
+              initialGridSequence: null,
+              resizes: [],
+              chunks: [],
+            },
+      );
+    }
+    outputs.replace(next);
   }
 
   async function refresh(activeRun?: number, connection?: number): Promise<boolean> {
-    const snapshot = await client.snapshot();
+    const snapshot = await client.controlSnapshot();
     if (
       (activeRun !== undefined && run !== activeRun) ||
       (connection !== undefined && connection !== connectionGeneration)
@@ -278,10 +468,10 @@ export function createWorkCraftStore(
         await refresh(activeRun, connection);
         return;
       }
-      const replacements: [string, TerminalBuffer][] = [];
-      for (const { paneId, marker } of message.resizes) {
-        const buffer = outputs.buffers().get(paneId);
-        if (!buffer) {
+      const replacements = new Map<string, TerminalBuffer>();
+      for (const { paneId, marker, runtimeGeneration } of message.resizes) {
+        const buffer = replacements.get(paneId) ?? outputs.buffers().get(paneId);
+        if (!buffer || buffer.runtimeGeneration !== runtimeGeneration) {
           continue;
         }
         if (
@@ -289,10 +479,10 @@ export function createWorkCraftStore(
             (buffer.resizes.at(-1)?.sequence ?? buffer.initialGridSequence ?? 0) + 1 ||
           buffer.resizes.length >= 1024
         ) {
-          await refresh(activeRun, connection);
-          return;
+          requestPaneHistory(paneId);
+          continue;
         }
-        replacements.push([paneId, { ...buffer, resizes: [...buffer.resizes, marker] }]);
+        replacements.set(paneId, { ...buffer, resizes: [...buffer.resizes, marker] });
       }
       update({
         geometry: message.geometry,
@@ -312,8 +502,7 @@ export function createWorkCraftStore(
         return;
       }
       const current = outputs.buffers().get(message.paneId);
-      if (!current) {
-        await refresh(activeRun, connection);
+      if (!current || current.runtimeGeneration !== message.runtimeGeneration) {
         return;
       }
       const lastCursor = current.chunks.at(-1)?.cursor ?? current.historyCursor;
@@ -322,8 +511,7 @@ export function createWorkCraftStore(
       }
       const data = decodeBytes(message.data);
       if (message.cursor - data.byteLength > lastCursor) {
-        await refresh(activeRun, connection);
-        return;
+        requestPaneHistory(message.paneId);
       }
       const attachment = state.attachment;
       const navigation = state.snapshot.navigation.find(
@@ -365,7 +553,7 @@ export function createWorkCraftStore(
       }
       return;
     }
-    if (message.type !== "snapshot") {
+    if (message.type !== "snapshot" && message.type !== "control.snapshot") {
       return;
     }
     const current = state.snapshot;
@@ -380,16 +568,19 @@ export function createWorkCraftStore(
   async function connect(activeRun: number): Promise<void> {
     const connection = ++connectionGeneration;
     let stream: StreamConnection | undefined;
-    stream = await client.stream({
-      onMessage(message) {
-        void apply(message, activeRun, connection).catch(() => stream?.close());
+    stream = await client.stream(
+      {
+        onMessage(message) {
+          void apply(message, activeRun, connection).catch(() => stream?.close());
+        },
+        onClose() {
+          if (run === activeRun && connection === connectionGeneration) {
+            void reconnect(activeRun);
+          }
+        },
       },
-      onClose() {
-        if (run === activeRun && connection === connectionGeneration) {
-          void reconnect(activeRun);
-        }
-      },
-    });
+      { snapshot: "control" },
+    );
     if (run !== activeRun || connection !== connectionGeneration) {
       stream.close();
       return;
@@ -411,6 +602,7 @@ export function createWorkCraftStore(
     connectionGeneration += 1;
     attachmentRequest += 1;
     update({ status: "connecting", stream: null, attachment: null });
+    discardObsoleteRecoveries();
     for (const delay of retryDelays) {
       await sleep(delay);
       if (run !== activeRun) {
@@ -478,6 +670,9 @@ export function createWorkCraftStore(
     const connection = connectionGeneration;
     try {
       await refresh(activeRun, connection);
+      await Promise.all(
+        state.snapshot?.terminalStates.map(({ paneId }) => resyncPane(paneId)) ?? [],
+      );
     } catch {
       if (run === activeRun && connection === connectionGeneration) {
         await reload();
@@ -561,6 +756,7 @@ export function createWorkCraftStore(
       state.stream?.close();
       attachmentRequest += 1;
       update({ status: "disconnected", stream: null, attachment: null });
+      discardObsoleteRecoveries();
     },
     subscribe(listener) {
       listeners.add(listener);

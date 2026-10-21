@@ -68,7 +68,11 @@ export type ShellAction =
   | { type: "navigator.query"; query: string }
   | { type: "navigator.hide" }
   | { type: "presentation.resize"; width: number }
-  | { type: "snapshot.reconcile"; snapshot: Snapshot; attachment: ClientAttachment | null }
+  | {
+      type: "snapshot.reconcile";
+      snapshot: Omit<Snapshot, "terminalHistories">;
+      attachment: ClientAttachment | null;
+    }
   | { type: "session.attached" }
   | {
       type: "focus.set";
@@ -269,7 +273,7 @@ export function reduceShellState(state: ShellState, action: ShellAction): ShellS
 
 export function reconcileShellState(
   state: ShellState,
-  snapshot: Snapshot,
+  snapshot: Omit<Snapshot, "terminalHistories">,
   attachment: ClientAttachment | null,
 ): ShellState {
   const navigation = snapshot.navigation.find(

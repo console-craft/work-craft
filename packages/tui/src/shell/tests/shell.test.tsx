@@ -1,7 +1,11 @@
 import { expect, test } from "bun:test";
 
 import { BoxRenderable, parseColor } from "@opentui/core";
-import { type Command, type CommandResponse, type Snapshot } from "@work-craft/server/client";
+import {
+  type Command,
+  type CommandResponse,
+  type ControlSnapshot,
+} from "@work-craft/server/client";
 import { act, type Dispatch, type SetStateAction, useState } from "react";
 
 import { WorkCraftShell } from "@/shell/shell.tsx";
@@ -75,7 +79,7 @@ test("status acceptance hints follow list, Tab, button and creation input focus"
 });
 
 test("session attachment focuses workspace without resetting focus on refresh", async () => {
-  let publish!: Dispatch<SetStateAction<Snapshot>>;
+  let publish!: Dispatch<SetStateAction<ControlSnapshot>>;
   function Fixture() {
     const [snapshot, setSnapshot] = useState(workCraftStateFixture().snapshot!);
     publish = setSnapshot;
@@ -341,9 +345,9 @@ test("workspace activation drills down locally while shared selection waits for 
     ],
   };
   const response = deferred<CommandResponse>();
-  let publish!: Dispatch<SetStateAction<Snapshot>>;
+  let publish!: Dispatch<SetStateAction<ControlSnapshot>>;
   function Fixture() {
-    const [current, setSnapshot] = useState<Snapshot>(snapshot);
+    const [current, setSnapshot] = useState<ControlSnapshot>(snapshot);
     publish = setSnapshot;
     return (
       <WorkCraftShell

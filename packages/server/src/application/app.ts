@@ -5,7 +5,9 @@ import { encodeBytes, parseCommand, ProtocolError } from "../api/protocol.ts";
 import type {
   ClientMessage,
   CommandResponse,
+  ControlSnapshot,
   DirectoryData,
+  PaneHistoryResponse,
   PaneStatus,
   ServerMessage,
   Snapshot,
@@ -28,14 +30,16 @@ const MAX_INLINE_SNAPSHOT_BYTES = 512 * 1024;
 export type WorkCraftApp = {
   health(): Health;
   snapshot(): Snapshot;
+  controlSnapshot(): ControlSnapshot;
+  paneHistory(paneId: string, afterCursor?: number): PaneHistoryResponse;
   recover(): Promise<void>;
   startDirectoryRefresh(): void;
   refreshDirectories(): Promise<void>;
   closeDirectoryRefresh(): Promise<void>;
   execute(command: unknown, origin?: CommandOrigin): Promise<CommandResponse>;
-  receive(socket: Bun.ServerWebSocket, message: ClientMessage): Promise<void>;
-  subscribe(socket: Bun.ServerWebSocket): void;
-  unsubscribe(socket: Bun.ServerWebSocket): void;
+  receive(socket: Bun.ServerWebSocket<unknown>, message: ClientMessage): Promise<void>;
+  subscribe(socket: Bun.ServerWebSocket<unknown>, options?: { snapshot: "control" | "full" }): void;
+  unsubscribe(socket: Bun.ServerWebSocket<unknown>): void;
   history: TerminalHistory;
   runtime: RuntimeRegistry;
 };
@@ -47,7 +51,7 @@ export function createApp(options: {
   inspectDirectory?: typeof inspectDirectory;
 }): WorkCraftApp {
   const epoch = crypto.randomUUID();
-  const subscribers = new Set<Bun.ServerWebSocket>();
+  const subscribers = new Map<Bun.ServerWebSocket<unknown>, "control" | "full">();
   const history = options.history ?? new TerminalHistory(options.db);
   let revision = 0;
   let recovery: Promise<void> | undefined;
@@ -58,7 +62,44 @@ export function createApp(options: {
   let directoryRefreshStarted = false;
   let directoryRefreshClosed = false;
   let directoryClose: Promise<void> | undefined;
-  const sizing = createTerminalSizing(readSnapshot(options.db, epoch, revision, history));
+  const sizing = createTerminalSizing(readSnapshotState(options.db, epoch, revision));
+
+  function controlSnapshot(): ControlSnapshot {
+    const state = readSnapshotState(options.db, epoch, revision, sizing.current());
+    return {
+      ...state,
+      terminalStates: state.panes.map(({ id }) => ({
+        paneId: id,
+        runtimeGeneration: runtime.generation(id),
+      })),
+    };
+  }
+
+  function paneHistory(paneId: string, afterCursor?: number): PaneHistoryResponse {
+    const started = outputProbeEnabled ? performance.now() : 0;
+    if (afterCursor !== undefined && (!Number.isSafeInteger(afterCursor) || afterCursor < 0)) {
+      throw new ProtocolError("History cursor must be a non-negative safe integer");
+    }
+    if (!options.db.query("SELECT 1 FROM panes WHERE id = ?").get(paneId)) {
+      throw new ProtocolError(`Pane not found: ${paneId}`);
+    }
+    const retained = history.read(paneId, afterCursor);
+    if (outputProbeEnabled) {
+      observeOutput({
+        stage: "pane.history.read",
+        paneId,
+        cursor: retained.cursor,
+        bytes: retained.data.byteLength,
+        durationMs: performance.now() - started,
+      });
+    }
+    return {
+      epoch,
+      paneId,
+      runtimeGeneration: runtime.generation(paneId),
+      history: { ...retained, data: encodeBytes(retained.data) },
+    };
+  }
 
   function snapshot(): Snapshot {
     const started = outputProbeEnabled ? performance.now() : 0;
@@ -75,7 +116,7 @@ export function createApp(options: {
 
   function broadcast(message: ServerMessage): void {
     const encoded = encodeMessage(message);
-    for (const socket of subscribers) {
+    for (const socket of subscribers.keys()) {
       const sent = socket.send(encoded);
       if (outputProbeEnabled) {
         observeOutput({
@@ -106,9 +147,12 @@ export function createApp(options: {
       });
     }
     // Leave queue room for output and acknowledgments instead of disconnecting on one snapshot.
-    if (message.type === "snapshot" && Buffer.byteLength(encoded) > MAX_INLINE_SNAPSHOT_BYTES) {
+    if (
+      (message.type === "snapshot" || message.type === "control.snapshot") &&
+      Buffer.byteLength(encoded) > MAX_INLINE_SNAPSHOT_BYTES
+    ) {
       return JSON.stringify({
-        type: "snapshot.available",
+        type: message.type === "snapshot" ? "snapshot.available" : "control.available",
         epoch: message.snapshot.epoch,
         revision: message.snapshot.revision,
       });
@@ -120,8 +164,18 @@ export function createApp(options: {
     if (changed) {
       revision += 1;
       connections.reconcile();
-      applyGeometry(sizing.reconcile(snapshot()));
-      broadcast({ type: "snapshot", snapshot: snapshot() });
+      applyGeometry(sizing.reconcile(controlSnapshot()));
+      let full: string | undefined;
+      let control: string | undefined;
+      for (const [socket, mode] of subscribers) {
+        if (mode === "control") {
+          control ??= encodeMessage({ type: "control.snapshot", snapshot: controlSnapshot() });
+          socket.send(control);
+        } else {
+          full ??= encodeMessage({ type: "snapshot", snapshot: snapshot() });
+          socket.send(full);
+        }
+      }
     }
   }
 
@@ -131,7 +185,7 @@ export function createApp(options: {
     }
     const resizes = decision.resizes.flatMap(({ paneId, size }) => {
       const marker = history.recordGrid(paneId, size);
-      return marker ? [{ paneId, marker }] : [];
+      return marker ? [{ paneId, marker, runtimeGeneration: runtime.generation(paneId) }] : [];
     });
     broadcast({ type: "terminal.geometry", epoch, geometry: decision.geometry, resizes });
     for (const { paneId, size } of decision.resizes) {
@@ -298,7 +352,10 @@ export function createApp(options: {
     return directoryClose;
   }
 
-  function onOutput(paneId: string, bytes: Uint8Array): void {
+  function onOutput(paneId: string, bytes: Uint8Array, runtimeGeneration: number): void {
+    if (runtime.generation(paneId) !== runtimeGeneration) {
+      return;
+    }
     const started = outputProbeEnabled ? performance.now() : 0;
     const cursor = history.append(paneId, bytes);
     if (outputProbeEnabled) {
@@ -315,13 +372,22 @@ export function createApp(options: {
       type: "terminal.output",
       epoch,
       paneId,
+      runtimeGeneration,
       cursor,
       data: encodeBytes(bytes),
       geometrySequence: sizing.current().sequence,
     });
   }
 
-  function onStatus(paneId: string, status: PaneStatus, error?: string): void {
+  function onStatus(
+    paneId: string,
+    status: PaneStatus,
+    runtimeGeneration: number,
+    error?: string,
+  ): void {
+    if (runtime.generation(paneId) !== runtimeGeneration) {
+      return;
+    }
     const now = new Date().toISOString();
     const result = options.db.run(
       `UPDATE panes SET
@@ -340,6 +406,7 @@ export function createApp(options: {
       epoch,
       paneId,
       status,
+      runtimeGeneration,
       ...(error === undefined ? {} : { error }),
     });
     publishChange(true);
@@ -350,6 +417,7 @@ export function createApp(options: {
     epoch,
     snapshot: () => readSnapshotState(options.db, epoch, revision, sizing.current()),
     execute,
+    runtimeGeneration: (paneId) => runtime.generation(paneId),
     onViewer: (id, report) => applyGeometry(sizing.report(id, report)),
     onAttachActivity: (id) => applyGeometry(sizing.attachmentActivity(id)),
     onActivity: (id, sequence) => applyGeometry(sizing.activity(id, sequence)),
@@ -362,7 +430,7 @@ export function createApp(options: {
   });
 
   async function recoverOnce(): Promise<void> {
-    const panes = new Map(snapshot().panes.map((pane) => [pane.id, pane]));
+    const panes = new Map(controlSnapshot().panes.map((pane) => [pane.id, pane]));
     const interrupted = options.db.transaction(() => {
       const rows = options.db
         .query<{ id: string }, []>(
@@ -483,7 +551,7 @@ export function createApp(options: {
       if (effect.type !== "spawn-pane" || runtime.isLive(effect.paneId)) {
         continue;
       }
-      const pane = snapshot().panes.find(({ id }) => id === effect.paneId);
+      const pane = controlSnapshot().panes.find(({ id }) => id === effect.paneId);
       if (pane === undefined) {
         throw new Error(`Pane not found after commit: ${effect.paneId}`);
       }
@@ -506,6 +574,8 @@ export function createApp(options: {
     history,
     runtime,
     snapshot,
+    controlSnapshot,
+    paneHistory,
     recover,
     startDirectoryRefresh,
     refreshDirectories,
@@ -515,10 +585,17 @@ export function createApp(options: {
       return { epoch, revision, pid: process.pid };
     },
     receive: (socket, message) => connections.receive(socket, message),
-    subscribe(socket) {
-      subscribers.add(socket);
+    subscribe(socket, options) {
+      const mode = options?.snapshot ?? "full";
+      subscribers.set(socket, mode);
       connections.open(socket);
-      socket.send(encodeMessage({ type: "snapshot", snapshot: snapshot() }));
+      socket.send(
+        encodeMessage(
+          mode === "control"
+            ? { type: "control.snapshot", snapshot: controlSnapshot() }
+            : { type: "snapshot", snapshot: snapshot() },
+        ),
+      );
     },
     unsubscribe(socket) {
       subscribers.delete(socket);

@@ -5,7 +5,7 @@ import type { ShellModel } from "@/shell/model";
 import type { ShellState } from "@/shell/state";
 
 export type ShellEnvironment = {
-  snapshot: Snapshot | null;
+  snapshot: Omit<Snapshot, "terminalHistories"> | null;
   state: ShellState;
   model: ShellModel;
   layout: ShellLayout;

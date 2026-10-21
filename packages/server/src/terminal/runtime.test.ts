@@ -88,6 +88,72 @@ test("runs a shell through Bun.Terminal and emits its lifecycle", async () => {
   expect(registry.isLive("pane-1")).toBe(false);
 });
 
+test("runtime generation increments before callbacks and survives exit and failed startup", async () => {
+  const events: { status: PaneStatus; generation: number; current: number }[] = [];
+  const outputs: number[] = [];
+  const registry = runtime({
+    onStatus: (_id, status, generation) =>
+      events.push({ status, generation, current: registry.generation("pane-1") }),
+    onOutput: (_id, _bytes, generation) => outputs.push(generation),
+  });
+  expect(registry.generation("pane-1")).toBe(0);
+  await registry.start(shellPane("pane-1", process.cwd(), "/bin/sh", ["-c", "printf first"]));
+  await registry.waitForExit("pane-1");
+  expect(events).toEqual(
+    (["starting", "running", "exited"] as const).map((status) => ({
+      status,
+      generation: 1,
+      current: 1,
+    })),
+  );
+  expect(outputs.length).toBeGreaterThan(0);
+  expect(outputs.every((generation) => generation === 1)).toBe(true);
+  await expect(registry.start(shellPane("pane-1", "/missing-work-craft-cwd"))).rejects.toThrow();
+  expect(events.slice(-2)).toEqual(
+    (["starting", "failed"] as const).map((status) => ({ status, generation: 2, current: 2 })),
+  );
+  await registry.start(shellPane("pane-1", process.cwd(), "/bin/sh", ["-c", "exit 0"]));
+  await registry.waitForExit("pane-1");
+  expect(registry.generation("pane-1")).toBe(3);
+});
+
+test("a late PTY output callback from a replaced child is rejected instead of relabelled", async () => {
+  const output: string[] = [];
+  const registry = runtime({
+    onOutput: (_id, bytes) => output.push(new TextDecoder().decode(bytes)),
+  });
+  const spawn = spyOn(Bun, "spawn");
+  try {
+    await registry.start(shellPane("pane-1", process.cwd(), "/bin/sh", ["-c", "printf first"]));
+    const options = spawn.mock.calls.at(-1)?.[1];
+    const spawned = spawn.mock.results.at(-1)?.value;
+    if (
+      !options ||
+      typeof options.terminal !== "object" ||
+      !("data" in options.terminal) ||
+      !options.terminal.data ||
+      !spawned ||
+      typeof spawned !== "object" ||
+      !("terminal" in spawned) ||
+      !(spawned.terminal instanceof Bun.Terminal)
+    ) {
+      throw new Error("missing real PTY data callback");
+    }
+    const firstOutput = options.terminal.data;
+    const terminal = spawned.terminal;
+    await registry.waitForExit("pane-1");
+    await registry.start(shellPane("pane-1", process.cwd(), "/bin/sh", ["-c", "printf second"]));
+    firstOutput(terminal, new TextEncoder().encode("STALE"));
+    await registry.waitForExit("pane-1");
+    expect(output.join("")).toContain("first");
+    expect(output.join("")).toContain("second");
+    expect(output.join("")).not.toContain("STALE");
+    expect(registry.generation("pane-1")).toBe(2);
+  } finally {
+    spawn.mockRestore();
+  }
+});
+
 test("live cwd follows shell cd, not foreground child cd", async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), "work-craft-runtime-cwd-")));
   let output = "";
@@ -273,7 +339,7 @@ test("an exiting runtime cannot overwrite its replacement status", async () => {
 test("cleans up and reports a synchronous spawn failure", async () => {
   const statuses: { status: PaneStatus; error?: string }[] = [];
   const registry = runtime({
-    onStatus: (_paneId, status, error) => statuses.push({ status, error }),
+    onStatus: (_paneId, status, _generation, error) => statuses.push({ status, error }),
   });
 
   await expect(

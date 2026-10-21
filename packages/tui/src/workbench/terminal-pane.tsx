@@ -8,7 +8,7 @@ import type {
   TerminalInputContext,
   TerminalSize,
 } from "@work-craft/server/client";
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 
 import type { PaneOutput } from "@/client/terminal-output";
 import { Alert, AlertContent, AlertTitle } from "@/ui/components/alert.tsx";
@@ -41,7 +41,7 @@ export type TerminalPaneProps = {
     "kind" | "activitySequence"
   >;
   onMouseInput(event: MouseEvent): void;
-  onResync(): void;
+  onResync(paneId: string): void;
   stream: StreamConnection | null;
   inputEnabled?: boolean;
   canReceiveInput?(paneId?: string): boolean;
@@ -70,6 +70,7 @@ export function TerminalPane({
   inputEnabled = true,
   canReceiveInput = () => true,
 }: TerminalPaneProps) {
+  const runtimeGeneration = useRef(output.read()?.runtimeGeneration).current;
   const notice = paneNotice(pane.processStatus, connected);
   const viewport = terminalRect(bounds, notice !== null);
   const reportReady = useCallback(
@@ -80,6 +81,7 @@ export function TerminalPane({
   function acceptsInput(): boolean {
     return (
       connected &&
+      output.read()?.runtimeGeneration === runtimeGeneration &&
       running &&
       inputEnabled &&
       hasTerminalViewport(viewport) &&
@@ -119,17 +121,26 @@ export function TerminalPane({
           onReady={reportReady}
           onFocus={onFocus}
           onMouseInput={onMouseInput}
-          onResync={onResync}
+          onResync={() => onResync(pane.id)}
           onData={(bytes, source, responseStamp) => {
             if (!stamp || !stream) {
               return;
             }
             if (source === "response") {
-              if (responseStamp && canRespond(pane.id, responseStamp)) {
-                stream.sendInput(pane.id, bytes, { ...responseStamp, source });
+              if (
+                responseStamp &&
+                output.read()?.runtimeGeneration === runtimeGeneration &&
+                canRespond(pane.id, responseStamp)
+              ) {
+                stream.sendInput(pane.id, bytes, { ...responseStamp, source, runtimeGeneration });
               }
             } else if (acceptsInput()) {
-              stream.sendInput(pane.id, bytes, { ...stamp, source, ...inputEvent() });
+              stream.sendInput(pane.id, bytes, {
+                ...stamp,
+                source,
+                ...inputEvent(),
+                runtimeGeneration,
+              });
             }
           }}
         />

@@ -9,7 +9,12 @@ import type {
 
 import { createWorkCraftStore } from "@/client/store";
 import { terminalReplaySteps } from "@/client/terminal-replay";
-import { snapshotFixture, streamFixture } from "@/tests/support/fixtures";
+import {
+  controlSnapshotFixture,
+  snapshotFixture,
+  streamFixture,
+  terminalSnapshotFixture,
+} from "@/tests/support/fixtures";
 
 test("an old connection cannot append output after automatic reconnect in the same store run", async () => {
   const { snapshot, client } = fixture();
@@ -45,6 +50,7 @@ test("an old connection cannot append output after automatic reconnect in the sa
     await reconnected;
     handlers[0]!.onMessage({
       type: "terminal.output",
+      runtimeGeneration: 0,
       epoch: snapshot.epoch,
       geometrySequence: 1,
       paneId: "pane-1",
@@ -62,6 +68,8 @@ import { snapshotTerminals, type TerminalBuffer } from "@/client/terminal-buffer
 test("a full snapshot replaces an incomplete byte queue even at the same tail cursor", () => {
   const previous: TerminalBuffer = {
     epoch: "epoch-a",
+    runtimeGeneration: 0,
+    resetGeneration: 0,
     history: new Uint8Array(),
     historyCursor: 0,
     historyStartCursor: 0,
@@ -147,6 +155,15 @@ function fixture() {
     ensureDaemon: async () => {},
     health: async () => ({ epoch: "epoch-a", revision: 4, pid: 1 }),
     snapshot: async () => snapshot,
+    controlSnapshot: async () => controlSnapshotFixture(await client.snapshot()),
+    paneHistory: async (paneId) => ({
+      epoch: snapshot.epoch,
+      paneId,
+      runtimeGeneration: 0,
+      history: terminalSnapshotFixture(snapshot).terminalHistories.find(
+        (history) => history.paneId === paneId,
+      )!,
+    }),
     command: async () => {
       throw new Error("TUI must use attached stream RPC");
     },
@@ -188,6 +205,7 @@ for (const sessionId of ["session-work", "other-session"]) {
       await store.getState().attach(sessionId);
       const output = {
         type: "terminal.output" as const,
+        runtimeGeneration: 0,
         epoch: snapshot.epoch,
         paneId: "pane-1",
         cursor: 4,

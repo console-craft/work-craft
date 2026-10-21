@@ -41,6 +41,13 @@ publish another navigation command or claim sizing through native focus callback
 `client/store.ts` owns the client-local attachment and live authorization stamps
 (epoch, attachment generation, navigation generation and per-tab geometry generation).
 The global geometry sequence orders stream updates; it is not an input generation.
+The production TUI fetches `/control` and selects the history-free control stream;
+full CLI snapshots/streams retain their original history payloads. Scoped pane
+history recovery uses at most four concurrent abortable requests, starts at native
+acknowledgement, and cannot hold unrelated output or command acknowledgements.
+Recovery results are bound to connection, attachment, navigation, epoch and runtime
+identities. Runtime/reset generations are distinct from history byte cursors;
+runtime generation is also captured in TUI-originated raw input.
 `client/terminal-buffer.ts` retains bounded bytes/resize markers and their live/history
 origin and original reply stamps; `client/terminal-replay.ts` orders grid changes
 between byte ranges without granting new response authority to delayed queries.

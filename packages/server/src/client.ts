@@ -5,13 +5,15 @@ import { fileURLToPath } from "node:url";
 
 import WebSocket from "ws";
 
-import { encodeBytes } from "./api/protocol.ts";
+import { encodeBytes, STREAM_BACKPRESSURE_LIMIT } from "./api/protocol.ts";
 import type {
   ClientAttachment,
   Command,
   CommandResponse,
+  ControlSnapshot,
   InputStamp,
   InteractiveMessage,
+  PaneHistoryResponse,
   ServerMessage,
   Snapshot,
   TerminalInputContext,
@@ -45,6 +47,9 @@ export type {
   LayoutNode,
   ServerMessage,
   Snapshot,
+  ControlSnapshot,
+  PaneHistoryResponse,
+  PaneRuntimeIdentity,
   WorkItem,
   DirectoryData,
   WorktreeData,
@@ -95,8 +100,17 @@ export type WorkCraftClient = {
   ensureDaemon(options?: { recover?: boolean }): Promise<void>;
   health(): Promise<Health>;
   snapshot(): Promise<Snapshot>;
+  controlSnapshot(): Promise<ControlSnapshot>;
+  paneHistory(
+    paneId: string,
+    afterCursor?: number,
+    options?: { signal?: AbortSignal },
+  ): Promise<PaneHistoryResponse>;
   command(command: Command): Promise<CommandResponse>;
-  stream(handlers: StreamHandlers): Promise<StreamConnection>;
+  stream(
+    handlers: StreamHandlers,
+    options?: { snapshot: "control" | "full" },
+  ): Promise<StreamConnection>;
   streamOnce(): Promise<ServerMessage>;
 };
 
@@ -106,17 +120,20 @@ export { resolvePaths };
 
 async function requestJson(socketPath: string, path: string, init?: RequestInit): Promise<unknown> {
   const started = outputProbeEnabled ? performance.now() : 0;
-  if (outputProbeEnabled && path === "/snapshot") {
-    observeOutput({ stage: "snapshot.fetch.start" });
+  const stage = path === "/control" ? "control" : path === "/snapshot" ? "snapshot" : null;
+  if (outputProbeEnabled && stage) {
+    observeOutput({ stage: `${stage}.fetch.start` });
   }
   const response = await fetch(`http://localhost${path}`, {
     ...init,
-    signal: init?.signal ?? AbortSignal.timeout(3_000),
+    signal: init?.signal
+      ? AbortSignal.any([init.signal, AbortSignal.timeout(3_000)])
+      : AbortSignal.timeout(3_000),
     unix: socketPath,
   });
   const body = await response.json();
-  if (outputProbeEnabled && path === "/snapshot") {
-    observeOutput({ stage: "snapshot.fetch.end", durationMs: performance.now() - started });
+  if (outputProbeEnabled && stage) {
+    observeOutput({ stage: `${stage}.fetch.end`, durationMs: performance.now() - started });
   }
   if (!response.ok) {
     const message =
@@ -240,14 +257,23 @@ export function createClient(options: { socketPath?: string } = {}): WorkCraftCl
     throw new Error(`Work Craft daemon did not become healthy within 3 seconds (${lastFailure})`);
   }
 
-  function stream(handlers: StreamHandlers): Promise<StreamConnection> {
+  function stream(
+    handlers: StreamHandlers,
+    options?: { snapshot: "control" | "full" },
+  ): Promise<StreamConnection> {
     return new Promise((resolve, reject) => {
-      const socket = new WebSocket(`ws+unix:${socketPath}:/stream`);
+      const control = options?.snapshot === "control";
+      const snapshotPath = control ? "/control" : "/snapshot";
+      const abort = new AbortController();
+      const socket = new WebSocket(
+        `ws+unix:${socketPath}:/stream${control ? "?view=control" : ""}`,
+      );
       let opened = false;
       let closeError: Error | undefined;
       let current: Pick<Snapshot, "epoch" | "revision"> | undefined;
       let snapshots = Promise.resolve();
       let queuedMessages = 0;
+      let queuedBytes = 0;
       let alive = true;
       let requestId = 0;
       const pending = new Map<
@@ -294,15 +320,19 @@ export function createClient(options: { socketPath?: string } = {}): WorkCraftCl
         });
       }
 
-      function applySnapshot(snapshot: Snapshot): void {
+      function applySnapshot(snapshot: Snapshot | ControlSnapshot): void {
         if (!alive || (current?.epoch === snapshot.epoch && snapshot.revision < current.revision)) {
           return;
         }
         current = { epoch: snapshot.epoch, revision: snapshot.revision };
-        handlers.onMessage({ type: "snapshot", snapshot });
+        handlers.onMessage(
+          "terminalHistories" in snapshot
+            ? { type: "snapshot", snapshot }
+            : { type: "control.snapshot", snapshot },
+        );
       }
 
-      async function handleSnapshot(next: Snapshot): Promise<void> {
+      async function handleSnapshot(next: Snapshot | ControlSnapshot): Promise<void> {
         if (
           current === undefined ||
           next.epoch !== current.epoch ||
@@ -311,7 +341,9 @@ export function createClient(options: { socketPath?: string } = {}): WorkCraftCl
           applySnapshot(next);
         } else if (next.revision > current.revision + 1) {
           const epoch = current.epoch;
-          const refreshed = (await requestJson(socketPath, "/snapshot")) as Snapshot;
+          const refreshed = (await requestJson(socketPath, snapshotPath, {
+            signal: abort.signal,
+          })) as Snapshot | ControlSnapshot;
           if (alive && current.epoch === epoch) {
             applySnapshot(refreshed);
           }
@@ -329,6 +361,29 @@ export function createClient(options: { socketPath?: string } = {}): WorkCraftCl
         try {
           const received = outputProbeEnabled ? performance.now() : 0;
           const message = JSON.parse(data.toString()) as ServerMessage;
+          if (
+            (message.type === "client.attached" && message.requestId !== null) ||
+            message.type === "command.result" ||
+            message.type === "command.error"
+          ) {
+            const item = pending.get(message.requestId!);
+            if (item) {
+              pending.delete(message.requestId!);
+              clearTimeout(item.timer);
+              if (message.type === "command.error") {
+                item.reject(new ApiError(message.message, message.field));
+              } else {
+                item.resolve(
+                  message.type === "client.attached" ? message.attachment : message.response,
+                );
+              }
+            }
+          }
+          const bytes = Buffer.byteLength(data.toString());
+          queuedBytes += bytes;
+          if (queuedBytes > STREAM_BACKPRESSURE_LIMIT) {
+            throw new Error("Stream pending work exceeded its byte limit");
+          }
           const metadata =
             outputProbeEnabled && message.type === "terminal.output"
               ? {
@@ -364,34 +419,21 @@ export function createClient(options: { socketPath?: string } = {}): WorkCraftCl
                 if (!alive) {
                   return;
                 }
-                if (message.type === "snapshot.available") {
-                  applySnapshot((await requestJson(socketPath, "/snapshot")) as Snapshot);
+                if (message.type === "snapshot.available" || message.type === "control.available") {
+                  applySnapshot(
+                    (await requestJson(socketPath, snapshotPath, { signal: abort.signal })) as
+                      | Snapshot
+                      | ControlSnapshot,
+                  );
                   return;
                 }
-                if (message.type === "snapshot") {
+                if (message.type === "snapshot" || message.type === "control.snapshot") {
                   await handleSnapshot(message.snapshot);
                   return;
                 }
-                if (
-                  (message.type === "client.attached" && message.requestId !== null) ||
-                  message.type === "command.result" ||
-                  message.type === "command.error"
-                ) {
-                  const item = pending.get(message.requestId!);
-                  if (item) {
-                    pending.delete(message.requestId!);
-                    clearTimeout(item.timer);
-                    if (message.type === "command.error") {
-                      item.reject(new ApiError(message.message, message.field));
-                    } else {
-                      item.resolve(
-                        message.type === "client.attached" ? message.attachment : message.response,
-                      );
-                    }
-                  }
-                }
                 handlers.onMessage(message);
               } finally {
+                queuedBytes -= bytes;
                 if (outputProbeEnabled) {
                   queuedMessages--;
                   observeOutput({
@@ -434,6 +476,7 @@ export function createClient(options: { socketPath?: string } = {}): WorkCraftCl
       });
       socket.once("close", () => {
         alive = false;
+        abort.abort();
         for (const item of pending.values()) {
           clearTimeout(item.timer);
           item.reject(closeError ?? new Error("Stream closed during request"));
@@ -455,6 +498,19 @@ export function createClient(options: { socketPath?: string } = {}): WorkCraftCl
     },
     async snapshot() {
       return (await requestJson(socketPath, "/snapshot")) as Snapshot;
+    },
+    async controlSnapshot() {
+      return (await requestJson(socketPath, "/control")) as ControlSnapshot;
+    },
+    async paneHistory(paneId, afterCursor, options) {
+      const query = afterCursor === undefined ? "" : `?after=${afterCursor}`;
+      return (await requestJson(
+        socketPath,
+        `/panes/${encodeURIComponent(paneId)}/history${query}`,
+        {
+          signal: options?.signal,
+        },
+      )) as PaneHistoryResponse;
     },
     async command(command) {
       return (await requestJson(socketPath, "/command", {

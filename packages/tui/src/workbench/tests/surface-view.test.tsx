@@ -28,7 +28,8 @@ import { Workbench as NativeWorkbench, type WorkbenchProps } from "@/workbench/w
 extend({ terminal: EmbeddedTerminalRenderable });
 
 function SurfaceView(
-  props: Omit<SurfaceViewProps, "activeTabId" | "outputs"> & {
+  props: Omit<SurfaceViewProps, "activeTabId" | "outputs" | "snapshot"> & {
+    snapshot: Snapshot;
     activeTabId?: string | null;
     terminals: ReadonlyMap<string, TerminalBuffer>;
   },
@@ -179,9 +180,16 @@ function splitSurfaceSnapshot(direction: "horizontal" | "vertical"): Snapshot {
 }
 
 test("terminal renderer identity includes the daemon epoch and replay cursor", () => {
-  expect(terminalPaneKey("pane-1", undefined)).toBe("pane-1:pending:0");
-  expect(terminalPaneKey("pane-1", { epoch: "epoch-2", historyCursor: 42 })).toBe(
-    "pane-1:epoch-2:42",
+  expect(terminalPaneKey("pane-1", undefined)).toBe("pane-1:pending:0:0:0");
+  expect(
+    terminalPaneKey("pane-1", terminalBufferFixture({ epoch: "epoch-2", historyCursor: 42 })),
+  ).toBe("pane-1:epoch-2:0:0:42");
+});
+
+test("runtime replacement cannot reuse a native input encoder at the same history cursor", () => {
+  const previous = terminalBufferFixture({ epoch: "e", runtimeGeneration: 1 });
+  expect(terminalPaneKey("pane-1", { ...previous, runtimeGeneration: 2 })).not.toBe(
+    terminalPaneKey("pane-1", previous),
   );
 });
 

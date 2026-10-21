@@ -83,20 +83,108 @@ test("a reconnect receives one coherent current snapshot", async () => {
   }
 });
 
+test("control synchronization never serializes hidden histories", async () => {
+  const fixture = await startTestServer({ withPane: true });
+  fixture.history.append("pane-1", new TextEncoder().encode("private history"));
+  const reads = spyOn(fixture.history, "read");
+  const received: ServerMessage[] = [];
+  let stream;
+  try {
+    const control = await fixture.client.controlSnapshot();
+    expect(control).not.toHaveProperty("terminalHistories");
+    expect(control.terminalStates).toEqual([{ paneId: "pane-1", runtimeGeneration: 0 }]);
+    stream = await fixture.client.stream(
+      { onMessage: (message) => received.push(message) },
+      { snapshot: "control" },
+    );
+    const attachment = await stream.attach("session-1");
+    await stream.command(
+      {
+        type: "session.navigate",
+        sessionId: "session-1",
+        target: { kind: "category", category: "design" },
+      },
+      attachment.generation,
+    );
+    await stream.command({ type: "process.restart", paneId: "pane-1" }, attachment.generation);
+    expect(reads).not.toHaveBeenCalled();
+    expect(received.some((message) => message.type === "control.snapshot")).toBe(true);
+    expect(received.some((message) => message.type === "snapshot")).toBe(false);
+    const full = await fixture.client.snapshot();
+    expect(full.terminalHistories[0]).toMatchObject({
+      paneId: "pane-1",
+      cursor: expect.any(Number),
+    });
+    expect(decodeBytes(full.terminalHistories[0]!.data).slice(0, 15)).toEqual(
+      new TextEncoder().encode("private history"),
+    );
+    expect(reads).toHaveBeenCalledTimes(1);
+  } finally {
+    reads.mockRestore();
+    stream?.close();
+    await fixture.app.runtime.stopAll();
+    await fixture.close();
+  }
+});
+
+test("pane history fetch is scoped, validates its cursor and never starts a runtime", async () => {
+  const fixture = await startTestServer({ withPane: true });
+  fixture.history.recordGrid("pane-1", { cols: 100, rows: 30 });
+  fixture.history.append("pane-1", new Uint8Array([65, 66, 67]));
+  const reads = spyOn(fixture.history, "read");
+  try {
+    const result = await fixture.client.paneHistory("pane-1", 1);
+    expect(result).toMatchObject({
+      epoch: fixture.app.health().epoch,
+      paneId: "pane-1",
+      runtimeGeneration: 0,
+      history: { cursor: 3, startCursor: 1, prefixBytes: 0, initialSize: { cols: 100, rows: 30 } },
+    });
+    expect(decodeBytes(result.history.data)).toEqual(new Uint8Array([66, 67]));
+    expect(reads.mock.calls).toEqual([["pane-1", 1]]);
+    expect(fixture.app.runtime.isLive("pane-1")).toBe(false);
+    await expect(fixture.client.paneHistory("missing")).rejects.toThrow("Pane not found");
+    for (const after of ["-1", "1.5", "9007199254740992", "NaN", "", "1e2"]) {
+      const response = await fetch(`http://localhost/panes/pane-1/history?after=${after}`, {
+        unix: fixture.socketPath,
+      });
+      expect(response.status).toBe(400);
+    }
+    expect(reads).toHaveBeenCalledTimes(1);
+    await expect(fixture.client.paneHistory("../pane-1")).rejects.toThrow();
+  } finally {
+    reads.mockRestore();
+    await fixture.close();
+  }
+});
+
 test("large retained history still permits attachment and snapshot updates", async () => {
   const fixture = await startTestServer({ withPane: true });
   const bytes = new Uint8Array(900_000).fill(120);
   fixture.history.append("pane-1", bytes);
   const snapshots: Snapshot[] = [];
+  let initialSnapshot!: () => void;
+  let updatedSnapshot!: () => void;
+  const initialReceived = new Promise<void>((resolve) => {
+    initialSnapshot = resolve;
+  });
+  const updatedReceived = new Promise<void>((resolve) => {
+    updatedSnapshot = resolve;
+  });
   const stream = await fixture.client.stream({
     onMessage(message) {
       if (message.type === "snapshot") {
         snapshots.push(message.snapshot);
+        initialSnapshot();
+        if (message.snapshot.sessions[0]?.name === "Still connected") {
+          updatedSnapshot();
+        }
       }
     },
   });
   try {
     const attachment = await stream.attach("session-1");
+    await initialReceived;
     expect(attachment.sessionId).toBe("session-1");
     expect(decodeBytes(snapshots[0]!.terminalHistories[0]!.data).byteLength).toBe(bytes.byteLength);
     await fixture.client.command({
@@ -105,6 +193,7 @@ test("large retained history still permits attachment and snapshot updates", asy
       name: "Still connected",
     });
     await stream.attach("session-1");
+    await updatedReceived;
     expect(snapshots.at(-1)!.sessions[0]!.name).toBe("Still connected");
     expect(decodeBytes(snapshots.at(-1)!.terminalHistories[0]!.data).byteLength).toBe(
       bytes.byteLength,
@@ -114,6 +203,86 @@ test("large retained history still permits attachment and snapshot updates", asy
     await fixture.close();
   }
 });
+
+for (const mode of ["control", "full"] as const) {
+  test(`${mode}: large metadata uses its own HTTP notification and leaves acknowledgments independent`, async () => {
+    const fixture = await startTestServer();
+    await fixture.app.execute({ type: "session.create", name: "x".repeat(600000) });
+    const path = mode === "control" ? "/control" : "/snapshot";
+    const realFetch = globalThis.fetch;
+    let release!: () => void;
+    let entered!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fetching = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+      Object.assign(
+        async (...args: Parameters<typeof fetch>) => {
+          if (
+            String(args[0]).endsWith(path) &&
+            args[1] &&
+            "unix" in args[1] &&
+            args[1].unix === fixture.socketPath
+          ) {
+            entered();
+            await gate;
+          }
+          return realFetch(...args);
+        },
+        { preconnect: realFetch.preconnect },
+      ),
+    );
+    const snapshots: ServerMessage[] = [];
+    const stream = await fixture.client.stream(
+      { onMessage: (message) => snapshots.push(message) },
+      { snapshot: mode },
+    );
+    try {
+      await fetching;
+      const attached = await Promise.race([stream.attach(null), Bun.sleep(500).then(() => null)]);
+      expect(attached).not.toBeNull();
+      const result = await Promise.race([
+        stream.command(
+          { type: "session.create", name: "While HTTP is held" },
+          attached!.generation,
+        ),
+        Bun.sleep(500).then(() => null),
+      ]);
+      expect(result?.ok).toBe(true);
+      expect(
+        snapshots.filter(
+          (message) => message.type === "snapshot" || message.type === "control.snapshot",
+        ),
+      ).toEqual([]);
+      release();
+      const deadline = Date.now() + 3000;
+      while (
+        !snapshots.some(
+          (message) => message.type === (mode === "control" ? "control.snapshot" : "snapshot"),
+        ) &&
+        Date.now() < deadline
+      ) {
+        await Bun.sleep(1);
+      }
+      const received = snapshots.find(
+        (message) => message.type === (mode === "control" ? "control.snapshot" : "snapshot"),
+      );
+      expect(received).toBeDefined();
+      if (received?.type === "control.snapshot") {
+        expect(received.snapshot).not.toHaveProperty("terminalHistories");
+      }
+      expect(fetchSpy).toHaveBeenCalled();
+    } finally {
+      release();
+      fetchSpy.mockRestore();
+      stream.close();
+      await fixture.close();
+    }
+  });
+}
 
 test("snapshots above 512 KiB use HTTP notification independently of stream burst headroom", async () => {
   const fixture = await startTestServer({ withPane: true });

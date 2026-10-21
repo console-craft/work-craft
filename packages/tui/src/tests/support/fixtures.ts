@@ -1,6 +1,7 @@
 import type {
   ClientAttachment,
   CommandResponse,
+  ControlSnapshot,
   InputStamp,
   Snapshot,
   StreamConnection,
@@ -12,7 +13,10 @@ export function attachmentFixture(sessionId: string | null = "session-work"): Cl
   return { connectionId: "test-connection", generation: 1, sessionId };
 }
 
-export function createScopeFixture(snapshot: Snapshot, parentId: string | null = null) {
+export function createScopeFixture(
+  snapshot: Omit<Snapshot, "terminalHistories">,
+  parentId: string | null = null,
+) {
   return {
     epoch: snapshot.epoch,
     navigation: snapshot.navigation[0] ? { ...snapshot.navigation[0] } : null,
@@ -37,7 +41,7 @@ export function streamFixture(overrides: Partial<StreamConnection> = {}): Stream
 }
 
 export function inputStampFixture(
-  snapshot: Snapshot,
+  snapshot: Omit<Snapshot, "terminalHistories">,
   attachment = attachmentFixture(),
 ): InputStamp {
   const navigation = snapshot.navigation.find(
@@ -55,6 +59,8 @@ export function inputStampFixture(
 export function terminalBufferFixture(overrides: Partial<TerminalBuffer> = {}): TerminalBuffer {
   return {
     epoch: "epoch-a",
+    runtimeGeneration: 0,
+    resetGeneration: 0,
     history: new Uint8Array(),
     historyStartCursor: 0,
     historyPrefixBytes: 0,
@@ -64,6 +70,23 @@ export function terminalBufferFixture(overrides: Partial<TerminalBuffer> = {}): 
     resizes: [],
     chunks: [],
     ...overrides,
+  };
+}
+
+/** Fixtures keep full CLI snapshots separate from the TUI's history-free metadata. */
+export function controlSnapshotFixture(snapshot: Snapshot | ControlSnapshot): ControlSnapshot {
+  if (!("terminalHistories" in snapshot)) {
+    return snapshot;
+  }
+  const { terminalHistories, ...metadata } = snapshot;
+  return {
+    ...metadata,
+    terminalStates: [
+      ...new Set([
+        ...snapshot.panes.map(({ id }) => id),
+        ...terminalHistories.map(({ paneId }) => paneId),
+      ]),
+    ].map((paneId) => ({ paneId, runtimeGeneration: 0 })),
   };
 }
 

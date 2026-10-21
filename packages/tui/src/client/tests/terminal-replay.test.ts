@@ -9,6 +9,8 @@ const encode = (text: string) => new TextEncoder().encode(text);
 function buffer(overrides: Partial<TerminalBuffer> = {}): TerminalBuffer {
   return {
     epoch: "e",
+    runtimeGeneration: 0,
+    resetGeneration: 0,
     history: encode("abcdefgh"),
     historyStartCursor: 0,
     historyPrefixBytes: 0,

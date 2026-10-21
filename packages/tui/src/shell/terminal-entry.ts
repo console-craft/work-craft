@@ -24,7 +24,7 @@ export type PendingTerminalEntry = {
 /** New snapshot selections may transfer the origin, never supply the response's exact IDs. */
 export function canProjectTabEntry(
   entry: Pick<PendingTerminalEntry, "sessionId" | "itemId" | "tabId" | "revision" | "creation">,
-  snapshot: Snapshot | null,
+  snapshot: Omit<Snapshot, "terminalHistories"> | null,
 ): boolean {
   const selected = snapshot?.navigation.find(
     (navigation) => navigation.sessionId === entry.sessionId && navigation.itemId === entry.itemId,

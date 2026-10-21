@@ -90,7 +90,7 @@ export type DurableCommandResult = CommandResponse["result"] & Pick<CommandRespo
 export type CommandAvailabilityInput = {
   model: ShellModel;
   state: ShellState;
-  snapshot: Snapshot | null;
+  snapshot: Omit<Snapshot, "terminalHistories"> | null;
   focus: FocusTarget;
   focusedPaneId: string | null;
 };
@@ -109,7 +109,7 @@ export type ExecuteCommandInput = {
   command: CommandId;
   model: ShellModel;
   state: ShellState;
-  snapshot: Snapshot | null;
+  snapshot: Omit<Snapshot, "terminalHistories"> | null;
   focus: FocusTarget;
   focusedPaneId: string | null;
   focusNodes: readonly FocusNode[];
@@ -146,7 +146,7 @@ export type SubmitCreateInput = {
   value: string;
   model: ShellModel;
   state: ShellState;
-  snapshot: Snapshot | null;
+  snapshot: Omit<Snapshot, "terminalHistories"> | null;
   getSubmittingDialog(): Exclude<DialogState, null> | null;
   setSubmittingDialog(dialog: Exclude<DialogState, null> | null): void;
   dispatch(action: ShellAction): void;

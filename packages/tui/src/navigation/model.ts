@@ -20,12 +20,12 @@ export function navigatorItemKey(item: Pick<Snapshot["items"][number], "id" | "p
   return `${item.parentId === null ? "root" : "item"}:${item.id}`;
 }
 
-export function sessionsInOrder(snapshot: Snapshot): Snapshot["sessions"] {
+export function sessionsInOrder(snapshot: Pick<Snapshot, "sessions">): Snapshot["sessions"] {
   return [...snapshot.sessions].sort((a, b) => a.position - b.position || a.id.localeCompare(b.id));
 }
 
 export function workspacesForSession(
-  snapshot: Snapshot,
+  snapshot: Omit<Snapshot, "terminalHistories">,
   sessionId: string,
 ): Snapshot["workspaces"] {
   return snapshot.sessionWorkspaces
@@ -37,7 +37,7 @@ export function workspacesForSession(
 }
 
 export function categoriesForWorkspace(
-  snapshot: Snapshot,
+  snapshot: Omit<Snapshot, "terminalHistories">,
   workspaceId: string,
 ): Snapshot["categories"] {
   return snapshot.categories
@@ -46,7 +46,7 @@ export function categoriesForWorkspace(
 }
 
 export function navigatorEntries(
-  snapshot: Snapshot,
+  snapshot: Omit<Snapshot, "terminalHistories">,
   workspaceId: string,
   category: CategoryKind,
   expandedRootIds: ReadonlySet<string>,

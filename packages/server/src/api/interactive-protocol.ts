@@ -104,6 +104,9 @@ export function parseInteractiveMessage(value: unknown): InteractiveMessage {
       } else {
         throw new ProtocolError("invalid terminal input source");
       }
+      if (context.runtimeGeneration !== undefined) {
+        parsed.runtimeGeneration = integer(context.runtimeGeneration);
+      }
       if (
         typeof input.data !== "string" ||
         Buffer.from(input.data, "base64").toString("base64") !== input.data

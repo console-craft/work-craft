@@ -26,11 +26,11 @@ export type CommandOrigin = {
   sessionId: string | null;
 };
 export type ConnectionRegistry = {
-  open(socket: Bun.ServerWebSocket): string;
-  close(socket: Bun.ServerWebSocket): void;
-  receive(socket: Bun.ServerWebSocket, value: unknown): Promise<void>;
+  open(socket: Bun.ServerWebSocket<unknown>): string;
+  close(socket: Bun.ServerWebSocket<unknown>): void;
+  receive(socket: Bun.ServerWebSocket<unknown>, value: unknown): Promise<void>;
   reconcile(): void;
-  attachment(socket: Bun.ServerWebSocket): ClientAttachment | null;
+  attachment(socket: Bun.ServerWebSocket<unknown>): ClientAttachment | null;
   isCurrent(origin: CommandOrigin): boolean;
 };
 type Connection = {
@@ -42,6 +42,7 @@ type Connection = {
 type ConnectionOptions = {
   epoch: string;
   snapshot(): InteractiveSnapshot;
+  runtimeGeneration?(paneId: string): number;
   execute(command: unknown, origin: CommandOrigin): Promise<CommandResponse>;
   onViewer(connectionId: string, report: ViewerReport | null): void;
   onAttachActivity(connectionId: string): void;
@@ -50,7 +51,7 @@ type ConnectionOptions = {
   onInput(paneId: string, bytes: Uint8Array, source: "input" | "response"): void;
 };
 
-function send(socket: Bun.ServerWebSocket, message: InteractiveServerMessage): void {
+function send(socket: Bun.ServerWebSocket<unknown>, message: InteractiveServerMessage): void {
   socket.send(JSON.stringify(message));
 }
 
@@ -105,9 +106,9 @@ function validPane(
 
 /** Socket identity is ephemeral; every input decision reads the current authoritative cursor. */
 export function createConnections(options: ConnectionOptions): ConnectionRegistry {
-  const connections = new Map<Bun.ServerWebSocket, Connection>();
+  const connections = new Map<Bun.ServerWebSocket<unknown>, Connection>();
 
-  function close(socket: Bun.ServerWebSocket): void {
+  function close(socket: Bun.ServerWebSocket<unknown>): void {
     const connection = connections.get(socket);
     if (connection) {
       connections.delete(socket);
@@ -131,6 +132,8 @@ export function createConnections(options: ConnectionOptions): ConnectionRegistr
     const tab = snapshot.geometry.tabs.find(({ tabId }) => tabId === navigation?.tabId);
     if (
       !navigation ||
+      (stamp.runtimeGeneration !== undefined &&
+        stamp.runtimeGeneration !== options.runtimeGeneration?.(paneId)) ||
       tab?.generation !== stamp.geometrySequence ||
       !validPane(snapshot, navigation, paneId)
     ) {

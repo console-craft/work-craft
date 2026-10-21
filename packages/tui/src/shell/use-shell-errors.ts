@@ -16,7 +16,7 @@ export function useShellErrors({
   dispatch,
   nextRequestId,
 }: {
-  snapshot: Snapshot | null;
+  snapshot: Omit<Snapshot, "terminalHistories"> | null;
   connectionError: string | null;
   error: OperationalError | null;
   dispatch(action: ShellAction): void;

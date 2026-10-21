@@ -1,6 +1,6 @@
 import { expect, spyOn, test } from "bun:test";
 
-import { appendTerminalChunk } from "@/client/terminal-buffer";
+import { appendTerminalChunk, mergePaneHistory } from "@/client/terminal-buffer";
 import { createTerminalOutputs } from "@/client/terminal-output";
 import * as replay from "@/client/terminal-replay";
 import { terminalBufferFixture } from "@/tests/support/fixtures";
@@ -265,4 +265,50 @@ test("unsubscribing the last native leaf releases unread work until a new consum
   } finally {
     planning.mockRestore();
   }
+});
+
+test("history replacement resets only a native consumer whose acknowledged frontier was lost", () => {
+  const initial = terminalBufferFixture({ history: new Uint8Array([65]), historyCursor: 1 });
+  const outputs = createTerminalOutputs(new Map([["A", initial]]));
+  const output = outputs.pane("A");
+  output.next(null, 8192);
+  output.consumed({ cursor: 0, gridSequence: 0 });
+  output.next({ cursor: 0, gridSequence: 0 }, 8192);
+  output.consumed({ cursor: 1, gridSequence: 0 });
+  const gap = appendTerminalChunk(initial, 3, new Uint8Array([67]), 0);
+  outputs.set("A", gap);
+  const history = {
+    paneId: "A",
+    cursor: 2,
+    startCursor: 1,
+    prefixBytes: 0,
+    truncated: false,
+    data: "Qg==",
+    initialSize: { cols: 80, rows: 24 },
+    initialGridSequence: 0,
+    resizes: [],
+  };
+  const repaired = mergePaneHistory(
+    { epoch: initial.epoch, paneId: "A", runtimeGeneration: 0, history },
+    gap,
+    0,
+  );
+  outputs.set("A", repaired);
+  expect(output.read()?.resetGeneration).toBe(0);
+  expect(output.next({ cursor: 1, gridSequence: 0 }, 8192)).toMatchObject({
+    type: "bytes",
+    cursor: 2,
+  });
+  const lost = mergePaneHistory(
+    {
+      epoch: initial.epoch,
+      paneId: "A",
+      runtimeGeneration: 0,
+      history: { ...history, cursor: 11, startCursor: 10, data: "eA==" },
+    },
+    repaired,
+    0,
+  );
+  outputs.set("A", lost);
+  expect(output.read()?.resetGeneration).toBe(1);
 });

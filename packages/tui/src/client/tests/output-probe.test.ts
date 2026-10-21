@@ -119,6 +119,10 @@ test("normal daemon and TUIs flush correlated stages without logging terminal te
       "store.notify",
       "native.write.end",
       "native.create",
+      "control.fetch.start",
+      "control.fetch.end",
+      "control.http",
+      "pane.history.read",
       "frame",
     ]) {
       expect(stages.has(stage)).toBe(true);

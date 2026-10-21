@@ -13,6 +13,8 @@ export function createTerminalConsumer(): {
   next(after: ReplayProgress | null, maxBytes: number): TerminalReplayStep | "recover" | null;
   consumed(frontier: ReplayProgress): void;
   release(): void;
+  needsReset(next: TerminalBuffer): boolean;
+  frontier(): ReplayProgress | null;
 } {
   let buffer: TerminalBuffer | undefined;
   let active = false;
@@ -89,6 +91,17 @@ export function createTerminalConsumer(): {
 
   return {
     release,
+    frontier: () => (active ? progress : null),
+    needsReset(next) {
+      return (
+        active &&
+        progress !== null &&
+        buffer?.epoch === next.epoch &&
+        buffer.runtimeGeneration === next.runtimeGeneration &&
+        (progress.cursor < next.historyStartCursor ||
+          (progress.gridSequence ?? 0) < (next.initialGridSequence ?? 0))
+      );
+    },
     update(next) {
       if (next === buffer) {
         return;
@@ -102,6 +115,8 @@ export function createTerminalConsumer(): {
         !next ||
         !previous ||
         next.epoch !== previous.epoch ||
+        next.runtimeGeneration !== previous.runtimeGeneration ||
+        next.resetGeneration !== previous.resetGeneration ||
         next.history !== previous.history ||
         next.historyCursor !== previous.historyCursor ||
         next.historyStartCursor !== previous.historyStartCursor ||
@@ -151,7 +166,7 @@ export function createTerminalConsumer(): {
       if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) {
         throw new RangeError("Native write quantum must be a positive integer");
       }
-      if (!buffer) {
+      if (!buffer || buffer.needsHistory) {
         return "recover";
       }
       if (

@@ -51,7 +51,7 @@ export type ShellModel = {
 };
 
 export function deriveShellModel(input: {
-  snapshot: Snapshot | null;
+  snapshot: Omit<Snapshot, "terminalHistories"> | null;
   state: ShellModelState;
   attachment: ClientAttachment | null;
 }): ShellModel {
@@ -151,7 +151,7 @@ export function resolveShellFocus(input: {
 
 export function genericRootIdForShellContext(
   state: ShellModelState,
-  snapshot: Snapshot,
+  snapshot: Omit<Snapshot, "terminalHistories">,
   navigation: SessionNavigation | null,
 ): string | undefined {
   if (

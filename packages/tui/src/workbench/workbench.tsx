@@ -18,7 +18,7 @@ export type WorkbenchProps = Pick<
   reactivatingPaneIds: ReadonlySet<string>;
   canReactivate(paneId: string): boolean;
   onReactivatePane(paneId: string): void;
-  snapshot: Snapshot | null;
+  snapshot: Omit<Snapshot, "terminalHistories"> | null;
   stream: StreamConnection | null;
   outputs: TerminalOutputs;
   surface: Snapshot["surfaces"][number] | undefined;

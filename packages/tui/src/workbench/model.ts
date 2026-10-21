@@ -1,14 +1,14 @@
 import type { Snapshot } from "@work-craft/server/client";
 
 export function surfaceForItem(
-  snapshot: Snapshot,
+  snapshot: Omit<Snapshot, "terminalHistories">,
   itemId: string | undefined,
 ): Snapshot["surfaces"][number] | undefined {
   return snapshot.surfaces.find((surface) => surface.itemId === itemId);
 }
 
 export function tabsForSurface(
-  snapshot: Snapshot,
+  snapshot: Omit<Snapshot, "terminalHistories">,
   surfaceId: string | undefined,
 ): Snapshot["tabs"] {
   return snapshot.tabs

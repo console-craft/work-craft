@@ -87,6 +87,7 @@ function fixture() {
   const inputs: { paneId: string; data: string; source: string; owner: string | null }[] = [];
   const reports: unknown[] = [];
   const disconnected: string[] = [];
+  let runtimeGeneration = 1;
   let execute = async (_value: unknown, _origin: CommandOrigin): Promise<CommandResponse> => ({
     ok: true,
     revision: 1,
@@ -96,6 +97,7 @@ function fixture() {
   const registry = createConnections({
     epoch: "e",
     snapshot,
+    runtimeGeneration: () => runtimeGeneration,
     execute: (value, origin) => execute(value, origin),
     onViewer(id, report) {
       reports.push(report);
@@ -171,11 +173,46 @@ function fixture() {
     attach,
     report,
     input,
+    setRuntimeGeneration(generation: number) {
+      runtimeGeneration = generation;
+    },
     setExecute(next: typeof execute) {
       execute = next;
     },
   };
 }
+
+test("a supplied stale runtime generation is rejected while legacy raw input remains valid", async () => {
+  const f = fixture();
+  const { socket } = socketFixture();
+  f.registry.open(socket);
+  await f.attach(socket);
+  await f.report(socket);
+  async function send(runtimeGeneration?: number): Promise<void> {
+    await f.registry.receive(socket, {
+      type: "terminal.input",
+      paneId: "pane-1",
+      data: "eA==",
+      context: {
+        ...f.stamp(socket),
+        source: "input",
+        kind: "key",
+        ...(runtimeGeneration === undefined ? {} : { runtimeGeneration }),
+      },
+    });
+  }
+  await send(0);
+  expect(f.inputs).toHaveLength(0);
+  await send(1);
+  expect(f.inputs).toHaveLength(1);
+  f.setRuntimeGeneration(2);
+  await send(1);
+  expect(f.inputs).toHaveLength(1);
+  await send();
+  await send(2);
+  expect(f.inputs).toHaveLength(3);
+  f.registry.close(socket);
+});
 
 test("an obsolete attachment cannot write or withdraw a new session's viewer", async () => {
   const setup = fixture();

@@ -4,7 +4,12 @@ import type { Snapshot, StreamHandlers, WorkCraftClient } from "@work-craft/serv
 
 import { createWorkCraftStore } from "@/client/store.ts";
 import { terminalReplaySteps } from "@/client/terminal-replay";
-import { inputStampFixture, snapshotFixture, streamFixture } from "@/tests/support/fixtures.ts";
+import {
+  controlSnapshotFixture,
+  inputStampFixture,
+  snapshotFixture,
+  streamFixture,
+} from "@/tests/support/fixtures.ts";
 
 const historyMetadata = {
   startCursor: 0,
@@ -39,6 +44,7 @@ test("tiny chunks never publish root control state but metadata still invalidate
     for (let cursor = 1; cursor <= 16; cursor++) {
       await store.apply({
         type: "terminal.output",
+        runtimeGeneration: 0,
         epoch: initial.epoch,
         paneId: "pane-1",
         cursor,
@@ -97,13 +103,14 @@ for (const lifecycle of ["reload", "stop and start"] as const) {
       refresh.resolve({ ...old, revision: 6 });
       await store.apply({
         type: "terminal.output",
+        runtimeGeneration: 0,
         geometrySequence: 0,
         epoch: "never",
         paneId: "p",
         cursor: 1,
         data: "",
       });
-      expect(store.snapshot()).toBe(fresh);
+      expect(store.snapshot()).toEqual(controlSnapshotFixture(fresh));
       expect(store.getState().status).toBe("connected");
       expect(handlers).toHaveLength(2);
     } finally {
@@ -115,13 +122,20 @@ for (const lifecycle of ["reload", "stop and start"] as const) {
 
 function fakeClient(replacement: Snapshot): WorkCraftClient & { refreshCount(): number } {
   let refreshes = 0;
-  return {
+  const client: WorkCraftClient & { refreshCount(): number } = {
     ensureDaemon: async () => {},
     health: async () => ({ epoch: replacement.epoch, revision: replacement.revision, pid: 1 }),
     snapshot: async () => {
       refreshes += 1;
       return replacement;
     },
+    controlSnapshot: async () => controlSnapshotFixture(await client.snapshot()),
+    paneHistory: async (paneId) => ({
+      epoch: replacement.epoch,
+      paneId,
+      runtimeGeneration: 0,
+      history: replacement.terminalHistories.find((history) => history.paneId === paneId)!,
+    }),
     command: async () => ({ ok: true, revision: replacement.revision, result: { id: "id" } }),
     stream: async () => {
       throw new Error("not used");
@@ -129,6 +143,7 @@ function fakeClient(replacement: Snapshot): WorkCraftClient & { refreshCount(): 
     streamOnce: async () => ({ type: "snapshot", snapshot: replacement }),
     refreshCount: () => refreshes,
   };
+  return client;
 }
 
 function deferred<T>(): {
@@ -160,7 +175,7 @@ test("a delayed output resync cannot overwrite a newly reconnected daemon snapsh
     await store.reload();
     pending.resolve({ ...initial, revision: 100 });
     await resync;
-    expect(store.snapshot()).toBe(fresh);
+    expect(store.snapshot()).toEqual(controlSnapshotFixture(fresh));
     expect(store.getState().status).toBe("connected");
   } finally {
     pending.resolve(initial);
@@ -191,6 +206,7 @@ test("delayed resync retains later live output and same-cursor resize markers", 
     const output = (cursor: number, geometrySequence = 0) =>
       store.apply({
         type: "terminal.output",
+        runtimeGeneration: 0,
         epoch: initial.epoch,
         paneId: "pane-1",
         cursor,
@@ -210,7 +226,7 @@ test("delayed resync retains later live output and same-cursor resize markers", 
       type: "terminal.geometry",
       epoch: initial.epoch,
       geometry: { sequence: 1, tabs: [], panes: [{ paneId: "pane-1", size: marker }] },
-      resizes: [{ paneId: "pane-1", marker }],
+      resizes: [{ paneId: "pane-1", marker, runtimeGeneration: 0 }],
     });
     await output(3_600_000, 1);
     pending.resolve({
@@ -262,7 +278,7 @@ test("a delayed output resync cannot detach a session created and attached after
     expect(attachment?.sessionId).toBe("session-new");
     pending.resolve(initial);
     await resync;
-    expect(store.snapshot()).toEqual(fresh);
+    expect(store.snapshot()).toEqual(controlSnapshotFixture(fresh));
     expect(store.getState().attachment).toBe(attachment);
     expect(store.getState().status).toBe("connected");
   } finally {
@@ -289,7 +305,7 @@ test("failed output resync falls back to reconnecting instead of leaving termina
     await store.getState().attach("session-work");
     const stream = store.getState().stream;
     await store.getState().resync();
-    expect(store.snapshot()).toBe(fresh);
+    expect(store.snapshot()).toEqual(controlSnapshotFixture(fresh));
     expect(store.getState().status).toBe("connected");
     expect(store.getState().stream).not.toBe(stream);
     expect(store.getState().attachment?.sessionId).toBe("session-work");
@@ -410,7 +426,7 @@ test("force reload closes the old stream and retains coherent state while connec
 
   const reload = store.reload();
   expect(store.getState().status).toBe("connecting");
-  expect(store.getState().snapshot).toBe(snapshot);
+  expect(store.getState().snapshot).toEqual(controlSnapshotFixture(snapshot));
   await reload;
 
   expect(closes).toBe(1);
@@ -557,7 +573,7 @@ test("an old stream message cannot replace state after reload", async () => {
   handlers[0]!.onMessage({ type: "snapshot", snapshot: oldSnapshot });
   await Bun.sleep(0);
 
-  expect(store.snapshot()).toBe(currentSnapshot);
+  expect(store.snapshot()).toEqual(controlSnapshotFixture(currentSnapshot));
 });
 
 test("exhausted recovery becomes disconnected and rejects mutations", async () => {
@@ -603,7 +619,7 @@ test("a gap refresh ignores an equal same-epoch snapshot", async () => {
 
   await store.apply({ type: "snapshot", snapshot: snapshotFixture({ revision: 6 }) });
 
-  expect(store.snapshot()).toBe(original);
+  expect(store.snapshot()).toEqual(controlSnapshotFixture(original));
   expect(updates).toBe(0);
   unsubscribe();
 });
@@ -694,6 +710,7 @@ test("current-epoch terminal output remains available after a renderer remount",
 
   await store.apply({
     type: "terminal.output",
+    runtimeGeneration: 0,
     epoch: "stale-epoch",
     geometrySequence: 0,
     paneId: "pane-1",
@@ -702,6 +719,7 @@ test("current-epoch terminal output remains available after a renderer remount",
   });
   await store.apply({
     type: "terminal.output",
+    runtimeGeneration: 0,
     epoch: "epoch-a",
     geometrySequence: 0,
     paneId: "pane-1",
@@ -746,6 +764,7 @@ test("current-session terminal output is bounded to two MiB per pane", async () 
 
   await store.apply({
     type: "terminal.output",
+    runtimeGeneration: 0,
     epoch: "epoch-a",
     geometrySequence: 0,
     paneId: "pane-1",

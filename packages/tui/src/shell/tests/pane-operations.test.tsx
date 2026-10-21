@@ -22,6 +22,7 @@ import {
   twoSurfaceSnapshot,
   workCraftStateFixture,
 } from "@/shell/tests/fixtures";
+import { controlSnapshotFixture } from "@/tests/support/fixtures";
 import { isEligibleFocusTarget } from "@/ui/interaction/focus-utils";
 
 function restartResponse(revision: number, paneId = "pane-2", generation = 2) {
@@ -1126,6 +1127,7 @@ for (const change of [
         expect(setup.store.snapshot()!.panes[0]!.processStatus).toBe("running");
         await setup.store.apply({
           type: "terminal.output",
+          runtimeGeneration: 0,
           geometrySequence: next.geometry.sequence,
           epoch: next.epoch,
           paneId: "pane-1",
@@ -2005,12 +2007,9 @@ test("splitting focuses the new pane returned by the server", async () => {
     snapshot: { ...surfaceSnapshot(), revision: 1 },
     command: async (command) => {
       if (command.type === "pane.split") {
-        workCraft.snapshot = selectedPaneSnapshot(
-          { ...splitSurfaceSnapshot(), revision: 2 },
-          "pane-2",
-          2,
-        );
-        publish(workCraft.snapshot);
+        const next = selectedPaneSnapshot({ ...splitSurfaceSnapshot(), revision: 2 }, "pane-2", 2);
+        workCraft.snapshot = controlSnapshotFixture(next);
+        publish(next);
         return {
           ok: true,
           revision: 2,
@@ -2027,7 +2026,7 @@ test("splitting focuses the new pane returned by the server", async () => {
     },
   });
   function Fixture() {
-    const [snapshot, setSnapshot] = useState(workCraft.snapshot);
+    const [snapshot, setSnapshot] = useState({ ...surfaceSnapshot(), revision: 1 });
     publish = setSnapshot;
     return (
       <WorkCraftShell workCraft={workCraftStateFixture({ command: workCraft.command, snapshot })} />
