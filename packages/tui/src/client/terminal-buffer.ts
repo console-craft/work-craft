@@ -100,16 +100,30 @@ export function appendTerminalChunk(
   origin: "history" | "live" = "live",
   responseStamp?: InputStamp | null,
 ): TerminalBuffer {
-  const chunks = [
-    ...buffer.chunks,
-    {
+  const chunks = [...buffer.chunks];
+  const previous = chunks.at(-1);
+  if (
+    previous &&
+    previous.cursor === cursor - data.byteLength &&
+    previous.data.byteLength + data.byteLength <= 8192 &&
+    previous.origin === origin &&
+    previous.geometrySequence === geometrySequence &&
+    sameResponseStamp(previous.responseStamp, responseStamp) &&
+    (buffer.resizes.at(-1)?.cursor ?? -1) < previous.cursor
+  ) {
+    const merged = new Uint8Array(previous.data.byteLength + data.byteLength);
+    merged.set(previous.data);
+    merged.set(data, previous.data.byteLength);
+    chunks[chunks.length - 1] = { ...previous, cursor, data: merged };
+  } else {
+    chunks.push({
       cursor,
       data,
       geometrySequence,
       origin,
       ...(responseStamp === undefined ? {} : { responseStamp }),
-    },
-  ];
+    });
+  }
   let excess =
     chunks.reduce((total, chunk) => total + chunk.data.byteLength, 0) - MAX_TERMINAL_LIVE_BYTES;
   while (excess > 0) {
@@ -123,4 +137,16 @@ export function appendTerminalChunk(
     }
   }
   return { ...buffer, chunks };
+}
+
+export function sameResponseStamp(first?: InputStamp | null, second?: InputStamp | null): boolean {
+  return (
+    first === second ||
+    (!!first &&
+      !!second &&
+      first.epoch === second.epoch &&
+      first.attachmentGeneration === second.attachmentGeneration &&
+      first.navigationGeneration === second.navigationGeneration &&
+      first.geometrySequence === second.geometrySequence)
+  );
 }

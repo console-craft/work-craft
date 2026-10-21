@@ -11,8 +11,9 @@ import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "re
 import { observeOutput, outputProbeEnabled } from "@/client/output-probe";
 import type { TerminalBuffer } from "@/client/terminal-buffer";
 import type { PaneOutput } from "@/client/terminal-output";
-import { type ReplayProgress, terminalReplaySteps } from "@/client/terminal-replay";
+import type { ReplayProgress } from "@/client/terminal-replay";
 import { Box } from "@/ui/primitives/box";
+import { terminalDrainFor } from "@/workbench/terminal-drain";
 
 export type TerminalViewportProps = {
   paneId: string;
@@ -38,6 +39,7 @@ let nextProbeInstance = 0;
 /** Native parsing uses the shared grid; only this outer viewport follows local geometry. */
 export function TerminalViewport(props: TerminalViewportProps): ReactNode {
   const renderer = useRenderer();
+  const scheduler = terminalDrainFor(renderer);
   const latest = useRef(props);
   latest.current = props;
   // A down-specific prop would replace the native terminal's mouse-encoding handler.
@@ -57,22 +59,29 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
   const [ready, setReady] = useState(false);
   const inputReady = useRef(false);
   const progress = useRef<ReplayProgress | null>(null);
+  const required = useRef<(ReplayProgress & { size: TerminalSize }) | null>(null);
   const suppressResponse = useRef(false);
   const responseStamp = useRef<InputStamp | null>(null);
   const resizing = useRef(false);
   const resyncBuffer = useRef<TerminalBuffer | null>(null);
+  const lastScreenChange = useRef(-Infinity);
+  const screenChangeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const probeInstance = useRef(0);
   if (outputProbeEnabled && probeInstance.current === 0) {
     probeInstance.current = ++nextProbeInstance;
   }
 
   function readiness(value: boolean): void {
+    if (inputReady.current === value) {
+      return;
+    }
     inputReady.current = value;
     setReady(value);
   }
 
   function resync(): void {
     readiness(false);
+    required.current = null;
     const current = latest.current;
     const buffer = current.output.read();
     if (buffer && resyncBuffer.current !== buffer) {
@@ -82,34 +91,49 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
   }
 
   function drain(): void {
+    scheduler.request(latest.current.paneId, drainStep);
+  }
+
+  function drainStep(): boolean {
     const target = terminal.current;
     if (!target) {
-      return;
+      return false;
     }
     const current = latest.current;
     const buffer = current.output.read();
     if (!buffer) {
       readiness(false);
-      return;
+      return false;
+    }
+    if (resyncBuffer.current === buffer) {
+      return false;
+    }
+    if (!required.current || !sameSize(required.current.size, current.size)) {
+      required.current = {
+        cursor: buffer.chunks.at(-1)?.cursor ?? buffer.historyCursor,
+        gridSequence: buffer.resizes.at(-1)?.sequence ?? buffer.initialGridSequence,
+        size: current.size,
+      };
+      readiness(false);
     }
     const planned = outputProbeEnabled ? performance.now() : 0;
-    const replay = terminalReplaySteps(buffer, progress.current);
+    const step = current.output.next(progress.current, 8192);
     if (outputProbeEnabled) {
       observeOutput({
         stage: "native.plan",
-        aggregateOnly: replay.steps.length === 0,
+        aggregateOnly: step === null,
         paneId: current.paneId,
         cursor: progress.current?.cursor,
         generation: probeInstance.current,
-        pending: replay.steps.length,
+        pending: step === null ? 0 : 1,
         durationMs: performance.now() - planned,
       });
     }
-    if (replay.needsSnapshot) {
+    if (step === "recover") {
       resync();
-      return;
+      return false;
     }
-    for (const step of replay.steps) {
+    if (step !== null) {
       if (step.type === "resize") {
         if (
           !sameSize(actualGrid.current, step.marker) ||
@@ -122,7 +146,7 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
             requestedGrid.current = { cols: step.marker.cols, rows: step.marker.rows };
             setGrid(requestedGrid.current);
           }
-          return;
+          return false;
         }
         progress.current = { cursor: step.marker.cursor, gridSequence: step.marker.sequence };
       } else {
@@ -140,6 +164,9 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
         }
         try {
           target.write(step.data);
+        } catch {
+          resync();
+          return false;
         } finally {
           if (outputProbeEnabled) {
             observeOutput({
@@ -159,12 +186,25 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
           gridSequence: progress.current?.gridSequence ?? buffer.initialGridSequence,
         };
       }
+      current.output.consumed(progress.current!);
     }
-    if (!sameSize(actualGrid.current, current.size)) {
-      resync();
-      return;
+    const next = current.output.next(progress.current, 8192);
+    const frontier = required.current;
+    if (
+      progress.current &&
+      progress.current.cursor >= frontier.cursor &&
+      (progress.current.gridSequence ?? 0) >= (frontier.gridSequence ?? 0) &&
+      sameSize(actualGrid.current, current.size) &&
+      !(
+        next &&
+        next !== "recover" &&
+        next.type === "bytes" &&
+        next.cursor === progress.current.cursor
+      )
+    ) {
+      readiness(true);
     }
-    readiness(true);
+    return next !== null;
   }
 
   useLayoutEffect(() => {
@@ -189,20 +229,13 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
   }, []);
   useLayoutEffect(drain);
   useLayoutEffect(() => {
-    let pending: ReturnType<typeof setImmediate> | undefined;
-    const unsubscribe = props.output.subscribe(() => {
-      pending ??= setImmediate(() => {
-        pending = undefined;
-        drain();
-      });
-    });
+    const unsubscribe = props.output.subscribe(drain);
     return () => {
       unsubscribe();
-      if (pending !== undefined) {
-        clearImmediate(pending);
-      }
+      scheduler.remove(props.paneId);
+      clearTimeout(screenChangeTimer.current);
     };
-  }, [props.output]);
+  }, [props.output, props.paneId, scheduler]);
   useLayoutEffect(followCursor, [viewport.width, viewport.height]);
   useLayoutEffect(() => {
     renderer.on(CliRenderEvents.FRAME, drain);
@@ -252,6 +285,21 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
     setOffset((previous) => (previous.x === x && previous.y === y ? previous : { x, y }));
   }
 
+  function screenChanged(): void {
+    const delay = 33 - (performance.now() - lastScreenChange.current);
+    if (delay <= 0) {
+      clearTimeout(screenChangeTimer.current);
+      screenChangeTimer.current = undefined;
+      lastScreenChange.current = performance.now();
+      followCursor();
+    } else if (screenChangeTimer.current === undefined) {
+      screenChangeTimer.current = setTimeout(() => {
+        screenChangeTimer.current = undefined;
+        screenChanged();
+      }, delay);
+    }
+  }
+
   return (
     <Box
       width="100%"
@@ -297,7 +345,7 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
           resizing.current = false;
           drain();
         }}
-        onScreenChange={followCursor}
+        onScreenChange={screenChanged}
         onData={(bytes, source) => {
           const current = latest.current;
           if (source === "response") {

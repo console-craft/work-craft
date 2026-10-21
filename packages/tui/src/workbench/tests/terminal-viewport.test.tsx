@@ -5,7 +5,7 @@ import { extend } from "@opentui/react";
 import type { InputStamp } from "@work-craft/server/client";
 import { act, useState } from "react";
 
-import type { TerminalBuffer } from "@/client/terminal-buffer";
+import { appendTerminalChunk, type TerminalBuffer } from "@/client/terminal-buffer";
 import { createTerminalOutputs } from "@/client/terminal-output";
 import { flushMeasured } from "@/tests/support/measured-render";
 import { testRender } from "@/tests/support/render";
@@ -141,6 +141,98 @@ test("unmount cancels a scheduled pane drain instead of writing to a destroyed n
   await new Promise<void>((resolve) => setImmediate(resolve));
   expect(write).not.toHaveBeenCalled();
   write.mockRestore();
+});
+
+test("the viewport never sends a native write larger than eight KiB", async () => {
+  const setup = await viewport(buffer(), 60, 12);
+  const native = setup.terminal();
+  const sizes: number[] = [];
+  const original = native.write.bind(native);
+  const write = spyOn(native, "write").mockImplementation((bytes) => {
+    sizes.push(typeof bytes === "string" ? Buffer.byteLength(bytes) : bytes.byteLength);
+    original(bytes);
+  });
+  try {
+    setup.outputs.set("p", buffer("x".repeat(20000)));
+    await flushMeasured(setup);
+    expect(sizes).toEqual([8192, 8192, 3616]);
+  } finally {
+    write.mockRestore();
+    act(() => setup.renderer.destroy());
+  }
+});
+
+test("failed native writes do not acknowledge consumption or prevent recovery", async () => {
+  const setup = await viewport(buffer(), 60, 12);
+  const output = setup.outputs.pane("p");
+  const consumed = spyOn(output, "consumed");
+  const write = spyOn(setup.terminal(), "write").mockImplementation(() => {
+    throw new Error("native write failed");
+  });
+  try {
+    setup.outputs.set("p", buffer("unconsumed"));
+    await flushMeasured(setup);
+    expect(consumed).not.toHaveBeenCalled();
+    expect(output.next({ cursor: 0, gridSequence: 0 }, 8192)).toMatchObject({
+      type: "bytes",
+      cursor: 10,
+    });
+    expect(setup.resyncs()).toBe(1);
+    expect(setup.terminal().focusable).toBe(false);
+  } finally {
+    consumed.mockRestore();
+    write.mockRestore();
+    act(() => setup.renderer.destroy());
+  }
+});
+
+test("continuous output does not move the finite readiness frontier or repeatedly refocus", async () => {
+  const setup = await viewport(buffer(), 60, 12);
+  const native = setup.terminal();
+  const focus = spyOn(native, "focus");
+  const blur = spyOn(native, "blur");
+  const original = native.write.bind(native);
+  let cursor = 20000;
+  let remaining = 6;
+  const initial = buffer("x".repeat(cursor));
+  let current = initial;
+  const write = spyOn(native, "write").mockImplementation((bytes) => {
+    original(bytes);
+    if (remaining-- > 0) {
+      cursor += 8192;
+      current = appendTerminalChunk(current, cursor, new Uint8Array(8192).fill(120), 0);
+      setup.outputs.set("p", current);
+    }
+  });
+  try {
+    setup.outputs.set("p", initial);
+    await flushMeasured(setup);
+    expect(native.focusable).toBe(true);
+    expect(blur).not.toHaveBeenCalled();
+    expect(focus).not.toHaveBeenCalled();
+  } finally {
+    focus.mockRestore();
+    blur.mockRestore();
+    write.mockRestore();
+    act(() => setup.renderer.destroy());
+  }
+});
+
+test("screen-change callbacks coalesce cursor inspection to one per 33 milliseconds", async () => {
+  const setup = await viewport(buffer(), 60, 12);
+  const screen = spyOn(setup.terminal(), "screen");
+  const nextWindow = performance.now() + 1000;
+  const now = spyOn(performance, "now").mockReturnValue(nextWindow);
+  try {
+    for (let index = 0; index < 100; index++) {
+      setup.terminal().onScreenChange!();
+    }
+    expect(screen).toHaveBeenCalledTimes(1);
+  } finally {
+    now.mockRestore();
+    screen.mockRestore();
+    act(() => setup.renderer.destroy());
+  }
 });
 
 test("a delayed mirror cannot answer an old live query after a same-size ownership handoff", async () => {

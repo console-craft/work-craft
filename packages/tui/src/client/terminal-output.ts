@@ -1,9 +1,12 @@
 import type { TerminalBuffer } from "@/client/terminal-buffer";
+import { createTerminalConsumer } from "@/client/terminal-consumer";
 
 export type PaneOutput = {
   readonly paneId: string;
   read(): TerminalBuffer | undefined;
   subscribe(listener: () => void): () => void;
+  next: ReturnType<typeof createTerminalConsumer>["next"];
+  consumed: ReturnType<typeof createTerminalConsumer>["consumed"];
 };
 
 export type TerminalOutputs = {
@@ -21,10 +24,18 @@ export function createTerminalOutputs(
   initial: ReadonlyMap<string, TerminalBuffer> = new Map(),
 ): OutputRegistry {
   let buffers = new Map(initial);
-  const channels = new Map<string, { output: PaneOutput; listeners: Set<() => void> }>();
+  const channels = new Map<
+    string,
+    {
+      output: PaneOutput;
+      listeners: Set<() => void>;
+      consumer: ReturnType<typeof createTerminalConsumer>;
+    }
+  >();
 
   function notify(paneId: string): void {
     const channel = channels.get(paneId);
+    channel?.consumer.update(buffers.get(paneId));
     for (const listener of channel?.listeners ?? []) {
       listener();
     }
@@ -39,15 +50,22 @@ export function createTerminalOutputs(
       let channel = channels.get(paneId);
       if (!channel) {
         const listeners = new Set<() => void>();
+        const consumer = createTerminalConsumer();
+        consumer.update(buffers.get(paneId));
         channel = {
           listeners,
+          consumer,
           output: {
             paneId,
+            next: consumer.next,
+            consumed: consumer.consumed,
             read: () => buffers.get(paneId),
             subscribe(listener) {
               listeners.add(listener);
               return () => {
-                listeners.delete(listener);
+                if (listeners.delete(listener) && listeners.size === 0) {
+                  consumer.release();
+                }
                 if (
                   !buffers.has(paneId) &&
                   listeners.size === 0 &&

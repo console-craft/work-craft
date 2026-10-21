@@ -49,7 +49,13 @@ between byte ranges without granting new response authority to delayed queries.
 replay, readiness and cursor-follow clipping into the locally measured parent.
 It subscribes directly to its pane output channel; byte arrival schedules a
 coalesced I/O-turn drain without republishing shell/control state. Unmount removes
-that subscription and cancels its pending drain. Structural/geometry updates
+that subscription, releases unread consumer work and cancels its pending drain.
+`client/terminal-consumer.ts` advances acknowledged byte/marker offsets separately
+from retained history; empty drains do not plan that history again.
+`workbench/terminal-drain.ts` round-robins mounted panes on their renderer with
+8-KiB writes and a 2-ms aggregate I/O-turn budget. Readiness captures a finite
+entry/geometry frontier; ordinary output does not move it. Screen-change cursor
+inspection coalesces at 33 ms. Structural/geometry updates
 still use the root control subscription; output does not grant input authority.
 `terminal-pane.tsx` gates forwarding and displays recovery state. Leaves do not
 directly resize daemon PTYs: the shell reports its available canvas/eligibility
