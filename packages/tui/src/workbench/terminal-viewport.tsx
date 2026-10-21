@@ -10,12 +10,13 @@ import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "re
 
 import { observeOutput, outputProbeEnabled } from "@/client/output-probe";
 import type { TerminalBuffer } from "@/client/terminal-buffer";
+import type { PaneOutput } from "@/client/terminal-output";
 import { type ReplayProgress, terminalReplaySteps } from "@/client/terminal-replay";
 import { Box } from "@/ui/primitives/box";
 
 export type TerminalViewportProps = {
   paneId: string;
-  buffer: TerminalBuffer;
+  output: PaneOutput;
   size: TerminalSize;
   inputEnabled: boolean;
   focused: boolean;
@@ -46,7 +47,7 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
       latest.current.onFocus();
     }
   }).current;
-  const bootstrap = useRef(props.buffer.initialSize ?? props.size).current;
+  const bootstrap = useRef(props.output.read()?.initialSize ?? props.size).current;
   const terminal = useRef<EmbeddedTerminalRenderable>(null);
   const [grid, setGrid] = useState(bootstrap);
   const requestedGrid = useRef(grid);
@@ -73,8 +74,9 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
   function resync(): void {
     readiness(false);
     const current = latest.current;
-    if (resyncBuffer.current !== current.buffer) {
-      resyncBuffer.current = current.buffer;
+    const buffer = current.output.read();
+    if (buffer && resyncBuffer.current !== buffer) {
+      resyncBuffer.current = buffer;
       current.onResync();
     }
   }
@@ -85,8 +87,13 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
       return;
     }
     const current = latest.current;
+    const buffer = current.output.read();
+    if (!buffer) {
+      readiness(false);
+      return;
+    }
     const planned = outputProbeEnabled ? performance.now() : 0;
-    const replay = terminalReplaySteps(current.buffer, progress.current);
+    const replay = terminalReplaySteps(buffer, progress.current);
     if (outputProbeEnabled) {
       observeOutput({
         stage: "native.plan",
@@ -149,7 +156,7 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
         }
         progress.current = {
           cursor: step.cursor,
-          gridSequence: progress.current?.gridSequence ?? current.buffer.initialGridSequence,
+          gridSequence: progress.current?.gridSequence ?? buffer.initialGridSequence,
         };
       }
     }
@@ -181,6 +188,21 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
     };
   }, []);
   useLayoutEffect(drain);
+  useLayoutEffect(() => {
+    let pending: ReturnType<typeof setImmediate> | undefined;
+    const unsubscribe = props.output.subscribe(() => {
+      pending ??= setImmediate(() => {
+        pending = undefined;
+        drain();
+      });
+    });
+    return () => {
+      unsubscribe();
+      if (pending !== undefined) {
+        clearImmediate(pending);
+      }
+    };
+  }, [props.output]);
   useLayoutEffect(followCursor, [viewport.width, viewport.height]);
   useLayoutEffect(() => {
     renderer.on(CliRenderEvents.FRAME, drain);

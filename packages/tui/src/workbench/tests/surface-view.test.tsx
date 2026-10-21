@@ -5,7 +5,8 @@ import { extend } from "@opentui/react";
 import type { LayoutNode, Snapshot } from "@work-craft/server/client";
 import { act, type ReactNode, useState } from "react";
 
-import { snapshotTerminals } from "@/client/terminal-buffer";
+import { snapshotTerminals, type TerminalBuffer } from "@/client/terminal-buffer";
+import { createTerminalOutputs } from "@/client/terminal-output";
 import {
   snapshotFixture,
   streamFixture,
@@ -22,12 +23,15 @@ import {
   type SurfaceViewProps,
   terminalPaneKey,
 } from "@/workbench/surface-view.tsx";
-import { Workbench } from "@/workbench/workbench.tsx";
+import { Workbench as NativeWorkbench, type WorkbenchProps } from "@/workbench/workbench.tsx";
 
 extend({ terminal: EmbeddedTerminalRenderable });
 
 function SurfaceView(
-  props: Omit<SurfaceViewProps, "activeTabId"> & { activeTabId?: string | null },
+  props: Omit<SurfaceViewProps, "activeTabId" | "outputs"> & {
+    activeTabId?: string | null;
+    terminals: ReadonlyMap<string, TerminalBuffer>;
+  },
 ) {
   const snapshot = terminalSnapshotFixture(props.snapshot);
   return (
@@ -39,9 +43,16 @@ function SurfaceView(
           ? (snapshot.navigation[0]?.tabId ?? null)
           : props.activeTabId
       }
-      terminals={snapshotTerminals(snapshot, props.terminals)}
+      outputs={createTerminalOutputs(snapshotTerminals(snapshot, props.terminals))}
     />
   );
+}
+
+function Workbench({
+  terminals,
+  ...props
+}: Omit<WorkbenchProps, "outputs"> & { terminals: ReadonlyMap<string, TerminalBuffer> }) {
+  return <NativeWorkbench {...props} outputs={createTerminalOutputs(terminals)} />;
 }
 
 test("a missing authoritative tab renders empty rather than entering a fallback terminal", async () => {

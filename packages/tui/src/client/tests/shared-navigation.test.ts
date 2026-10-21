@@ -52,7 +52,7 @@ test("an old connection cannot append output after automatic reconnect in the sa
       data: Buffer.from("BAD").toString("base64"),
     });
     await store.apply({ type: "snapshot", snapshot });
-    expect(store.getState().terminals.get("pane-1")?.chunks).toEqual([]);
+    expect(store.getState().outputs.pane("pane-1").read()?.chunks).toEqual([]);
   } finally {
     store.stop();
   }
@@ -195,7 +195,7 @@ for (const sessionId of ["session-work", "other-session"]) {
         geometrySequence: 1,
       };
       await store.apply(output);
-      const original = store.getState().terminals.get("pane-1")!;
+      const original = store.getState().outputs.pane("pane-1").read()!;
       const stamp = {
         epoch: snapshot.epoch,
         attachmentGeneration: store.getState().attachment!.generation,
@@ -216,7 +216,7 @@ for (const sessionId of ["session-work", "other-session"]) {
         resizes: [],
       });
       await store.apply({ ...output, cursor: 8, geometrySequence: 2 });
-      const replay = terminalReplaySteps(store.getState().terminals.get("pane-1")!, null);
+      const replay = terminalReplaySteps(store.getState().outputs.pane("pane-1").read()!, null);
       expect(
         replay.steps.flatMap((step) =>
           step.type === "bytes" && step.origin === "live" ? [step.responseStamp] : [],
@@ -234,7 +234,9 @@ for (const sessionId of ["session-work", "other-session"]) {
         resizes: [],
       });
       await store.apply({ ...output, cursor: 12 });
-      expect(store.getState().terminals.get("pane-1")!.chunks.at(-1)?.responseStamp).toBeNull();
+      expect(
+        store.getState().outputs.pane("pane-1").read()!.chunks.at(-1)?.responseStamp,
+      ).toBeNull();
     } finally {
       store.stop();
     }

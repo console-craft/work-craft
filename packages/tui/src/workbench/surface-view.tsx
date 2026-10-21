@@ -3,6 +3,7 @@ import { projectPaneLayout, type Snapshot, type StreamConnection } from "@work-c
 import { useEffect, useState } from "react";
 
 import type { TerminalBuffer } from "@/client/terminal-buffer.ts";
+import type { TerminalOutputs } from "@/client/terminal-output";
 import { EmptyState, EmptyStateDescription, EmptyStateTitle } from "@/ui/components/empty-state";
 import { Box } from "@/ui/primitives/box.tsx";
 import { Divider } from "@/ui/primitives/divider.tsx";
@@ -32,7 +33,7 @@ export type SurfaceViewProps = Pick<
   snapshot: Snapshot;
   stream: StreamConnection | null;
   surface: Snapshot["surfaces"][number];
-  terminals: ReadonlyMap<string, TerminalBuffer>;
+  outputs: TerminalOutputs;
   focusedPaneId: string | null;
   workbenchFocused: boolean;
   undersized: boolean;
@@ -62,7 +63,7 @@ export function SurfaceView({
   snapshot,
   stream,
   surface,
-  terminals,
+  outputs,
   undersized,
   workbenchFocused,
   onSourceFailure,
@@ -108,7 +109,8 @@ export function SurfaceView({
         <Box visible={!undersized} width="100%" height="100%">
           {geometry.panes.map(({ paneId, rect }) => {
             const pane = snapshot.panes.find(({ id }) => id === paneId);
-            const buffer = terminals.get(paneId);
+            const output = outputs.pane(paneId);
+            const buffer = output.read();
             const viewport = terminalRect(
               rect,
               pane !== undefined && paneNotice(pane.processStatus, connected) !== null,
@@ -135,7 +137,7 @@ export function SurfaceView({
                     canReactivate={canReactivate}
                     onReactivatePane={onReactivatePane}
                     key={terminalPaneKey(paneId, buffer)}
-                    buffer={buffer}
+                    output={output}
                     focused={workbenchFocused && paneId === focusedPaneId}
                     pane={pane}
                     size={snapshot.geometry.panes.find((entry) => entry.paneId === paneId)!.size}

@@ -18,6 +18,7 @@ import {
   snapshotTerminals,
   type TerminalBuffer,
 } from "@/client/terminal-buffer";
+import { createTerminalOutputs, type TerminalOutputs } from "@/client/terminal-output";
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected";
 
@@ -41,7 +42,7 @@ export type WorkCraftState = {
   resync(): Promise<void>;
   reload(): Promise<void>;
   stream: StreamConnection | null;
-  terminals: ReadonlyMap<string, TerminalBuffer>;
+  outputs: TerminalOutputs;
 };
 
 export type WorkCraftStore = {
@@ -75,6 +76,7 @@ export function createWorkCraftStore(
   options: WorkCraftStoreOptions = {},
 ): WorkCraftStore {
   const listeners = new Set<() => void>();
+  const outputs = createTerminalOutputs();
   const retryDelays = options.retryDelays ?? RETRY_DELAYS;
   const sleep = options.sleep ?? Bun.sleep;
   let run = 0;
@@ -104,7 +106,7 @@ export function createWorkCraftStore(
     reload,
     resync,
     stream: null,
-    terminals: new Map(),
+    outputs,
   };
 
   async function attach(sessionId: string | null): Promise<void> {
@@ -225,15 +227,15 @@ export function createWorkCraftStore(
       snapshot.epoch !== current.epoch ||
       snapshot.revision > current.revision
     ) {
+      outputs.replace(snapshotTerminals(snapshot, outputs.buffers()));
       update({
         snapshot: geometry === snapshot.geometry ? snapshot : { ...snapshot, geometry },
         geometry,
-        terminals: snapshotTerminals(snapshot, state.terminals),
       });
     } else if (snapshot.epoch === current.epoch && snapshot.revision === current.revision) {
-      const terminals = snapshotTerminals(snapshot, state.terminals);
-      if (terminals !== state.terminals || geometry !== state.geometry) {
-        update({ terminals, geometry, snapshot: { ...current, geometry } });
+      outputs.replace(snapshotTerminals(snapshot, outputs.buffers()));
+      if (geometry !== state.geometry) {
+        update({ geometry, snapshot: { ...current, geometry } });
       }
     } else if (sameEpoch && geometry !== state.geometry) {
       update({ geometry, snapshot: { ...current!, geometry } });
@@ -276,9 +278,9 @@ export function createWorkCraftStore(
         await refresh(activeRun, connection);
         return;
       }
-      const terminals = new Map(state.terminals);
+      const replacements: [string, TerminalBuffer][] = [];
       for (const { paneId, marker } of message.resizes) {
-        const buffer = terminals.get(paneId);
+        const buffer = outputs.buffers().get(paneId);
         if (!buffer) {
           continue;
         }
@@ -290,13 +292,15 @@ export function createWorkCraftStore(
           await refresh(activeRun, connection);
           return;
         }
-        terminals.set(paneId, { ...buffer, resizes: [...buffer.resizes, marker] });
+        replacements.push([paneId, { ...buffer, resizes: [...buffer.resizes, marker] }]);
       }
       update({
         geometry: message.geometry,
         snapshot: { ...state.snapshot, geometry: message.geometry },
-        terminals,
       });
+      for (const [paneId, buffer] of replacements) {
+        outputs.set(paneId, buffer);
+      }
       return;
     }
     if (message.type === "terminal.output") {
@@ -307,7 +311,7 @@ export function createWorkCraftStore(
         await refresh(activeRun, connection);
         return;
       }
-      const current = state.terminals.get(message.paneId);
+      const current = outputs.buffers().get(message.paneId);
       if (!current) {
         await refresh(activeRun, connection);
         return;
@@ -316,11 +320,11 @@ export function createWorkCraftStore(
       if (message.cursor <= lastCursor) {
         return;
       }
-      if (message.cursor - decodeBytes(message.data).byteLength > lastCursor) {
+      const data = decodeBytes(message.data);
+      if (message.cursor - data.byteLength > lastCursor) {
         await refresh(activeRun, connection);
         return;
       }
-      const terminals = new Map(state.terminals);
       const attachment = state.attachment;
       const navigation = state.snapshot.navigation.find(
         ({ sessionId }) => sessionId === attachment?.sessionId,
@@ -336,20 +340,19 @@ export function createWorkCraftStore(
               geometrySequence: geometry.generation,
             }
           : null;
-      terminals.set(
+      outputs.set(
         message.paneId,
         appendTerminalChunk(
           current,
           message.cursor,
-          decodeBytes(message.data),
+          data,
           message.geometrySequence,
           "live",
           responseStamp && state.canRespond(message.paneId, responseStamp) ? responseStamp : null,
         ),
       );
-      update({ terminals });
       if (outputProbeEnabled) {
-        const buffer = terminals.get(message.paneId)!;
+        const buffer = outputs.buffers().get(message.paneId)!;
         observeOutput({
           stage: "store.buffer",
           aggregateOnly: true,

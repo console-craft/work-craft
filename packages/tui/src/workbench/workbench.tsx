@@ -2,7 +2,7 @@ import type { EmbeddedTerminalRenderable } from "@opentui/core";
 import type { Snapshot, StreamConnection } from "@work-craft/server/client";
 import type { ReactNode } from "react";
 
-import type { TerminalBuffer } from "@/client/terminal-buffer.ts";
+import type { TerminalOutputs } from "@/client/terminal-output";
 import { EmptyState, EmptyStateDescription, EmptyStateTitle } from "@/ui/components/empty-state";
 import { Box } from "@/ui/primitives/box.tsx";
 import { WORKBENCH_PADDING_X } from "@/workbench/layout.ts";
@@ -20,7 +20,7 @@ export type WorkbenchProps = Pick<
   onReactivatePane(paneId: string): void;
   snapshot: Snapshot | null;
   stream: StreamConnection | null;
-  terminals: ReadonlyMap<string, TerminalBuffer>;
+  outputs: TerminalOutputs;
   surface: Snapshot["surfaces"][number] | undefined;
   tabs: Snapshot["tabs"];
   activeTabId: string | null;
@@ -63,7 +63,7 @@ export function Workbench({
   tabCursorId,
   tabs,
   tabsFocused,
-  terminals,
+  outputs,
   undersized,
   failed,
   onSourceFailure,
@@ -115,7 +115,7 @@ export function Workbench({
             snapshot={snapshot}
             stream={stream}
             surface={surface}
-            terminals={terminals}
+            outputs={outputs}
             undersized={undersized}
             workbenchFocused={workbenchFocused}
             onFocusPane={onFocusPane}

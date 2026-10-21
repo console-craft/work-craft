@@ -744,7 +744,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     },
     tabs,
     tabsFocused: state.dialog === null && focus.region === "tabs",
-    terminals: workCraft.terminals,
+    outputs: workCraft.outputs,
     undersized,
     workbenchFocused:
       state.dialog === null &&

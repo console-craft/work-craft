@@ -14,6 +14,52 @@ const historyMetadata = {
   resizes: [],
 };
 
+test("tiny chunks never publish root control state but metadata still invalidates live control immediately", async () => {
+  const initial = snapshotFixture({
+    terminalHistories: [
+      {
+        paneId: "pane-1",
+        cursor: 0,
+        data: "",
+        truncated: false,
+        ...historyMetadata,
+      },
+    ],
+  });
+  const client = fakeClient(initial);
+  client.stream = async () => streamFixture();
+  const store = createWorkCraftStore(client);
+  try {
+    await store.start();
+    const before = store.getState();
+    let rootCalls = 0;
+    store.subscribe(() => {
+      rootCalls++;
+    });
+    for (let cursor = 1; cursor <= 16; cursor++) {
+      await store.apply({
+        type: "terminal.output",
+        epoch: initial.epoch,
+        paneId: "pane-1",
+        cursor,
+        data: "eA==",
+        geometrySequence: 0,
+      });
+    }
+    expect(store.getState()).toBe(before);
+    expect(rootCalls).toBe(0);
+    expect(before.outputs.pane("pane-1").read()!.chunks.at(-1)!.cursor).toBe(16);
+    await store.apply({
+      type: "snapshot",
+      snapshot: { ...initial, revision: initial.revision + 1 },
+    });
+    expect(rootCalls).toBe(1);
+    expect(store.getState().snapshot!.revision).toBe(initial.revision + 1);
+  } finally {
+    store.stop();
+  }
+});
+
 for (const lifecycle of ["reload", "stop and start"] as const) {
   test(`a delayed stream gap refresh cannot replace a newer epoch after ${lifecycle}`, async () => {
     const old = snapshotFixture({ epoch: "old", revision: 4 });
@@ -184,7 +230,7 @@ test("delayed resync retains later live output and same-cursor resize markers", 
       ],
     });
     await resync;
-    const current = store.getState().terminals.get("pane-1")!;
+    const current = store.getState().outputs.pane("pane-1").read()!;
     expect(current.chunks.at(-1)?.cursor).toBe(3_600_000);
     const replay = terminalReplaySteps(current, { cursor: 2_400_000, gridSequence: 0 });
     expect(replay.needsSnapshot).toBe(false);
@@ -678,7 +724,7 @@ test("current-epoch terminal output remains available after a renderer remount",
     }),
   });
 
-  const terminal = store.getState().terminals.get("pane-1");
+  const terminal = store.getState().outputs.pane("pane-1").read();
   expect(new TextDecoder().decode(terminal?.history)).toBe("old");
   expect(
     terminal?.chunks.map(({ cursor, data }) => [cursor, new TextDecoder().decode(data)]),
@@ -707,7 +753,7 @@ test("current-session terminal output is bounded to two MiB per pane", async () 
     data: Buffer.from(bytes).toString("base64"),
   });
 
-  const chunks = store.getState().terminals.get("pane-1")?.chunks ?? [];
+  const chunks = store.getState().outputs.pane("pane-1").read()?.chunks ?? [];
   expect(chunks.reduce((total, chunk) => total + chunk.data.byteLength, 0)).toBe(2_097_152);
   expect(chunks[0]?.data[0]).toBe(2);
 });
@@ -744,7 +790,7 @@ test("a same-revision reconnect snapshot appends output missed while disconnecte
     }),
   });
 
-  const terminal = store.getState().terminals.get("pane-1");
+  const terminal = store.getState().outputs.pane("pane-1").read();
   expect(new TextDecoder().decode(terminal?.history)).toBe("old");
   expect(
     terminal?.chunks.map(({ cursor, data }) => [cursor, new TextDecoder().decode(data)]),
@@ -785,7 +831,7 @@ test("a reconnect snapshot requests a clean replay when its retained suffix star
     }),
   });
 
-  const terminal = store.getState().terminals.get("pane-1");
+  const terminal = store.getState().outputs.pane("pane-1").read();
   expect(terminal?.historyCursor).toBe(1_048_578);
   expect(terminal?.history).toEqual(retained);
   expect(terminal?.chunks).toEqual([]);

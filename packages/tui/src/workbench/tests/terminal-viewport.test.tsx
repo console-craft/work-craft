@@ -6,6 +6,7 @@ import type { InputStamp } from "@work-craft/server/client";
 import { act, useState } from "react";
 
 import type { TerminalBuffer } from "@/client/terminal-buffer";
+import { createTerminalOutputs } from "@/client/terminal-output";
 import { flushMeasured } from "@/tests/support/measured-render";
 import { testRender } from "@/tests/support/render";
 import { Box } from "@/ui/primitives/box";
@@ -49,11 +50,15 @@ async function viewport(
   let update!: (next: TerminalBuffer) => void;
   let resizeLocal!: (width: number, height: number) => void;
   let resyncs = 0;
+  const outputs = createTerminalOutputs(new Map([["p", initial]]));
   function Fixture() {
     const [viewport, setViewport] = useState({ width, height });
     resizeLocal = (width, height) => setViewport({ width, height });
     const [current, setCurrent] = useState(initial);
-    update = setCurrent;
+    update = (next) => {
+      outputs.set("p", next);
+      setCurrent(next);
+    };
     const lastGrid = current.resizes.at(-1) ?? current.initialSize ?? { cols: 100, rows: 30 };
     return (
       <ThemeProvider theme={defaultTheme}>
@@ -67,7 +72,7 @@ async function viewport(
         >
           <TerminalViewport
             paneId="p"
-            buffer={current}
+            output={outputs.pane("p")}
             size={{ cols: lastGrid.cols, rows: lastGrid.rows }}
             inputEnabled
             focused
@@ -110,8 +115,33 @@ async function viewport(
     responseStamps,
     terminal,
     resyncs: () => resyncs,
+    outputs,
   };
 }
+
+test("pane-local publication drains output without a parent control render", async () => {
+  const setup = await viewport(buffer(), 60, 12);
+  const native = setup.terminal();
+  try {
+    setup.outputs.set("p", buffer("pane-local output"));
+    await flushMeasured(setup);
+    expect(native.screen().text).toContain("pane-local output");
+    expect(setup.terminal()).toBe(native);
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
+test("unmount cancels a scheduled pane drain instead of writing to a destroyed native terminal", async () => {
+  const setup = await viewport(buffer(), 60, 12);
+  const native = setup.terminal();
+  const write = spyOn(native, "write");
+  setup.outputs.set("p", buffer("must not parse after unmount"));
+  act(() => setup.renderer.destroy());
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(write).not.toHaveBeenCalled();
+  write.mockRestore();
+});
 
 test("a delayed mirror cannot answer an old live query after a same-size ownership handoff", async () => {
   let owner = "a";

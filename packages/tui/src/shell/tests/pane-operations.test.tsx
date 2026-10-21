@@ -1133,7 +1133,9 @@ for (const change of [
           data: Buffer.from("kept").toString("base64"),
         });
         expect(
-          new TextDecoder().decode(setup.store.getState().terminals.get("pane-1")!.chunks[0]!.data),
+          new TextDecoder().decode(
+            setup.store.getState().outputs.pane("pane-1").read()!.chunks[0]!.data,
+          ),
         ).toBe("kept");
       }
     } finally {

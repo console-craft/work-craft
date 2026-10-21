@@ -13,6 +13,7 @@ import { act, type Dispatch, type ReactNode, type SetStateAction, useState } fro
 
 import { createWorkCraftStore, type WorkCraftState } from "@/client/store.ts";
 import { appendTerminalChunk, snapshotTerminals } from "@/client/terminal-buffer";
+import { createTerminalOutputs } from "@/client/terminal-output";
 import { WorkCraftShell } from "@/shell/shell.tsx";
 import {
   attachmentFixture,
@@ -160,7 +161,7 @@ export function workCraftStateFixture(overrides: Partial<WorkCraftState> = {}): 
     reload: async () => {},
     resync: async () => {},
     stream: null,
-    terminals: new Map(),
+    outputs: createTerminalOutputs(),
     ...overrides,
   };
   fixture.snapshot = fixture.snapshot && terminalSnapshotFixture(fixture.snapshot);
@@ -171,8 +172,8 @@ export function workCraftStateFixture(overrides: Partial<WorkCraftState> = {}): 
         : attachmentFixture(null);
   }
   fixture.geometry = fixture.snapshot?.geometry ?? { sequence: 0, tabs: [], panes: [] };
-  if (overrides.terminals === undefined && fixture.snapshot) {
-    fixture.terminals = snapshotTerminals(fixture.snapshot, new Map());
+  if (overrides.outputs === undefined && fixture.snapshot) {
+    fixture.outputs = createTerminalOutputs(snapshotTerminals(fixture.snapshot, new Map()));
   }
   return fixture;
 }
@@ -320,7 +321,7 @@ export async function liveInputFixture(
       const current = store.getState();
       const navigation = current.snapshot!.navigation[0]!;
       const paneId = navigation.paneId!;
-      const buffer = current.terminals.get(paneId)!;
+      const buffer = current.outputs.pane(paneId).read()!;
       const bytes = new TextEncoder().encode(text);
       await store.apply({
         type: "terminal.output",
@@ -555,7 +556,7 @@ export async function localTabFixture(rememberDestination = true, count = 2, cre
       <WorkCraftShell
         workCraft={workCraftStateFixture({
           snapshot,
-          ...(buffers === null ? {} : { terminals: buffers }),
+          ...(buffers === null ? {} : { outputs: createTerminalOutputs(buffers) }),
           status: connected ? "connected" : "disconnected",
           stream: streamFixture({
             close() {},

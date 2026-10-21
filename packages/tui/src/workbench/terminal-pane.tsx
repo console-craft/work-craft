@@ -10,7 +10,7 @@ import type {
 } from "@work-craft/server/client";
 import { useCallback } from "react";
 
-import type { TerminalBuffer } from "@/client/terminal-buffer.ts";
+import type { PaneOutput } from "@/client/terminal-output";
 import { Alert, AlertContent, AlertTitle } from "@/ui/components/alert.tsx";
 import { Button } from "@/ui/controls/button.tsx";
 import { Box } from "@/ui/primitives/box.tsx";
@@ -30,7 +30,7 @@ export type TerminalPaneProps = {
   reactivatingPaneIds: ReadonlySet<string>;
   canReactivate(paneId: string): boolean;
   onReactivatePane(paneId: string): void;
-  buffer: TerminalBuffer | undefined;
+  output: PaneOutput;
   focused: boolean;
   pane: Snapshot["panes"][number];
   size: TerminalSize;
@@ -55,7 +55,7 @@ export function TerminalPane({
   reactivatingPaneIds,
   canReactivate,
   onReactivatePane,
-  buffer,
+  output,
   focused,
   pane,
   size,
@@ -108,33 +108,31 @@ export function TerminalPane({
       border={["top"]}
     >
       <Box height={viewport.height} width="100%" flexShrink={0} minHeight={0} overflow="hidden">
-        {buffer ? (
-          <TerminalViewport
-            paneId={pane.id}
-            buffer={buffer}
-            size={size}
-            focused={focused}
-            inputEnabled={inputEnabled}
-            canInput={acceptsInput}
-            canRespond={(stamp) => connected && running && canRespond(pane.id, stamp)}
-            onReady={reportReady}
-            onFocus={onFocus}
-            onMouseInput={onMouseInput}
-            onResync={onResync}
-            onData={(bytes, source, responseStamp) => {
-              if (!stamp || !stream) {
-                return;
+        <TerminalViewport
+          paneId={pane.id}
+          output={output}
+          size={size}
+          focused={focused}
+          inputEnabled={inputEnabled}
+          canInput={acceptsInput}
+          canRespond={(stamp) => connected && running && canRespond(pane.id, stamp)}
+          onReady={reportReady}
+          onFocus={onFocus}
+          onMouseInput={onMouseInput}
+          onResync={onResync}
+          onData={(bytes, source, responseStamp) => {
+            if (!stamp || !stream) {
+              return;
+            }
+            if (source === "response") {
+              if (responseStamp && canRespond(pane.id, responseStamp)) {
+                stream.sendInput(pane.id, bytes, { ...responseStamp, source });
               }
-              if (source === "response") {
-                if (responseStamp && canRespond(pane.id, responseStamp)) {
-                  stream.sendInput(pane.id, bytes, { ...responseStamp, source });
-                }
-              } else if (acceptsInput()) {
-                stream.sendInput(pane.id, bytes, { ...stamp, source, ...inputEvent() });
-              }
-            }}
-          />
-        ) : null}
+            } else if (acceptsInput()) {
+              stream.sendInput(pane.id, bytes, { ...stamp, source, ...inputEvent() });
+            }
+          }}
+        />
       </Box>
       {notice !== null ? (
         <Alert
