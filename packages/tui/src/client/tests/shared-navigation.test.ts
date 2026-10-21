@@ -8,6 +8,7 @@ import type {
 } from "@work-craft/server/client";
 
 import { createWorkCraftStore } from "@/client/store";
+import { terminalReplaySteps } from "@/client/terminal-replay";
 import { snapshotFixture, streamFixture } from "@/tests/support/fixtures";
 
 test("an old connection cannot append output after automatic reconnect in the same store run", async () => {
@@ -160,6 +161,84 @@ function fixture() {
     }),
   };
   return { snapshot, client };
+}
+
+for (const sessionId of ["session-work", "other-session"]) {
+  test(`buffered output retains response authority across ownership transfer (${sessionId})`, async () => {
+    const { snapshot, client } = fixture();
+    snapshot.sessions = [{ id: sessionId, name: "Viewer", position: 0 }];
+    snapshot.navigation[0]!.sessionId = sessionId;
+    snapshot.sessionWorkspaces = [{ sessionId, workspaceId: "workspace-shared", position: 0 }];
+    snapshot.terminalHistories = [
+      {
+        paneId: "pane-1",
+        cursor: 0,
+        data: "",
+        truncated: false,
+        startCursor: 0,
+        prefixBytes: 0,
+        initialSize: { cols: 100, rows: 29 },
+        initialGridSequence: 0,
+        resizes: [],
+      },
+    ];
+    const store = createWorkCraftStore(client);
+    try {
+      await store.start();
+      await store.getState().attach(sessionId);
+      const output = {
+        type: "terminal.output" as const,
+        epoch: snapshot.epoch,
+        paneId: "pane-1",
+        cursor: 4,
+        data: Buffer.from("\x1b[6n").toString("base64"),
+        geometrySequence: 1,
+      };
+      await store.apply(output);
+      const original = store.getState().terminals.get("pane-1")!;
+      const stamp = {
+        epoch: snapshot.epoch,
+        attachmentGeneration: store.getState().attachment!.generation,
+        navigationGeneration: 1,
+        geometrySequence: 1,
+      };
+      expect(terminalReplaySteps(original, null).steps.at(-1)).toMatchObject({
+        responseStamp: stamp,
+      });
+      const geometry = structuredClone(snapshot.geometry);
+      geometry.sequence++;
+      geometry.tabs[0]!.generation++;
+      geometry.tabs[0]!.ownerConnectionId = "other-owner";
+      await store.apply({
+        type: "terminal.geometry",
+        epoch: snapshot.epoch,
+        geometry,
+        resizes: [],
+      });
+      await store.apply({ ...output, cursor: 8, geometrySequence: 2 });
+      const replay = terminalReplaySteps(store.getState().terminals.get("pane-1")!, null);
+      expect(
+        replay.steps.flatMap((step) =>
+          step.type === "bytes" && step.origin === "live" ? [step.responseStamp] : [],
+        ),
+      ).toEqual([stamp, null]);
+      expect(store.getState().canRespond("pane-1", stamp)).toBe(false);
+      const restored = structuredClone(geometry);
+      restored.sequence++;
+      restored.tabs[0]!.generation++;
+      restored.tabs[0]!.ownerConnectionId = "connection";
+      await store.apply({
+        type: "terminal.geometry",
+        epoch: snapshot.epoch,
+        geometry: restored,
+        resizes: [],
+      });
+      await store.apply({ ...output, cursor: 12 });
+      expect(store.getState().terminals.get("pane-1")!.chunks.at(-1)?.responseStamp).toBeNull();
+    } finally {
+      store.stop();
+    }
+  });
 }
 
 test("captured input and response stamps never revalidate after navigation away and back before React commits", async () => {

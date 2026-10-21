@@ -85,6 +85,14 @@ export function applyCommand(
 ): CommandOutcome {
   return db.transaction(() => {
     const before = readNavigationCatalog(db);
+    if (
+      "navigationGeneration" in command &&
+      command.navigationGeneration !== undefined &&
+      readSessionNavigation(db, command.sessionId).cursor.generation !==
+        command.navigationGeneration
+    ) {
+      throw new ProtocolError("Navigation changed during command preparation");
+    }
     if ("activation" in command && command.activation !== undefined) {
       if (
         readSessionNavigation(db, command.activation.sessionId).cursor.generation !==

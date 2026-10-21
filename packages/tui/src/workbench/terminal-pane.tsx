@@ -35,7 +35,7 @@ export type TerminalPaneProps = {
   pane: Snapshot["panes"][number];
   size: TerminalSize;
   stamp: InputStamp | null;
-  canRespond(paneId: string): boolean;
+  canRespond(paneId: string, stamp: InputStamp): boolean;
   inputEvent(): Pick<
     Extract<TerminalInputContext, { source: "input" }>,
     "kind" | "activitySequence"
@@ -116,18 +116,18 @@ export function TerminalPane({
             focused={focused}
             inputEnabled={inputEnabled}
             canInput={acceptsInput}
-            canRespond={() => connected && running && canRespond(pane.id)}
+            canRespond={(stamp) => connected && running && canRespond(pane.id, stamp)}
             onReady={reportReady}
             onFocus={onFocus}
             onMouseInput={onMouseInput}
             onResync={onResync}
-            onData={(bytes, source) => {
+            onData={(bytes, source, responseStamp) => {
               if (!stamp || !stream) {
                 return;
               }
               if (source === "response") {
-                if (canRespond(pane.id)) {
-                  stream.sendInput(pane.id, bytes, { ...stamp, source });
+                if (responseStamp && canRespond(pane.id, responseStamp)) {
+                  stream.sendInput(pane.id, bytes, { ...responseStamp, source });
                 }
               } else if (acceptsInput()) {
                 stream.sendInput(pane.id, bytes, { ...stamp, source, ...inputEvent() });

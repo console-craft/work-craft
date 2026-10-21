@@ -91,6 +91,47 @@ test("the Unix socket is owner-only", async () => {
   }
 });
 
+test("attached creation returns its committed normalization for a generation-bound follow-up Open", async () => {
+  const fixture = await startTestServer();
+  const sessionId = (await fixture.client.command({ type: "session.create", name: "Main" })).result
+    .id;
+  const workspaceId = (
+    await fixture.client.command({ type: "workspace.create", sessionId, name: "Work" })
+  ).result.id;
+  const stream = await fixture.client.stream({ onMessage() {} });
+  try {
+    const attachment = await stream.attach(sessionId);
+    await stream.command(
+      { type: "session.navigate", sessionId, target: { kind: "category", category: "design" } },
+      attachment.generation,
+    );
+    const before = await fixture.client.snapshot();
+    const created = await stream.command(
+      { type: "item.create", workspaceId, category: "design", title: "First" },
+      attachment.generation,
+    );
+    expect(created.result.navigation).toMatchObject({
+      generation: before.navigation[0]!.generation + 1,
+      itemId: created.result.id,
+    });
+    const opened = await stream.command(
+      {
+        type: "session.openItem",
+        sessionId,
+        itemId: created.result.id,
+        navigationGeneration: created.result.navigation!.generation,
+        cwd: tmpdir(),
+      },
+      attachment.generation,
+    );
+    expect(opened.result.navigation?.itemId).toBe(created.result.id);
+  } finally {
+    stream.close();
+    await fixture.app.runtime.stopAll();
+    await fixture.close();
+  }
+});
+
 test("the real stream rejects captured bytes after a navigation round trip but accepts current bytes", async () => {
   const fixture = await startTestServer({ withPane: true });
   await fixture.app.runtime.start(fixture.app.snapshot().panes[0]!);
@@ -228,6 +269,52 @@ test("bounds normal client requests when the daemon stops responding", async () 
     await server.stop(true);
     await request.catch(() => {});
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("ordinary stream input authorization never reads retained terminal histories", async () => {
+  const fixture = await startTestServer({ withPane: true });
+  await fixture.app.runtime.start(fixture.app.snapshot().panes[0]!);
+  const stream = await fixture.client.stream({ onMessage() {} });
+  const write = spyOn(fixture.app.runtime, "write");
+  let reads: ReturnType<typeof spyOn> | undefined;
+  try {
+    const attachment = await stream.attach("session-1");
+    let snapshot = await fixture.client.snapshot();
+    const stamp = {
+      epoch: snapshot.epoch,
+      attachmentGeneration: attachment.generation,
+      navigationGeneration: snapshot.navigation[0]!.generation,
+      geometrySequence: snapshot.geometry.tabs[0]!.generation,
+    };
+    stream.reportViewport(
+      { ...stamp, tabId: "tab-1", canvas: { cols: 80, rows: 25 }, eligible: true },
+      stamp,
+    );
+    const barrier = {
+      type: "session.navigate" as const,
+      sessionId: "session-1",
+      target: { kind: "pane" as const, paneId: "pane-1" },
+    };
+    await stream.command(barrier, attachment.generation);
+    snapshot = await fixture.client.snapshot();
+    reads = spyOn(fixture.history, "read");
+    stream.sendInput("pane-1", new TextEncoder().encode("x"), {
+      ...stamp,
+      geometrySequence: snapshot.geometry.tabs[0]!.generation,
+      source: "input",
+      kind: "key",
+      activitySequence: 1,
+    });
+    await stream.command(barrier, attachment.generation);
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(reads).not.toHaveBeenCalled();
+  } finally {
+    reads?.mockRestore();
+    write.mockRestore();
+    stream.close();
+    await fixture.app.runtime.stopAll();
+    await fixture.close();
   }
 });
 

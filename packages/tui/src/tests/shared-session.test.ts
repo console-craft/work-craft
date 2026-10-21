@@ -153,6 +153,12 @@ test("two normal TUIs display one program and one logical cursor", async () => {
       "retained running program after reconnect",
       reconnected.frame,
     );
+    await focusSharedTerminal(b, 25);
+    sharedWrite(b, "v");
+    await sharedWait(
+      async () => (await programState(log)).typed === "zv",
+      "B's input readiness after tab replay",
+    );
     sharedWrite(b, "?");
     await sharedWait(
       async () => (await programState(log)).replies === 2,

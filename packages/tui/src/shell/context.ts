@@ -27,15 +27,34 @@ export function completionContextKey(
   return JSON.stringify([navigationKey, surfaceId, tabId]);
 }
 
-/** Only filling this create's previously empty item chain can advance its own context. */
+/** Only filling this create's exact previously empty chain can advance its own context. */
 export function isCreationNavigationCurrent(
   before: SessionNavigation | null,
   after: SessionNavigation | null,
   itemId: string,
   parentId: string | null,
+  kind: "item" | "workspace" = "item",
 ): boolean {
   if (navigationContextKey(null, before) === navigationContextKey(null, after)) {
     return true;
+  }
+  if (kind === "workspace") {
+    return (
+      before !== null &&
+      after !== null &&
+      before.workspaceId === null &&
+      before.category === null &&
+      before.itemId === null &&
+      before.tabId === null &&
+      before.paneId === null &&
+      after.sessionId === before.sessionId &&
+      after.generation === before.generation + 1 &&
+      after.workspaceId === itemId &&
+      after.category === "inbox" &&
+      after.itemId === null &&
+      after.tabId === null &&
+      after.paneId === null
+    );
   }
   return (
     before !== null &&

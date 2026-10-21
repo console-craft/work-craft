@@ -61,13 +61,13 @@ function parsePaneStatus(value: string): PaneStatus {
   return value as PaneStatus;
 }
 
-export function readSnapshot(
+/** Durable metadata for live authorization, without copying or encoding terminal history. */
+export function readSnapshotState(
   db: Database,
   epoch: string,
   revision: number,
-  history?: TerminalHistory,
   geometry?: TerminalGeometry,
-): Snapshot {
+): Omit<Snapshot, "terminalHistories"> {
   const sessions = db
     .query<{ id: string; name: string; position: number }, []>(
       "SELECT id, name, position FROM sessions ORDER BY position, id",
@@ -121,7 +121,6 @@ export function readSnapshot(
       "SELECT id, surface_id AS surfaceId, kind, title, cwd, restore_policy_json AS restorePolicyJson, process_status AS processStatus, error_text AS errorText, started_at AS startedAt, exited_at AS exitedAt FROM panes ORDER BY id",
     )
     .all();
-  const retainedHistory = history ?? new TerminalHistory(db);
 
   return {
     epoch,
@@ -154,7 +153,21 @@ export function readSnapshot(
       restorePolicy: parseRestorePolicy(restorePolicyJson),
       processStatus: parsePaneStatus(processStatus),
     })),
-    terminalHistories: paneRows.map(({ id }) => {
+  };
+}
+
+export function readSnapshot(
+  db: Database,
+  epoch: string,
+  revision: number,
+  history?: TerminalHistory,
+  geometry?: TerminalGeometry,
+): Snapshot {
+  const state = readSnapshotState(db, epoch, revision, geometry);
+  const retainedHistory = history ?? new TerminalHistory(db);
+  return {
+    ...state,
+    terminalHistories: state.panes.map(({ id }) => {
       const retained = retainedHistory.read(id);
       return { ...retained, data: encodeBytes(retained.data) };
     }),

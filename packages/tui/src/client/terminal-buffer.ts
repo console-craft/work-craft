@@ -1,6 +1,7 @@
 import {
   decodeBytes,
   type GridMarker,
+  type InputStamp,
   type Snapshot,
   type TerminalSize,
 } from "@work-craft/server/client";
@@ -21,6 +22,7 @@ export type TerminalBuffer = {
     data: Uint8Array;
     geometrySequence: number;
     origin: "history" | "live";
+    responseStamp?: InputStamp | null;
   }[];
 };
 
@@ -92,8 +94,18 @@ export function appendTerminalChunk(
   data: Uint8Array,
   geometrySequence: number,
   origin: "history" | "live" = "live",
+  responseStamp?: InputStamp | null,
 ): TerminalBuffer {
-  const chunks = [...buffer.chunks, { cursor, data, geometrySequence, origin }];
+  const chunks = [
+    ...buffer.chunks,
+    {
+      cursor,
+      data,
+      geometrySequence,
+      origin,
+      ...(responseStamp === undefined ? {} : { responseStamp }),
+    },
+  ];
   let excess =
     chunks.reduce((total, chunk) => total + chunk.data.byteLength, 0) - MAX_TERMINAL_BYTES;
   while (excess > 0) {

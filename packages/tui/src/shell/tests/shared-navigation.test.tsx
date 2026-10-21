@@ -163,6 +163,32 @@ test("a remote starting pane cannot steal focus after the observer deliberately 
   }
 });
 
+test("registration completion cannot Open after live navigation advances before React commits", async () => {
+  const a = await liveInputFixture();
+  try {
+    act(() => a.renderer.root.findDescendantById("region:navigator")!.focus());
+    await a.flush();
+    await act(async () => a.mockInput.pressKey("n"));
+    await a.flush();
+    await act(async () => a.mockInput.typeText("/captured/directory"));
+    await act(async () => a.mockInput.pressEnter());
+    const next = selectedPaneSnapshot(a.store.snapshot()!, "pane-2", 2);
+    next.revision++;
+    await a.publish(next, false);
+    await act(async () =>
+      a.registrations[0]!.resolve({
+        ok: true,
+        revision: next.revision,
+        result: { id: "created-root", itemId: "created-root", rootItemId: "created-root" },
+      }),
+    );
+    expect(a.commands.map(({ type }) => type)).toEqual(["directory.register"]);
+  } finally {
+    act(() => a.renderer.destroy());
+    a.store.stop();
+  }
+});
+
 for (const move of ["before submit", "while submitting"] as const) {
   test(`a captured draft survives remote away-and-back ${move} without a stale Open`, async () => {
     const fixture = await mirroredShells();

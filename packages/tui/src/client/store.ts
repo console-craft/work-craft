@@ -21,6 +21,8 @@ import {
 export type ConnectionStatus = "connecting" | "connected" | "disconnected";
 
 export type WorkCraftState = {
+  /** Live authority for asynchronous callbacks whose React projection may lag. */
+  getState(): WorkCraftState;
   connectionError: string | null;
   snapshot: Snapshot | null;
   status: ConnectionStatus;
@@ -78,6 +80,7 @@ export function createWorkCraftStore(
   let initialChoice = true;
   let attachmentRequest = 0;
   let state: WorkCraftState = {
+    getState: () => state,
     connectionError: null,
     snapshot: null,
     status: "connecting",
@@ -289,6 +292,21 @@ export function createWorkCraftStore(
         return;
       }
       const terminals = new Map(state.terminals);
+      const attachment = state.attachment;
+      const navigation = state.snapshot.navigation.find(
+        ({ sessionId }) => sessionId === attachment?.sessionId,
+      );
+      const geometry = state.geometry.tabs.find(({ tabId }) => tabId === navigation?.tabId);
+      // Never assign newer authority to output overtaken by a snapshot/resync.
+      const responseStamp =
+        attachment && navigation && geometry && message.geometrySequence === state.geometry.sequence
+          ? {
+              epoch: message.epoch,
+              attachmentGeneration: attachment.generation,
+              navigationGeneration: navigation.generation,
+              geometrySequence: geometry.generation,
+            }
+          : null;
       terminals.set(
         message.paneId,
         appendTerminalChunk(
@@ -296,6 +314,8 @@ export function createWorkCraftStore(
           message.cursor,
           decodeBytes(message.data),
           message.geometrySequence,
+          "live",
+          responseStamp && state.canRespond(message.paneId, responseStamp) ? responseStamp : null,
         ),
       );
       update({ terminals });

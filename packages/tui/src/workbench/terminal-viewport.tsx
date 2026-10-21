@@ -5,7 +5,7 @@ import {
   type MouseEvent,
 } from "@opentui/core";
 import { useRenderer } from "@opentui/react";
-import type { TerminalSize } from "@work-craft/server/client";
+import type { InputStamp, TerminalSize } from "@work-craft/server/client";
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import type { TerminalBuffer } from "@/client/terminal-buffer";
@@ -19,8 +19,8 @@ export type TerminalViewportProps = {
   inputEnabled: boolean;
   focused: boolean;
   canInput(): boolean;
-  canRespond(): boolean;
-  onData(bytes: Uint8Array, source: "input" | "response"): void;
+  canRespond(stamp: InputStamp): boolean;
+  onData(bytes: Uint8Array, source: "input" | "response", responseStamp?: InputStamp): void;
   onReady(node: EmbeddedTerminalRenderable | null): void;
   onFocus(): void;
   onResync(): void;
@@ -54,6 +54,7 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
   const inputReady = useRef(false);
   const progress = useRef<ReplayProgress | null>(null);
   const suppressResponse = useRef(false);
+  const responseStamp = useRef<InputStamp | null>(null);
   const resizing = useRef(false);
   const resyncBuffer = useRef<TerminalBuffer | null>(null);
 
@@ -100,10 +101,12 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
         progress.current = { cursor: step.marker.cursor, gridSequence: step.marker.sequence };
       } else {
         suppressResponse.current = step.origin === "history";
+        responseStamp.current = step.responseStamp ?? null;
         try {
           target.write(step.data);
         } finally {
           suppressResponse.current = false;
+          responseStamp.current = null;
         }
         progress.current = {
           cursor: step.cursor,
@@ -207,11 +210,23 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
         onData={(bytes, source) => {
           const current = latest.current;
           if (source === "response") {
-            if (!suppressResponse.current && !resizing.current && current.canRespond()) {
+            const stamp = responseStamp.current;
+            if (
+              stamp &&
+              !suppressResponse.current &&
+              !resizing.current &&
+              current.canRespond(stamp)
+            ) {
               // shortcut: native mode 2048 advertises reports it never emits; remove when native resize reports work.
               const text = new TextDecoder().decode(bytes);
-              const reply = text.replaceAll("\x1b[?2048;2$y", "\x1b[?2048;0$y");
-              current.onData(reply === text ? bytes : new TextEncoder().encode(reply), source);
+              const reply = text
+                .replaceAll("\x1b[?2048;2$y", "\x1b[?2048;0$y")
+                .replaceAll("\x1b[?2048;1$y", "\x1b[?2048;0$y");
+              current.onData(
+                reply === text ? bytes : new TextEncoder().encode(reply),
+                source,
+                stamp,
+              );
             }
           } else if (inputReady.current && current.inputEnabled && current.canInput()) {
             current.onData(bytes, source);

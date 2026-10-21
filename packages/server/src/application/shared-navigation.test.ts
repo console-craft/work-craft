@@ -63,6 +63,58 @@ test("Open commits cursor before process effects and returns that exact selectio
   }
 });
 
+test("generation-bound automatic Open rejects a navigation round trip without creating a runtime", async () => {
+  const db = openDatabase(":memory:");
+  const app = createApp({ db });
+  try {
+    const sessionId = (await app.execute({ type: "session.create", name: "Main" })).result.id;
+    const workspaceId = (await app.execute({ type: "workspace.create", sessionId, name: "Work" }))
+      .result.id;
+    const itemId = (
+      await app.execute({ type: "item.create", workspaceId, category: "design", title: "Created" })
+    ).result.id;
+    const generation = app.snapshot().navigation[0]!.generation;
+    for (const category of ["operations", "inbox"]) {
+      await app.execute({
+        type: "session.navigate",
+        sessionId,
+        target: { kind: "category", category },
+      });
+    }
+    const before = app.snapshot();
+    await expect(
+      app.execute({
+        type: "session.navigate",
+        sessionId,
+        target: { kind: "workspace", workspaceId },
+        navigationGeneration: generation,
+      }),
+    ).rejects.toThrow("Navigation changed");
+    await expect(
+      app.execute({
+        type: "session.openItem",
+        sessionId,
+        itemId,
+        navigationGeneration: generation,
+        cwd: tmpdir(),
+      }),
+    ).rejects.toThrow("Navigation changed");
+    expect(app.snapshot()).toEqual(before);
+    const opened = await app.execute({
+      type: "session.openItem",
+      sessionId,
+      itemId,
+      navigationGeneration: before.navigation[0]!.generation,
+      cwd: tmpdir(),
+    });
+    expect(opened.result.navigation?.itemId).toBe(itemId);
+  } finally {
+    await app.runtime.stopAll();
+    await app.history.close();
+    db.close();
+  }
+});
+
 test("rapid relative steps resolve current daemon navigation and sessions retain independent tabs", async () => {
   const db = openDatabase(":memory:");
   const app = createApp({ db });

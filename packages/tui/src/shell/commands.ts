@@ -151,7 +151,12 @@ export type SubmitCreateInput = {
   setSubmittingDialog(dialog: Exclude<DialogState, null> | null): void;
   dispatch(action: ShellAction): void;
   run: ExecuteCommandInput["run"];
-  onItemCreated(itemId: string, parentId: string | null, revision: number): Promise<void>;
+  onItemCreated(
+    itemId: string,
+    parentId: string | null,
+    revision: number,
+    navigation?: SessionNavigation,
+  ): Promise<void>;
   attach(sessionId: string): Promise<void>;
 };
 
@@ -252,6 +257,9 @@ export async function runDurableCommand({
   const contextIsCurrent = (response?: CommandResponse) => {
     const latest = current();
     const ownNavigation =
+      command.type !== "item.create" &&
+      command.type !== "directory.register" &&
+      command.type !== "workspace.create" &&
       response?.result.navigation &&
       (navigationContextKey(source?.epoch ?? null, response.result.navigation) ===
         latest.navigationKey ||
@@ -268,6 +276,7 @@ export async function runDurableCommand({
         latest.navigation,
         response.result.itemId ?? response.result.id,
         response.result.rootItemId ?? expected.dialog.scope.parentId,
+        expected.dialog.createKind === "workspace" ? "workspace" : "item",
       );
     return (
       (source?.isCurrent() ?? true) &&
@@ -736,6 +745,7 @@ export async function submitCreate({
       model.navigation,
       id,
       result.rootItemId ?? scope.parentId,
+      createKind === "workspace" ? "workspace" : "item",
     )
   ) {
     dispatch({ type: "dialog.close" });
@@ -752,6 +762,7 @@ export async function submitCreate({
           type: "session.navigate",
           sessionId: navigation.sessionId,
           target: { kind: "workspace", workspaceId: id },
+          navigationGeneration: result.navigation?.generation ?? model.navigation!.generation,
         },
         "workspace",
       );
@@ -764,6 +775,6 @@ export async function submitCreate({
           ? null
           : (result.rootItemId ?? null)
         : (rootId ?? null);
-    await onItemCreated(id, parentId, result.revision);
+    await onItemCreated(id, parentId, result.revision, result.navigation);
   }
 }

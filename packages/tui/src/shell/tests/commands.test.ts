@@ -36,6 +36,63 @@ function submitCreate(input: Omit<SubmitCreateInput, "attach">) {
 
 const activation = { sessionId: "session-work", generation: 1 };
 
+for (const order of ["snapshot first", "response first"] as const) {
+  test(`the first workspace's exact normalization completes its draft (${order})`, async () => {
+    const snapshot = snapshotFixture();
+    snapshot.navigation[0] = {
+      ...snapshot.navigation[0]!,
+      generation: 1,
+      workspaceId: null,
+      category: null,
+      itemId: null,
+      tabId: null,
+      paneId: null,
+    };
+    const state = createInitialShellState();
+    const dialog = {
+      kind: "create" as const,
+      createKind: "workspace" as const,
+      returnFocus: { region: "workspace" as const },
+      scope: createScopeFixture(snapshot),
+    };
+    state.dialog = dialog;
+    const before = deriveShellModel({ snapshot, state });
+    const created = {
+      ...snapshot,
+      revision: 5,
+      navigation: [
+        {
+          ...snapshot.navigation[0]!,
+          generation: 2,
+          workspaceId: "new-workspace",
+          category: "inbox" as const,
+        },
+      ],
+    };
+    const after = deriveShellModel({ snapshot: created, state });
+    const result = await runDurableCommand({
+      command: { type: "workspace.create", sessionId: "session-work", name: "First" },
+      region: "workspace",
+      expected: completionContextFor(before, dialog),
+      current: () => ({
+        ...completionContextFor(order === "snapshot first" ? after : before, dialog),
+        snapshot: order === "snapshot first" ? created : snapshot,
+        navigation: order === "snapshot first" ? after.navigation : before.navigation,
+      }),
+      send: async () => ({ ok: true, revision: 5, result: { id: "new-workspace" } }),
+      dispatch() {},
+      source: {
+        key: "workspace:workspace.create",
+        label: "Create",
+        requestId: 1,
+        epoch: snapshot.epoch,
+        isCurrent: () => true,
+      },
+    });
+    expect(result).toEqual({ id: "new-workspace", revision: 5 });
+  });
+}
+
 test("a draft keeps its captured category after remote navigation and cannot activate the old scope", async () => {
   const fixture = activeItemFixture(true);
   const actions: ShellAction[] = [];

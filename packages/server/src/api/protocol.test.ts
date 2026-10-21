@@ -24,6 +24,27 @@ test("parses ensure and destroy commands", () => {
   expect(parseCommand({ type: "daemon.destroy" })).toEqual({ type: "daemon.destroy" });
 });
 
+test("automatic Open preserves a valid navigation generation and rejects malformed guards", () => {
+  const command = {
+    type: "session.openItem" as const,
+    sessionId: "s",
+    itemId: "i",
+    navigationGeneration: 2,
+  };
+  expect(parseCommand(command)).toEqual(command);
+  const selection = {
+    type: "session.navigate" as const,
+    sessionId: "s",
+    target: { kind: "workspace" as const, workspaceId: "w" },
+    navigationGeneration: 2,
+  };
+  expect(parseCommand(selection)).toEqual(selection);
+  for (const navigationGeneration of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1, "2", null]) {
+    expect(() => parseCommand({ ...command, navigationGeneration })).toThrow(ProtocolError);
+    expect(() => parseCommand({ ...selection, navigationGeneration })).toThrow(ProtocolError);
+  }
+});
+
 test("parses session and workspace membership commands", () => {
   expect(
     parseCommand({ type: "session.update", sessionId: "s1", name: "Work", position: 0 }),

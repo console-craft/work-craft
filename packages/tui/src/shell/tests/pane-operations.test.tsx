@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 
 import {
   CliRenderEvents,
@@ -114,18 +114,24 @@ for (const coverage of ["dialog", "guard"] as const) {
     const setup = await liveInputFixture(initial);
     try {
       const terminal = setup.renderer.currentFocusedRenderable as EmbeddedTerminalRenderable;
-      const captured = terminal.onData!;
-      captured(Uint8Array.of(65), "response");
-      expect(setup.sent).toEqual([{ paneId: "pane-1", bytes: [65] }]);
+      await act(async () => setup.output("\x1b[5n"));
+      await setup.flush();
+      expect(setup.sent).toEqual([
+        { paneId: "pane-1", bytes: [...new TextEncoder().encode("\x1b[0n")] },
+      ]);
       setup.sent.length = 0;
-      await act(async () => {
+      const write = terminal.write.bind(terminal);
+      const intercepted = spyOn(terminal, "write").mockImplementationOnce((bytes) => {
         if (coverage === "dialog") {
           setup.mockInput.pressKey("s", { hyper: true });
         } else {
           setup.resize(79, 40);
         }
-        captured(Uint8Array.of(66), "response");
+        write(bytes);
       });
+      await act(async () => setup.output("\x1b[5n"));
+      await setup.flush();
+      intercepted.mockRestore();
       expect(setup.sent).toEqual([]);
     } finally {
       act(() => setup.renderer.destroy());

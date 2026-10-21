@@ -1,12 +1,24 @@
-import type { GridMarker } from "@work-craft/server/client";
+import type { GridMarker, InputStamp } from "@work-craft/server/client";
 
 import type { TerminalBuffer } from "@/client/terminal-buffer";
 
 export type TerminalReplayStep =
   | { type: "resize"; marker: GridMarker }
-  | { type: "bytes"; cursor: number; data: Uint8Array; origin: "history" | "live" };
+  | {
+      type: "bytes";
+      cursor: number;
+      data: Uint8Array;
+      origin: "history" | "live";
+      responseStamp?: InputStamp | null;
+    };
 export type ReplayProgress = { cursor: number; gridSequence: number | null };
-type Segment = { start: number; end: number; data: Uint8Array; origin: "history" | "live" };
+type Segment = {
+  start: number;
+  end: number;
+  data: Uint8Array;
+  origin: "history" | "live";
+  responseStamp?: InputStamp | null;
+};
 type ReplayResult = { steps: TerminalReplayStep[]; needsSnapshot: boolean };
 
 /** Preserve byte offsets and resize order; a missing interval is never safe to guess. */
@@ -47,6 +59,7 @@ export function terminalReplaySteps(
       end: chunk.cursor,
       data: chunk.data.subarray(tail - start),
       origin: chunk.origin,
+      ...(chunk.responseStamp === undefined ? {} : { responseStamp: chunk.responseStamp }),
     });
     tail = chunk.cursor;
   }
@@ -108,6 +121,7 @@ export function terminalReplaySteps(
         cursor: stop,
         data: segment.data.subarray(cursor - segment.start, stop - segment.start),
         origin: segment.origin,
+        ...(segment.responseStamp === undefined ? {} : { responseStamp: segment.responseStamp }),
       });
       cursor = stop;
     }

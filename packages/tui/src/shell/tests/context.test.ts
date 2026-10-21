@@ -56,3 +56,31 @@ test("context keys preserve null selection identities and tuple boundaries", () 
     '["navigation","surface","tab"]',
   );
 });
+
+test("first-workspace normalization cannot excuse unrelated targets or navigation round trips", () => {
+  const before = {
+    ...snapshotFixture().navigation[0]!,
+    generation: 1,
+    workspaceId: null,
+    category: null,
+    itemId: null,
+    tabId: null,
+    paneId: null,
+  };
+  const normalized = {
+    ...before,
+    generation: 2,
+    workspaceId: "created",
+    category: "inbox" as const,
+  };
+  expect(isCreationNavigationCurrent(before, normalized, "created", null, "workspace")).toBe(true);
+  for (const after of [
+    { ...normalized, workspaceId: "other" },
+    { ...normalized, generation: 4 },
+    { ...normalized, category: "design" as const },
+    { ...normalized, itemId: "other" },
+    { ...normalized, sessionId: "other" },
+  ]) {
+    expect(isCreationNavigationCurrent(before, after, "created", null, "workspace")).toBe(false);
+  }
+});

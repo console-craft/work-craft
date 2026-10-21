@@ -136,7 +136,12 @@ for (const createKind of ["directory", "generic-root"] as const) {
           response.resolve({
             ok: true,
             revision: 2,
-            result: { id: "new-root", itemId: "new-root", rootItemId: "new-root" },
+            result: {
+              id: "new-root",
+              itemId: "new-root",
+              rootItemId: "new-root",
+              navigation: { ...initial.navigation[0]!, generation: 2, itemId: "new-root" },
+            },
           }),
         );
         await setup.flush();
@@ -145,6 +150,7 @@ for (const createKind of ["directory", "generic-root"] as const) {
           type: "session.openItem",
           sessionId: "session-work",
           itemId: "new-root",
+          navigationGeneration: 2,
         });
         if (order === "snapshot first") {
           act(() => publish(ready));
@@ -172,7 +178,12 @@ for (const createKind of ["directory", "generic-root"] as const) {
                 category: "design",
                 title: value,
               },
-          { type: "session.openItem", sessionId: "session-work", itemId: "new-root" },
+          {
+            type: "session.openItem",
+            sessionId: "session-work",
+            itemId: "new-root",
+            navigationGeneration: 2,
+          },
         ]);
       } finally {
         act(() => setup.renderer.destroy());
@@ -318,7 +329,16 @@ for (const kind of ["new-linked", "duplicate-linked", "generic-child"] as const)
             response.resolve({
               ok: true,
               revision: 2,
-              result: { id: "item-1", itemId: "item-1", rootItemId: "root-1" },
+              result: {
+                id: "item-1",
+                itemId: "item-1",
+                rootItemId: "root-1",
+                navigation: {
+                  ...initial.navigation[0]!,
+                  generation: kind === "new-linked" ? 2 : 1,
+                  itemId: duplicate ? "item-1" : "root-1",
+                },
+              },
             }),
           );
           await setup.flush();
@@ -330,6 +350,7 @@ for (const kind of ["new-linked", "duplicate-linked", "generic-child"] as const)
             type: "session.openItem",
             sessionId: "session-work",
             itemId: "item-1",
+            navigationGeneration: kind === "new-linked" ? 2 : 1,
           });
           expect(setup.renderer.root.findDescendantById("dialog")).toBeUndefined();
           if (order === "snapshot first") {
@@ -720,6 +741,7 @@ test("generic child creation from a native terminal enters the new child's termi
       type: "session.openItem",
       sessionId: "session-work",
       itemId: "new-child",
+      navigationGeneration: 1,
     });
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("terminal:pane-1");
     const navigation = {
@@ -834,6 +856,7 @@ test("a newer registration supersedes the old form without blocking its own term
       type: "session.openItem",
       sessionId: "session-work",
       itemId: "item-1",
+      navigationGeneration: 1,
     });
     const ready = { ...surfaceSnapshot(), revision: 4 };
     ready.navigation[0]!.generation = 2;

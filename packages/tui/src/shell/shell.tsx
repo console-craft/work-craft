@@ -219,8 +219,8 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     connected: workCraft.status === "connected",
   };
   function readEnvironment(): ShellEnvironment {
-    const workCraft = workCraftRef.current;
-    const snapshot = snapshotRef.current;
+    const workCraft = workCraftRef.current.getState();
+    const snapshot = workCraft.snapshot;
     const state = liveState.current;
     const model = deriveShellModel({ snapshot, state, attachment: workCraft.attachment });
     return {
@@ -722,11 +722,10 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     inputEnabled: !resizeBlocked && navigatorMode !== "drawer" && state.dialog === null,
     canReceiveInput: canReceiveWorkbenchInput,
     stamp,
-    canRespond: (paneId: string) =>
-      stamp !== null &&
+    canRespond: (paneId: string, responseStamp: InputStamp) =>
       canReceiveWorkbenchInput() &&
       !readEnvironment().layout.undersized &&
-      workCraft.canRespond(paneId, stamp),
+      workCraft.canRespond(paneId, responseStamp),
     inputEvent: () => physicalInput.current,
     onMouseInput: (event: MouseEvent) =>
       captureInput("mouse", event.type === "down" && event.button === 0),

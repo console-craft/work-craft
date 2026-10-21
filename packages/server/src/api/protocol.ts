@@ -185,9 +185,20 @@ export type CommandResult = {
 export type CommandResponse = { ok: true; revision: number; result: CommandResult };
 
 export type Command =
-  | { type: "session.navigate"; sessionId: string; target: NavigationTarget }
+  | {
+      type: "session.navigate";
+      sessionId: string;
+      target: NavigationTarget;
+      navigationGeneration?: number;
+    }
   | { type: "session.step"; sessionId: string; level: NavigationLevel; direction: -1 | 1 }
-  | { type: "session.openItem"; sessionId: string; itemId: string; cwd?: string }
+  | {
+      type: "session.openItem";
+      sessionId: string;
+      itemId: string;
+      cwd?: string;
+      navigationGeneration?: number;
+    }
   | { type: "session.create"; name: string }
   | { type: "session.update"; sessionId: string; name?: string; position?: number }
   | { type: "session.delete"; sessionId: string }
@@ -289,12 +300,24 @@ export function parseCommand(value: unknown): Command {
   const input = objectValue(value);
   const type = stringValue(input.type, "type");
   const activation = input.activation === undefined ? undefined : activationValue(input.activation);
+  if (
+    input.navigationGeneration !== undefined &&
+    (!Number.isSafeInteger(input.navigationGeneration) ||
+      (input.navigationGeneration as number) < 0)
+  ) {
+    throw new ProtocolError("navigationGeneration must be a non-negative safe integer");
+  }
+  const navigationGuard =
+    input.navigationGeneration === undefined
+      ? {}
+      : { navigationGeneration: input.navigationGeneration as number };
   switch (type) {
     case "session.navigate":
       return {
         type,
         sessionId: idValue(input.sessionId, "sessionId"),
         target: navigationTarget(input.target),
+        ...navigationGuard,
       };
     case "session.step":
       if (
@@ -314,6 +337,7 @@ export function parseCommand(value: unknown): Command {
         type,
         sessionId: idValue(input.sessionId, "sessionId"),
         itemId: idValue(input.itemId, "itemId"),
+        ...navigationGuard,
         ...(input.cwd === undefined ? {} : { cwd: optionalString(input.cwd, "cwd") }),
       };
     case "session.create":

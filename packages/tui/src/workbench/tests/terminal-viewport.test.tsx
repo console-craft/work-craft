@@ -2,6 +2,7 @@ import { expect, spyOn, test } from "bun:test";
 
 import { CliRenderEvents, EmbeddedTerminalRenderable } from "@opentui/core";
 import { extend } from "@opentui/react";
+import type { InputStamp } from "@work-craft/server/client";
 import { act, useState } from "react";
 
 import type { TerminalBuffer } from "@/client/terminal-buffer";
@@ -15,6 +16,12 @@ import { TerminalViewport } from "@/workbench/terminal-viewport";
 
 extend({ terminal: EmbeddedTerminalRenderable });
 const encode = (text: string) => new TextEncoder().encode(text);
+const responseStamp = {
+  epoch: "e",
+  attachmentGeneration: 1,
+  navigationGeneration: 1,
+  geometrySequence: 1,
+};
 
 function buffer(text = "", overrides: Partial<TerminalBuffer> = {}): TerminalBuffer {
   return {
@@ -31,8 +38,14 @@ function buffer(text = "", overrides: Partial<TerminalBuffer> = {}): TerminalBuf
   };
 }
 
-async function viewport(initial: TerminalBuffer, width: number, height: number, responds = true) {
+async function viewport(
+  initial: TerminalBuffer,
+  width: number,
+  height: number,
+  responds: boolean | ((stamp: InputStamp) => boolean) = true,
+) {
   const emitted: { source: string; text: string }[] = [];
+  const responseStamps: InputStamp[] = [];
   let update!: (next: TerminalBuffer) => void;
   let resizeLocal!: (width: number, height: number) => void;
   let resyncs = 0;
@@ -59,10 +72,13 @@ async function viewport(initial: TerminalBuffer, width: number, height: number, 
             inputEnabled
             focused
             canInput={() => true}
-            canRespond={() => responds}
-            onData={(data, source) =>
-              emitted.push({ source, text: new TextDecoder().decode(data) })
-            }
+            canRespond={(stamp) => (typeof responds === "function" ? responds(stamp) : responds)}
+            onData={(data, source, stamp) => {
+              emitted.push({ source, text: new TextDecoder().decode(data) });
+              if (stamp) {
+                responseStamps.push(stamp);
+              }
+            }}
             onReady={() => {}}
             onFocus={() => {}}
             onResync={() => {
@@ -86,8 +102,48 @@ async function viewport(initial: TerminalBuffer, width: number, height: number, 
   function terminal() {
     return setup.renderer.root.findDescendantById("terminal:p") as EmbeddedTerminalRenderable;
   }
-  return { ...setup, update, resizeLocal, emitted, terminal, resyncs: () => resyncs };
+  return {
+    ...setup,
+    update,
+    resizeLocal,
+    emitted,
+    responseStamps,
+    terminal,
+    resyncs: () => resyncs,
+  };
 }
+
+test("a delayed mirror cannot answer an old live query after a same-size ownership handoff", async () => {
+  let owner = "a";
+  const stamp = {
+    epoch: "e",
+    attachmentGeneration: 1,
+    navigationGeneration: 1,
+    geometrySequence: 1,
+  };
+  const a = await viewport(buffer(), 60, 12, () => owner === "a");
+  const b = await viewport(buffer(), 60, 12, () => owner === "b");
+  const query = encode("\x1b[6n");
+  try {
+    const chunk = {
+      cursor: query.length,
+      data: query,
+      geometrySequence: 1,
+      origin: "live" as const,
+    };
+    act(() => a.update(buffer("", { chunks: [{ ...chunk, responseStamp: stamp }] })));
+    await flushMeasured(a);
+    expect(a.emitted).toHaveLength(1);
+    expect(a.responseStamps).toEqual([stamp]);
+    owner = "b";
+    act(() => b.update(buffer("", { chunks: [{ ...chunk, responseStamp: null }] })));
+    await flushMeasured(b);
+    expect(b.emitted).toEqual([]);
+  } finally {
+    act(() => a.renderer.destroy());
+    act(() => b.renderer.destroy());
+  }
+});
 
 test("two canonical native viewports agree through ordered history resizes and cursor clipping", async () => {
   const first = "\x1b[2J\x1b[25;90HX";
@@ -168,12 +224,49 @@ test("the native viewport does not advertise in-band resize reports it cannot de
     act(() =>
       setup.update(
         buffer("", {
-          chunks: [{ cursor: query.length, data: query, geometrySequence: 1, origin: "live" }],
+          chunks: [
+            {
+              cursor: query.length,
+              data: query,
+              geometrySequence: 1,
+              origin: "live",
+              responseStamp,
+            },
+          ],
         }),
       ),
     );
     await flushMeasured(setup);
     expect(setup.emitted).toEqual([{ source: "response", text: "\x1b[?2048;0$y" }]);
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
+test("enabling in-band resize before querying still reports the unsupported capability honestly", async () => {
+  const setup = await viewport(buffer(), 60, 12);
+  try {
+    const query = encode("\x1b[?2048h\x1b[?2048$p");
+    act(() =>
+      setup.update(
+        buffer("", {
+          chunks: [
+            {
+              cursor: query.length,
+              data: query,
+              geometrySequence: 1,
+              origin: "live",
+              responseStamp,
+            },
+          ],
+        }),
+      ),
+    );
+    await flushMeasured(setup);
+    expect(setup.emitted).toEqual([{ source: "response", text: "\x1b[?2048;0$y" }]);
+    act(() => setup.resizeLocal(40, 10));
+    await flushMeasured(setup);
+    expect(setup.emitted).toHaveLength(1);
   } finally {
     act(() => setup.renderer.destroy());
   }
@@ -194,6 +287,7 @@ test("history queries are suppressed while only the current owner answers live q
           data: live,
           geometrySequence: 1,
           origin: "live",
+          responseStamp,
         },
       ],
     });

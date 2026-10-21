@@ -18,7 +18,7 @@ import { canonicalDirectoryPath, type DirectoryScan, inspectDirectory } from "./
 import { isTrustedGroupScan, readItems, reconcileDirectoryScan } from "./items.ts";
 import { normalizeSessionNavigations, readNavigationCatalog } from "./navigation-store.ts";
 import { createTerminalSizing, type GeometryDecision } from "./sizing.ts";
-import { readSnapshot } from "./snapshot.ts";
+import { readSnapshot, readSnapshotState } from "./snapshot.ts";
 
 export type Health = { epoch: string; revision: number; pid: number };
 
@@ -289,7 +289,7 @@ export function createApp(options: {
   const runtime = new RuntimeRegistry({ onOutput, onStatus });
   const connections = createConnections({
     epoch,
-    snapshot,
+    snapshot: () => readSnapshotState(options.db, epoch, revision, sizing.current()),
     execute,
     onViewer: (id, report) => applyGeometry(sizing.report(id, report)),
     onAttachActivity: (id) => applyGeometry(sizing.attachmentActivity(id)),
@@ -398,6 +398,20 @@ export function createApp(options: {
     // Keep the runtime's final identity check adjacent to the synchronous split transaction.
     validateOrigin();
     const { result, effects, changed } = applyCommand(options.db, command, registration);
+    if (
+      origin?.sessionId &&
+      (command.type === "item.create" ||
+        command.type === "directory.register" ||
+        command.type === "workspace.create")
+    ) {
+      // A response may beat its snapshot; follow-up activation needs this exact committed cursor.
+      result.navigation = readSnapshotState(
+        options.db,
+        epoch,
+        revision,
+        sizing.current(),
+      ).navigation.find(({ sessionId }) => sessionId === origin.sessionId);
+    }
     if (command.type === "daemon.stop" || command.type === "daemon.destroy") {
       options.onStop?.(command.type === "daemon.destroy");
       return { ok: true, revision, result };

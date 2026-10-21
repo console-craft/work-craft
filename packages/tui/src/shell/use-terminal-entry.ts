@@ -522,13 +522,25 @@ export function useTerminalEntry({
         latest.model.navigationKey === expectedNavigation
       );
     }
-    return async (itemId, parentId, revision) => {
+    return async (itemId, parentId, revision, creationNavigation) => {
       const currentNavigation = read().model.navigation;
       if (
         !origin ||
         !epoch ||
         !isCurrent(read().model.navigationKey, dialog, origin) ||
-        !isCreationNavigationCurrent(dialog.scope.navigation, currentNavigation, itemId, parentId)
+        !isCreationNavigationCurrent(
+          dialog.scope.navigation,
+          currentNavigation,
+          itemId,
+          parentId,
+        ) ||
+        (creationNavigation !== undefined &&
+          !isCreationNavigationCurrent(
+            dialog.scope.navigation,
+            creationNavigation,
+            itemId,
+            parentId,
+          ))
       ) {
         return;
       }
@@ -586,10 +598,20 @@ export function useTerminalEntry({
       if (!sessionId) {
         return;
       }
-      const result = await run({ type: "session.openItem", sessionId, itemId }, "navigator", {
-        navigationKey: nextNavigation,
-        dialog: null,
-      });
+      const result = await run(
+        {
+          type: "session.openItem",
+          sessionId,
+          itemId,
+          navigationGeneration:
+            creationNavigation?.generation ?? latest.model.navigation!.generation,
+        },
+        "navigator",
+        {
+          navigationKey: nextNavigation,
+          dialog: null,
+        },
+      );
       const receiptNavigation = result?.navigation
         ? navigationContextKey(epoch, result.navigation)
         : nextNavigation;

@@ -57,7 +57,6 @@ export function retainedErrorSources(snapshot: Snapshot): ReadonlySet<string> {
   }
   for (const surface of snapshot.surfaces) {
     keys.add(`${surface.id}:tab.create`);
-    keys.add(`${surface.id}:surface.selectTab`);
   }
   for (const tab of snapshot.tabs) {
     const surface = snapshot.surfaces.find((surface) => surface.id === tab.surfaceId);
@@ -80,7 +79,7 @@ export function retainedErrorSources(snapshot: Snapshot): ReadonlySet<string> {
 
 export function retainsErrorSource(sourceKey: string, retained: ReadonlySet<string>): boolean {
   return (
-    !/:(?:surface\.ensure|item\.setArchived|entry|discovery|pane\.split|process\.restart|tab\.create|surface\.selectTab|process|layout)$/.test(
+    !/:(?:surface\.ensure|item\.setArchived|entry|discovery|pane\.split|process\.restart|tab\.create|process|layout)$/.test(
       sourceKey,
     ) || retained.has(sourceKey)
   );

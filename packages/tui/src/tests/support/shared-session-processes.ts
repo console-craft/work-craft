@@ -71,9 +71,9 @@ export function sharedWrite(tui: SharedTuiProcess, text: string): void {
   tui.terminal.write(new TextEncoder().encode(text));
 }
 
-export async function focusSharedTerminal(tui: SharedTuiProcess): Promise<void> {
+export async function focusSharedTerminal(tui: SharedTuiProcess, tabColumn = 70): Promise<void> {
   const ready = () => tui.output().lastIndexOf("\x1b[?25h") > tui.output().lastIndexOf("\x1b[?25l");
-  sharedWrite(tui, "\x1b[<0;70;4M\x1b[<0;70;4m\r");
+  sharedWrite(tui, `\x1b[<0;${tabColumn};4M\x1b[<0;${tabColumn};4m\r`);
   await sharedWait(ready, "native workbench input", tui.frame);
 }
 

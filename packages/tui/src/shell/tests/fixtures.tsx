@@ -12,7 +12,7 @@ import {
 import { act, type Dispatch, type ReactNode, type SetStateAction, useState } from "react";
 
 import { createWorkCraftStore, type WorkCraftState } from "@/client/store.ts";
-import { snapshotTerminals } from "@/client/terminal-buffer";
+import { appendTerminalChunk, snapshotTerminals } from "@/client/terminal-buffer";
 import { WorkCraftShell } from "@/shell/shell.tsx";
 import {
   attachmentFixture,
@@ -93,6 +93,7 @@ export function workCraftStateFixture(overrides: Partial<WorkCraftState> = {}): 
     ],
   });
   const fixture: WorkCraftState = {
+    getState: () => fixture,
     snapshot,
     status: "connected",
     connectionError: null,
@@ -313,6 +314,22 @@ export async function liveInputFixture(
     splits,
     tabCreates,
     registrations,
+    async output(text: string): Promise<void> {
+      const current = store.getState();
+      const navigation = current.snapshot!.navigation[0]!;
+      const paneId = navigation.paneId!;
+      const buffer = current.terminals.get(paneId)!;
+      const bytes = new TextEncoder().encode(text);
+      await store.apply({
+        type: "terminal.output",
+        epoch: current.snapshot!.epoch,
+        paneId,
+        cursor: (buffer.chunks.at(-1)?.cursor ?? buffer.historyCursor) + bytes.length,
+        data: Buffer.from(bytes).toString("base64"),
+        geometrySequence: current.geometry.sequence,
+      });
+      commit?.(store.getState());
+    },
     renderCurrent() {
       act(() => commit!(store.getState()));
     },
@@ -489,6 +506,7 @@ export function twoTabSnapshot(
 }
 
 export async function localTabFixture(rememberDestination = true, count = 2, creating = false) {
+  let output!: (text: string) => void;
   let publish!: Dispatch<SetStateAction<Snapshot>>;
   let connect!: (value: boolean) => void;
   const requests: ReturnType<typeof deferred<CommandResponse>>[] = [];
@@ -502,12 +520,40 @@ export async function localTabFixture(rememberDestination = true, count = 2, cre
       return initial;
     });
     const [connected, setConnected] = useState(true);
+    const [buffers, setBuffers] = useState<ReturnType<typeof snapshotTerminals> | null>(null);
+    output = (text) => {
+      const terminals = new Map(buffers ?? snapshotTerminals(snapshot, new Map()));
+      const navigation = snapshot.navigation[0]!;
+      const paneId = navigation.paneId!;
+      const buffer = terminals.get(paneId)!;
+      const bytes = new TextEncoder().encode(text);
+      terminals.set(
+        paneId,
+        appendTerminalChunk(
+          buffer,
+          (buffer.chunks.at(-1)?.cursor ?? buffer.historyCursor) + bytes.length,
+          bytes,
+          snapshot.geometry.sequence,
+          "live",
+          {
+            epoch: snapshot.epoch,
+            attachmentGeneration: 1,
+            navigationGeneration: navigation.generation,
+            geometrySequence: snapshot.geometry.tabs.find(
+              ({ tabId }) => tabId === navigation.tabId,
+            )!.generation,
+          },
+        ),
+      );
+      setBuffers(terminals);
+    };
     connect = setConnected;
     publish = setSnapshot;
     return (
       <WorkCraftShell
         workCraft={workCraftStateFixture({
           snapshot,
+          ...(buffers === null ? {} : { terminals: buffers }),
           status: connected ? "connected" : "disconnected",
           stream: streamFixture({
             close() {},
@@ -615,6 +661,7 @@ export async function localTabFixture(rememberDestination = true, count = 2, cre
     ...setup,
     commands,
     requests,
+    output: (text: string) => act(() => output(text)),
     received,
     connect: (value: boolean) => act(() => connect(value)),
     publish: (snapshot: Snapshot) => act(() => publish(snapshot)),

@@ -698,12 +698,12 @@ for (const stage of ["before response", "after response"] as const) {
   test(`terminal emulator reply preserves pending tab entry ${stage} and its response bytes`, async () => {
     const setup = await localTabFixture();
     try {
-      const source = setup.renderer.currentFocusedRenderable as EmbeddedTerminalRenderable;
       await setup.next();
       if (stage === "after response") {
         await setup.respond();
       }
-      act(() => source.write(new TextEncoder().encode("\x1b[5n")));
+      setup.output("\x1b[5n");
+      await setup.flush();
       expect(setup.received).toEqual([
         { paneId: "pane-1b", bytes: [...new TextEncoder().encode("\x1b[0n")] },
       ]);
