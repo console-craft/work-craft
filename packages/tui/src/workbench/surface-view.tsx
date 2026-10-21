@@ -1,5 +1,5 @@
 import type { BoxRenderable, EmbeddedTerminalRenderable } from "@opentui/core";
-import type { Snapshot, StreamConnection } from "@work-craft/server/client";
+import { projectPaneLayout, type Snapshot, type StreamConnection } from "@work-craft/server/client";
 import { useEffect, useState } from "react";
 
 import type { TerminalBuffer } from "@/client/terminal-buffer.ts";
@@ -8,12 +8,7 @@ import { Box } from "@/ui/primitives/box.tsx";
 import { Divider } from "@/ui/primitives/divider.tsx";
 import { Text } from "@/ui/primitives/text.tsx";
 import { useTheme } from "@/ui/theming/theme-provider.tsx";
-import {
-  hasTerminalViewport,
-  paneIds,
-  projectPaneLayout,
-  terminalRect,
-} from "@/workbench/layout.ts";
+import { hasTerminalViewport, paneIds, terminalRect } from "@/workbench/layout.ts";
 import { selectedTab } from "@/workbench/model";
 import { paneNotice } from "@/workbench/pane-state.ts";
 import { TerminalPane } from "@/workbench/terminal-pane.tsx";

@@ -8,13 +8,15 @@ import { RGBA } from "@opentui/core";
 import {
   createClient,
   decodeBytes,
+  type PaneRect,
+  projectPaneLayout,
   type Snapshot,
   type WorkCraftClient,
 } from "@work-craft/server/client";
 
 import { calculateShellLayout } from "@/shell/layout.ts";
 import { defaultTheme } from "@/ui/theming/themes/default.ts";
-import { type PaneRect, projectPaneLayout, terminalRect } from "@/workbench/layout.ts";
+import { terminalRect } from "@/workbench/layout.ts";
 
 const ROOT = resolve(import.meta.dir, "../../../..");
 

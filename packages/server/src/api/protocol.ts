@@ -27,6 +27,22 @@ export type NavigationTarget =
 
 export type NavigationLevel = "category" | "item" | "tab";
 
+export type TerminalSize = { cols: number; rows: number };
+export type GridMarker = TerminalSize & { cursor: number; sequence: number };
+export type ViewerReport = {
+  epoch: string;
+  attachmentGeneration: number;
+  navigationGeneration: number;
+  tabId: string;
+  canvas: TerminalSize;
+  eligible: boolean;
+};
+export type TerminalGeometry = {
+  sequence: number;
+  tabs: { tabId: string; ownerConnectionId: string | null; canvas: TerminalSize | null }[];
+  panes: { paneId: string; size: TerminalSize }[];
+};
+
 export type LayoutNode =
   | { type: "pane"; paneId: string }
   | {

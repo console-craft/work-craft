@@ -17,7 +17,13 @@ import type { Health } from "./application/app.ts";
 import { resolvePaths } from "./daemon/paths.ts";
 
 export { decodeBytes } from "./api/protocol.ts";
+export { projectPaneLayout } from "./application/layout.ts";
+export type { PaneRect, PaneGeometry } from "./application/layout.ts";
 export type {
+  TerminalSize,
+  TerminalGeometry,
+  GridMarker,
+  ViewerReport,
   SessionNavigation,
   NavigationTarget,
   NavigationLevel,

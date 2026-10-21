@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 
 import type { EmbeddedTerminalRenderable } from "@opentui/core";
 import { useKeyboard, usePaste, useRenderer, useTerminalDimensions } from "@opentui/react";
-import type { CategoryKind } from "@work-craft/server/client";
+import { type CategoryKind, projectPaneLayout } from "@work-craft/server/client";
 import { type ReactNode, useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 
 import type { WorkCraftState } from "@/client/store.ts";
@@ -39,12 +39,7 @@ import { getActiveModalFocusScope } from "@/ui/interaction/modal-focus";
 import { Box } from "@/ui/primitives/box.tsx";
 import { HStack } from "@/ui/primitives/hstack.tsx";
 import { Stack } from "@/ui/primitives/stack.tsx";
-import {
-  hasRecoveryViewport,
-  hasTerminalViewport,
-  projectPaneLayout,
-  terminalRect,
-} from "@/workbench/layout.ts";
+import { hasRecoveryViewport, hasTerminalViewport, terminalRect } from "@/workbench/layout.ts";
 import { paneNotice } from "@/workbench/pane-state.ts";
 import { Workbench } from "@/workbench/workbench.tsx";
 

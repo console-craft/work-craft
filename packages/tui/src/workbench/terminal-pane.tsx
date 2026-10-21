@@ -1,5 +1,5 @@
 import type { EmbeddedTerminalRenderable } from "@opentui/core";
-import type { Snapshot, StreamConnection } from "@work-craft/server/client";
+import type { PaneRect, Snapshot, StreamConnection } from "@work-craft/server/client";
 import { useEffect, useLayoutEffect, useRef } from "react";
 
 import type { TerminalBuffer } from "@/client/terminal-buffer.ts";
@@ -11,7 +11,6 @@ import {
   hasTerminalViewport,
   PANE_ALERT_HEIGHT,
   PANE_TOP_BORDER_HEIGHT,
-  type PaneRect,
   terminalRect,
 } from "@/workbench/layout.ts";
 import { paneNotice } from "@/workbench/pane-state.ts";
