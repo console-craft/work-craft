@@ -54,9 +54,26 @@ test("an explicitly opened session chooser survives snapshots while its client r
 });
 
 test("the automatic detached chooser closes only after attachment is acknowledged", () => {
-  const detached = reconcileShellState(createInitialShellState(), snapshotFixture(), null);
+  const detached = reconcileShellState(
+    createInitialShellState(),
+    snapshotFixture(),
+    attachmentFixture(null),
+  );
   expect(detached.dialog?.kind).toBe("sessions");
   expect(reconcileShellState(detached, snapshotFixture(), attachmentFixture()).dialog).toBeNull();
+});
+
+test("a pending transport attachment preserves workbench intent without flashing the session chooser", () => {
+  const state = {
+    ...createInitialShellState(),
+    focus: { region: "workbench" as const, paneId: "pane-1" },
+  };
+  const pending = reconcileShellState(state, snapshotFixture(), null);
+  expect(pending.focus).toEqual(state.focus);
+  expect(pending.dialog).toBeNull();
+  expect(
+    reconcileShellState(pending, snapshotFixture(), attachmentFixture(null)).dialog?.kind,
+  ).toBe("sessions");
 });
 
 function reconcileShellState(
@@ -441,13 +458,13 @@ test("focus synchronization is idempotent without writing shared pane memory", (
   ).toEqual({ region: "workbench", paneId: "pane-1" });
 });
 
-test("without an attachment even a single session remains a chooser, not a reducer selection", () => {
+test("an acknowledged null attachment remains a chooser even for a single session", () => {
   const state = reconcileShellState(
     createInitialShellState(),
     snapshotFixture({
       sessions: [{ id: "session-1", name: "Main", position: 0 }],
     }),
-    null,
+    attachmentFixture(null),
   );
   expect(state.dialog?.kind).toBe("sessions");
 });
@@ -459,7 +476,7 @@ test("a deleted attachment opens the chooser without selecting another session",
   const state = reconcileShellState(
     current,
     snapshotFixture({ sessions: [{ id: "other", name: "Other", position: 0 }] }),
-    null,
+    attachmentFixture(null),
   );
   expect(state.dialog?.kind).toBe("sessions");
 });

@@ -48,13 +48,13 @@ test("chunk retention trims the oldest partial chunk without changing its termin
     chunks: [],
   });
   const first = appendTerminalChunk(original, 4, new Uint8Array([1, 2, 3, 4]), 0);
-  const retained = appendTerminalChunk(first, 1_048_578, new Uint8Array(1_048_574).fill(5), 0);
-  expect(retained.chunks.reduce((size, chunk) => size + chunk.data.byteLength, 0)).toBe(1_048_576);
+  const retained = appendTerminalChunk(first, 2_097_154, new Uint8Array(2_097_150).fill(5), 0);
+  expect(retained.chunks.reduce((size, chunk) => size + chunk.data.byteLength, 0)).toBe(2_097_152);
   expect(retained.chunks[0]!.cursor).toBe(4);
   expect([...retained.chunks[0]!.data]).toEqual([3, 4]);
   expect([...first.chunks[0]!.data]).toEqual([1, 2, 3, 4]);
-  const replaced = appendTerminalChunk(retained, 2_097_155, new Uint8Array(1_048_577).fill(6), 0);
+  const replaced = appendTerminalChunk(retained, 4_194_307, new Uint8Array(2_097_153).fill(6), 0);
   expect(replaced.chunks).toHaveLength(1);
-  expect(replaced.chunks[0]!.data.byteLength).toBe(1_048_576);
-  expect(replaced.chunks[0]!.cursor).toBe(2_097_155);
+  expect(replaced.chunks[0]!.data.byteLength).toBe(2_097_152);
+  expect(replaced.chunks[0]!.cursor).toBe(4_194_307);
 });

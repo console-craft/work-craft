@@ -730,7 +730,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     onMouseInput: (event: MouseEvent) =>
       captureInput("mouse", event.type === "down" && event.button === 0),
     onResync: () => {
-      void workCraft.reload();
+      void workCraft.resync();
     },
     activeTabId: activeTab?.id ?? null,
     focusedPaneId,

@@ -26,6 +26,7 @@ export type WorkCraftState = {
   connectionError: string | null;
   snapshot: Snapshot | null;
   status: ConnectionStatus;
+  /** Null awaits an acknowledgment; an acknowledged sessionId:null means explicitly detached. */
   attachment: ClientAttachment | null;
   geometry: TerminalGeometry;
   attach(sessionId: string | null): Promise<void>;
@@ -35,6 +36,8 @@ export type WorkCraftState = {
   /** Live exited-action readiness; never grants terminal input eligibility. */
   canReactivate(paneId: string, stamp: InputStamp): boolean;
   command(command: Command): Promise<CommandResponse>;
+  /** Repair retained output without withdrawing the current attachment or input context. */
+  resync(): Promise<void>;
   reload(): Promise<void>;
   stream: StreamConnection | null;
   terminals: ReadonlyMap<string, TerminalBuffer>;
@@ -97,6 +100,7 @@ export function createWorkCraftStore(
       return state.stream.command(command, state.attachment.generation);
     },
     reload,
+    resync,
     stream: null,
     terminals: new Map(),
   };
@@ -186,7 +190,11 @@ export function createWorkCraftStore(
       sameEpoch && state.geometry.sequence >= snapshot.geometry.sequence
         ? state.geometry
         : snapshot.geometry;
-    if (desiredSession !== null && !snapshot.sessions.some(({ id }) => id === desiredSession)) {
+    if (
+      (current === null || !sameEpoch || snapshot.revision >= current.revision) &&
+      desiredSession !== null &&
+      !snapshot.sessions.some(({ id }) => id === desiredSession)
+    ) {
       desiredSession = null;
       attachmentRequest += 1;
       update({ attachment: null });
@@ -427,6 +435,18 @@ export function createWorkCraftStore(
       return;
     }
     await establish(activeRun, false);
+  }
+
+  async function resync(): Promise<void> {
+    const activeRun = run;
+    const connection = connectionGeneration;
+    try {
+      await refresh(activeRun, connection);
+    } catch {
+      if (run === activeRun && connection === connectionGeneration) {
+        await reload();
+      }
+    }
   }
 
   function apply(message: ServerMessage, activeRun?: number, connection?: number): Promise<void> {

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 
 import type { TerminalBuffer } from "@/client/terminal-buffer";
+import { appendTerminalChunk } from "@/client/terminal-buffer";
 import { terminalReplaySteps } from "@/client/terminal-replay";
 
 const encode = (text: string) => new TextEncoder().encode(text);
@@ -82,6 +83,46 @@ test("a synthetic truncation prefix does not shift byte-cursor resize boundaries
   });
 });
 
+for (const liveBytes of [1_048_576, 2_097_152]) {
+  test(`full history plus ${liveBytes} live bytes excludes the reset prefix from replay accounting`, () => {
+    const prefix = encode("\x1bc\r\n[work-craft: earlier terminal output truncated]\r\n");
+    const history = new Uint8Array(prefix.byteLength + 1_048_576).fill(120);
+    history.set(prefix);
+    const current = appendTerminalChunk(
+      buffer({
+        history,
+        historyPrefixBytes: prefix.byteLength,
+        historyStartCursor: 10,
+        historyCursor: 1_048_586,
+      }),
+      1_048_586 + liveBytes,
+      new Uint8Array(liveBytes).fill(121),
+      0,
+    );
+    const unread = terminalReplaySteps(current, { cursor: 1_048_586, gridSequence: 0 });
+    expect(unread.needsSnapshot).toBe(false);
+    expect(unread.steps).toHaveLength(1);
+    expect(unread.steps[0]).toMatchObject({ type: "bytes", cursor: 1_048_586 + liveBytes });
+    expect(unread.steps[0]!.type === "bytes" && unread.steps[0]!.data.byteLength).toBe(liveBytes);
+    expect(
+      terminalReplaySteps(current, { cursor: 1_048_586 + liveBytes, gridSequence: 0 }),
+    ).toEqual({ steps: [], needsSnapshot: false });
+  });
+}
+
+test("replay still rejects oversized raw buffers and invalid synthetic prefix offsets", () => {
+  const oversized = new Uint8Array(3_145_729);
+  expect(
+    terminalReplaySteps(buffer({ history: oversized, historyCursor: oversized.length }), null),
+  ).toEqual({ steps: [], needsSnapshot: true });
+  for (const historyPrefixBytes of [-1, 9]) {
+    expect(terminalReplaySteps(buffer({ historyPrefixBytes }), null)).toEqual({
+      steps: [],
+      needsSnapshot: true,
+    });
+  }
+});
+
 test("legacy bytes precede the first known resize without guessed old dimensions", () => {
   const result = terminalReplaySteps(
     buffer({
@@ -102,6 +143,21 @@ test("missing byte or resize intervals request a snapshot instead of parsing at 
   expect(terminalReplaySteps(byteGap, null)).toEqual({ steps: [], needsSnapshot: true });
   const gridGap = buffer({ resizes: [{ cursor: 8, sequence: 2, cols: 100, rows: 30 }] });
   expect(terminalReplaySteps(gridGap, null)).toEqual({ steps: [], needsSnapshot: true });
+});
+
+test("retiring already parsed output does not force a reconnect-sized history replay", () => {
+  const initial = buffer({ history: new Uint8Array(), historyCursor: 0 });
+  const first = appendTerminalChunk(initial, 1_200_000, new Uint8Array(1_200_000).fill(120), 0);
+  expect(terminalReplaySteps(first, { cursor: 0, gridSequence: 0 }).needsSnapshot).toBe(false);
+  const second = appendTerminalChunk(first, 2_400_000, new Uint8Array(1_200_000).fill(121), 0);
+  const replay = terminalReplaySteps(second, { cursor: 1_200_000, gridSequence: 0 });
+  expect(replay.needsSnapshot).toBe(false);
+  expect(replay.steps).toHaveLength(1);
+  expect(replay.steps[0]).toMatchObject({ type: "bytes", cursor: 2_400_000 });
+  expect(replay.steps[0]!.type === "bytes" && replay.steps[0]!.data.byteLength).toBe(1_200_000);
+  // A new or genuinely lagging emulator still cannot invent the retired interval.
+  expect(terminalReplaySteps(second, null).needsSnapshot).toBe(true);
+  expect(terminalReplaySteps(second, { cursor: 1, gridSequence: 0 }).needsSnapshot).toBe(true);
 });
 
 test("a new resize at an already parsed byte cursor is still applied", () => {

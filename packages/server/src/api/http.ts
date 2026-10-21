@@ -1,7 +1,7 @@
 import { chmodSync } from "node:fs";
 
 import type { WorkCraftApp } from "../application/app.ts";
-import { parseClientMessage, ProtocolError } from "./protocol.ts";
+import { parseClientMessage, ProtocolError, STREAM_BACKPRESSURE_LIMIT } from "./protocol.ts";
 
 async function commandBody(request: Request): Promise<unknown> {
   try {
@@ -58,7 +58,7 @@ export function startHttpServer(app: WorkCraftApp, socketPath: string): Bun.Serv
           socket.close(1008, "invalid client message");
         }
       },
-      backpressureLimit: 1024 * 1024,
+      backpressureLimit: STREAM_BACKPRESSURE_LIMIT,
       closeOnBackpressureLimit: true,
     },
   });

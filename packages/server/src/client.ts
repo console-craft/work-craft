@@ -84,6 +84,7 @@ export type StreamConnection = {
   close(): void;
   attach(sessionId: string | null): Promise<ClientAttachment>;
   command(command: Command, attachmentGeneration: number): Promise<CommandResponse>;
+  /** Ephemeral messages are dropped, never replayed, once the transport starts closing. */
   reportViewport(report: ViewerReport | null, stamp: InputStamp): void;
   activity(stamp: InputStamp, sequence: number): void;
   sendInput(paneId: string, bytes: Uint8Array, context: TerminalInputContext): void;
@@ -249,11 +250,12 @@ export function createClient(options: { socketPath?: string } = {}): WorkCraftCl
         }
       >();
 
-      function send(message: InteractiveMessage): void {
+      function send(message: InteractiveMessage): boolean {
         if (!alive || socket.readyState !== WebSocket.OPEN) {
-          throw new Error("Stream is disconnected");
+          return false;
         }
         socket.send(JSON.stringify(message));
+        return true;
       }
 
       function request(
@@ -272,7 +274,9 @@ export function createClient(options: { socketPath?: string } = {}): WorkCraftCl
           }, 10_000);
           pending.set(id, { resolve, reject, timer });
           try {
-            send({ ...message, requestId: id });
+            if (!send({ ...message, requestId: id })) {
+              throw new Error("Stream is disconnected");
+            }
           } catch (error) {
             clearTimeout(timer);
             pending.delete(id);
@@ -318,6 +322,10 @@ export function createClient(options: { socketPath?: string } = {}): WorkCraftCl
           snapshots = snapshots
             .then(async () => {
               if (!alive) {
+                return;
+              }
+              if (message.type === "snapshot.available") {
+                applySnapshot((await requestJson(socketPath, "/snapshot")) as Snapshot);
                 return;
               }
               if (message.type === "snapshot") {

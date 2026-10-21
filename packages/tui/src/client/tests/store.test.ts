@@ -3,6 +3,7 @@ import { expect, test } from "bun:test";
 import type { Snapshot, StreamHandlers, WorkCraftClient } from "@work-craft/server/client";
 
 import { createWorkCraftStore } from "@/client/store.ts";
+import { terminalReplaySteps } from "@/client/terminal-replay";
 import { inputStampFixture, snapshotFixture, streamFixture } from "@/tests/support/fixtures.ts";
 
 const historyMetadata = {
@@ -97,6 +98,159 @@ function deferred<T>(): {
   });
   return { promise, resolve, reject };
 }
+
+test("a delayed output resync cannot overwrite a newly reconnected daemon snapshot", async () => {
+  const initial = snapshotFixture({ epoch: "old" });
+  const fresh = snapshotFixture({ epoch: "fresh", revision: 1 });
+  const pending = deferred<Snapshot>();
+  const client = fakeClient(initial);
+  let reads = 0;
+  client.snapshot = async () => (++reads === 1 ? initial : reads === 2 ? pending.promise : fresh);
+  client.stream = async () => streamFixture();
+  const store = createWorkCraftStore(client);
+  try {
+    await store.start();
+    const resync = store.getState().resync();
+    await store.reload();
+    pending.resolve({ ...initial, revision: 100 });
+    await resync;
+    expect(store.snapshot()).toBe(fresh);
+    expect(store.getState().status).toBe("connected");
+  } finally {
+    pending.resolve(initial);
+    store.stop();
+  }
+});
+
+test("delayed resync retains later live output and same-cursor resize markers", async () => {
+  const initial = snapshotFixture({
+    terminalHistories: [
+      {
+        paneId: "pane-1",
+        cursor: 0,
+        data: "",
+        truncated: false,
+        ...historyMetadata,
+        initialGridSequence: 0,
+      },
+    ],
+  });
+  const pending = deferred<Snapshot>();
+  const entered = deferred<void>();
+  const client = fakeClient(initial);
+  client.stream = async () => streamFixture();
+  const store = createWorkCraftStore(client);
+  try {
+    await store.start();
+    const output = (cursor: number, geometrySequence = 0) =>
+      store.apply({
+        type: "terminal.output",
+        epoch: initial.epoch,
+        paneId: "pane-1",
+        cursor,
+        data: Buffer.alloc(1_200_000, 120).toString("base64"),
+        geometrySequence,
+      });
+    await output(1_200_000);
+    await output(2_400_000);
+    client.snapshot = async () => {
+      entered.resolve();
+      return pending.promise;
+    };
+    const resync = store.getState().resync();
+    await entered.promise;
+    const marker = { cursor: 2_400_000, sequence: 1, cols: 100, rows: 30 };
+    await store.apply({
+      type: "terminal.geometry",
+      epoch: initial.epoch,
+      geometry: { sequence: 1, tabs: [], panes: [{ paneId: "pane-1", size: marker }] },
+      resizes: [{ paneId: "pane-1", marker }],
+    });
+    await output(3_600_000, 1);
+    pending.resolve({
+      ...initial,
+      terminalHistories: [
+        {
+          paneId: "pane-1",
+          cursor: 2_400_000,
+          ...historyMetadata,
+          startCursor: 1_500_000,
+          prefixBytes: 2,
+          initialGridSequence: 0,
+          initialSize: { cols: 80, rows: 24 },
+          truncated: true,
+          data: Buffer.from("\x1bc" + "x".repeat(900_000)).toString("base64"),
+        },
+      ],
+    });
+    await resync;
+    const current = store.getState().terminals.get("pane-1")!;
+    expect(current.chunks.at(-1)?.cursor).toBe(3_600_000);
+    const replay = terminalReplaySteps(current, { cursor: 2_400_000, gridSequence: 0 });
+    expect(replay.needsSnapshot).toBe(false);
+    expect(replay.steps.map(({ type }) => type)).toEqual(["resize", "bytes"]);
+    expect(replay.steps.at(-1)).toMatchObject({ type: "bytes", cursor: 3_600_000, origin: "live" });
+  } finally {
+    pending.resolve(initial);
+    store.stop();
+  }
+});
+
+test("a delayed output resync cannot detach a session created and attached after its snapshot", async () => {
+  const initial = snapshotFixture();
+  const fresh = structuredClone(initial);
+  fresh.revision += 1;
+  fresh.sessions.push({ id: "session-new", name: "New", position: 2 });
+  const pending = deferred<Snapshot>();
+  const client = fakeClient(initial);
+  client.stream = async () => streamFixture();
+  const store = createWorkCraftStore(client);
+  try {
+    await store.start();
+    await store.getState().attach("session-work");
+    client.snapshot = async () => pending.promise;
+    const resync = store.getState().resync();
+    await store.apply({ type: "snapshot", snapshot: fresh });
+    await store.getState().attach("session-new");
+    const attachment = store.getState().attachment;
+    expect(attachment?.sessionId).toBe("session-new");
+    pending.resolve(initial);
+    await resync;
+    expect(store.snapshot()).toEqual(fresh);
+    expect(store.getState().attachment).toBe(attachment);
+    expect(store.getState().status).toBe("connected");
+  } finally {
+    pending.resolve(initial);
+    store.stop();
+  }
+});
+
+test("failed output resync falls back to reconnecting instead of leaving terminal replay stuck", async () => {
+  const initial = snapshotFixture();
+  const fresh = { ...initial, revision: initial.revision + 1 };
+  const client = fakeClient(initial);
+  let reads = 0;
+  client.snapshot = async () => {
+    if (++reads === 2) {
+      throw new Error("Snapshot unavailable");
+    }
+    return reads === 1 ? initial : fresh;
+  };
+  client.stream = async () => streamFixture();
+  const store = createWorkCraftStore(client);
+  try {
+    await store.start();
+    await store.getState().attach("session-work");
+    const stream = store.getState().stream;
+    await store.getState().resync();
+    expect(store.snapshot()).toBe(fresh);
+    expect(store.getState().status).toBe("connected");
+    expect(store.getState().stream).not.toBe(stream);
+    expect(store.getState().attachment?.sessionId).toBe("session-work");
+  } finally {
+    store.stop();
+  }
+});
 
 for (const change of [
   "exited",
@@ -531,7 +685,7 @@ test("current-epoch terminal output remains available after a renderer remount",
   ).toEqual([[6, "new"]]);
 });
 
-test("current-session terminal output is bounded to one MiB per pane", async () => {
+test("current-session terminal output is bounded to two MiB per pane", async () => {
   const store = createWorkCraftStore(fakeClient(snapshotFixture()));
   await store.apply({
     type: "snapshot",
@@ -541,7 +695,7 @@ test("current-session terminal output is bounded to one MiB per pane", async () 
       ],
     }),
   });
-  const bytes = new Uint8Array(1_048_577).fill(2);
+  const bytes = new Uint8Array(2_097_153).fill(2);
   bytes[0] = 1;
 
   await store.apply({
@@ -549,12 +703,12 @@ test("current-session terminal output is bounded to one MiB per pane", async () 
     epoch: "epoch-a",
     geometrySequence: 0,
     paneId: "pane-1",
-    cursor: 1_048_577,
+    cursor: 2_097_153,
     data: Buffer.from(bytes).toString("base64"),
   });
 
   const chunks = store.getState().terminals.get("pane-1")?.chunks ?? [];
-  expect(chunks.reduce((total, chunk) => total + chunk.data.byteLength, 0)).toBe(1_048_576);
+  expect(chunks.reduce((total, chunk) => total + chunk.data.byteLength, 0)).toBe(2_097_152);
   expect(chunks[0]?.data[0]).toBe(2);
 });
 

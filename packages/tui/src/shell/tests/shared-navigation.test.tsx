@@ -1,9 +1,11 @@
 import { expect, test } from "bun:test";
 
 import { type InputRenderable } from "@opentui/core";
+import type { StreamConnection } from "@work-craft/server/client";
 import { act } from "react";
 
 import {
+  deferred,
   liveInputFixture,
   selectedPaneSnapshot,
   splitSurfaceSnapshot,
@@ -184,6 +186,88 @@ test("registration completion cannot Open after live navigation advances before 
     );
     expect(a.commands.map(({ type }) => type)).toEqual(["directory.register"]);
   } finally {
+    act(() => a.renderer.destroy());
+    a.store.stop();
+  }
+});
+
+test("fast terminal redraws preserve native focus when old parsed chunks exceed retention", async () => {
+  const a = await liveInputFixture();
+  try {
+    const stream = a.store.getState().stream;
+    const terminal = a.renderer.currentFocusedRenderable;
+    for (const text of ["x".repeat(1_200_000), "y".repeat(1_200_000)]) {
+      await act(async () => a.output(text));
+      await a.flush();
+      expect(a.store.getState().stream).toBe(stream);
+      expect(a.renderer.currentFocusedRenderable).toBe(terminal);
+      expect(a.renderer.root.findDescendantById("dialog")).toBeUndefined();
+    }
+  } finally {
+    act(() => a.renderer.destroy());
+    a.store.stop();
+  }
+});
+
+test("a genuinely unread output gap repairs history without detaching or stealing terminal focus", async () => {
+  const a = await liveInputFixture();
+  try {
+    const stream = a.store.getState().stream;
+    const attachment = a.store.getState().attachment;
+    const recovered = structuredClone(a.store.snapshot()!);
+    recovered.terminalHistories[0] = {
+      ...recovered.terminalHistories[0]!,
+      cursor: 2_400_000,
+      startCursor: 1_500_000,
+      prefixBytes: 2,
+      data: Buffer.from("\x1bc" + "y".repeat(900_000)).toString("base64"),
+      truncated: true,
+      initialSize: recovered.geometry.panes.find(({ paneId }) => paneId === "pane-1")!.size,
+      initialGridSequence: 0,
+      resizes: [],
+    };
+    a.client.snapshot = async () => recovered;
+    await act(async () => {
+      await a.output("x".repeat(1_200_000));
+      await a.output("y".repeat(1_200_000));
+    });
+    await a.flush();
+    expect(a.store.getState().stream).toBe(stream);
+    expect(a.store.getState().attachment).toBe(attachment);
+    a.renderCurrent();
+    await a.flush();
+    expect(a.renderer.root.findDescendantById("dialog")).toBeUndefined();
+    expect(a.renderer.currentFocusedRenderable?.id).toBe("terminal:pane-1");
+  } finally {
+    act(() => a.renderer.destroy());
+    a.store.stop();
+  }
+});
+
+test("reattaching the stream preserves active terminal focus without a transient session chooser", async () => {
+  const a = await liveInputFixture();
+  const pending = deferred<StreamConnection>();
+  const entered = deferred<void>();
+  const replacement = await a.client.stream({ onMessage() {} });
+  let reconnect: Promise<void> | undefined;
+  try {
+    a.client.stream = async () => {
+      entered.resolve();
+      return pending.promise;
+    };
+    reconnect = a.store.reload();
+    await entered.promise;
+    a.renderCurrent();
+    await a.flush();
+    expect(a.renderer.root.findDescendantById("dialog")).toBeUndefined();
+    pending.resolve(replacement);
+    await reconnect;
+    a.renderCurrent();
+    await a.flush();
+    expect(a.renderer.currentFocusedRenderable?.id).toBe("terminal:pane-1");
+  } finally {
+    pending.resolve(replacement);
+    await reconnect;
     act(() => a.renderer.destroy());
     a.store.stop();
   }

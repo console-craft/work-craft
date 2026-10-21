@@ -22,6 +22,8 @@ import { readSnapshot, readSnapshotState } from "./snapshot.ts";
 
 export type Health = { epoch: string; revision: number; pid: number };
 
+const MAX_INLINE_SNAPSHOT_BYTES = 512 * 1024;
+
 export type WorkCraftApp = {
   health(): Health;
   snapshot(): Snapshot;
@@ -62,10 +64,23 @@ export function createApp(options: {
   }
 
   function broadcast(message: ServerMessage): void {
-    const encoded = JSON.stringify(message);
+    const encoded = encodeMessage(message);
     for (const socket of subscribers) {
       socket.send(encoded);
     }
+  }
+
+  function encodeMessage(message: ServerMessage): string {
+    const encoded = JSON.stringify(message);
+    // Leave queue room for output and acknowledgments instead of disconnecting on one snapshot.
+    if (message.type === "snapshot" && Buffer.byteLength(encoded) > MAX_INLINE_SNAPSHOT_BYTES) {
+      return JSON.stringify({
+        type: "snapshot.available",
+        epoch: message.snapshot.epoch,
+        revision: message.snapshot.revision,
+      });
+    }
+    return encoded;
   }
 
   function publishChange(changed: boolean): void {
@@ -459,7 +474,7 @@ export function createApp(options: {
     subscribe(socket) {
       subscribers.add(socket);
       connections.open(socket);
-      socket.send(JSON.stringify({ type: "snapshot", snapshot: snapshot() }));
+      socket.send(encodeMessage({ type: "snapshot", snapshot: snapshot() }));
     },
     unsubscribe(socket) {
       subscribers.delete(socket);

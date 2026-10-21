@@ -6,7 +6,7 @@ import {
   type TerminalSize,
 } from "@work-craft/server/client";
 
-import { terminalReplaySteps } from "@/client/terminal-replay";
+import { MAX_TERMINAL_LIVE_BYTES, terminalReplaySteps } from "@/client/terminal-replay";
 
 export type TerminalBuffer = {
   epoch: string;
@@ -26,8 +26,6 @@ export type TerminalBuffer = {
   }[];
 };
 
-const MAX_TERMINAL_BYTES = 1024 * 1024;
-
 export function snapshotTerminals(
   snapshot: Snapshot,
   current: ReadonlyMap<string, TerminalBuffer>,
@@ -37,6 +35,8 @@ export function snapshotTerminals(
   for (const history of snapshot.terminalHistories) {
     const previous = current.get(history.paneId);
     let next = previous;
+    const live = previous?.epoch === snapshot.epoch ? previous : undefined;
+    const lastSequence = history.resizes.at(-1)?.sequence ?? history.initialGridSequence ?? 0;
     const replacement: TerminalBuffer = {
       epoch: snapshot.epoch,
       history: decodeBytes(history.data),
@@ -45,8 +45,12 @@ export function snapshotTerminals(
       historyPrefixBytes: history.prefixBytes,
       initialSize: history.initialSize,
       initialGridSequence: history.initialGridSequence,
-      resizes: history.resizes,
-      chunks: [],
+      // HTTP history may be overtaken by live bytes or a resize at its final cursor.
+      resizes: [
+        ...history.resizes,
+        ...(live?.resizes.filter(({ sequence }) => sequence > lastSequence) ?? []),
+      ],
+      chunks: live?.chunks.filter(({ cursor }) => cursor > history.cursor) ?? [],
     };
     if (previous?.epoch !== snapshot.epoch || terminalReplaySteps(previous, null).needsSnapshot) {
       next = replacement;
@@ -107,7 +111,7 @@ export function appendTerminalChunk(
     },
   ];
   let excess =
-    chunks.reduce((total, chunk) => total + chunk.data.byteLength, 0) - MAX_TERMINAL_BYTES;
+    chunks.reduce((total, chunk) => total + chunk.data.byteLength, 0) - MAX_TERMINAL_LIVE_BYTES;
   while (excess > 0) {
     const first = chunks[0]!;
     if (first.data.byteLength <= excess) {

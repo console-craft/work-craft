@@ -297,7 +297,7 @@ export function reconcileShellState(
     : (model.activeTab?.id ?? tabs[0]?.id ?? null);
   const selectedPaneId = navigation?.paneId ?? null;
   const focus =
-    state.dialog === null && state.focus.region === "workbench"
+    attachment !== null && state.dialog === null && state.focus.region === "workbench"
       ? selectedPaneId &&
         model.paneIds.includes(selectedPaneId) &&
         snapshot.panes.some(
@@ -317,7 +317,8 @@ export function reconcileShellState(
   const deletedDraftSession =
     draftSessionId !== undefined && !snapshot.sessions.some(({ id }) => id === draftSessionId);
   const dialog =
-    !attachment?.sessionId && (state.dialog?.kind !== "create" || deletedDraftSession)
+    (attachment?.sessionId === null || deletedDraftSession) &&
+    (state.dialog?.kind !== "create" || deletedDraftSession)
       ? state.dialog?.kind === "sessions"
         ? state.dialog
         : { kind: "sessions" as const, returnFocus: state.focus, awaitingAttachment: true as const }

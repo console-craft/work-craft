@@ -2,6 +2,9 @@ import type { GridMarker, InputStamp } from "@work-craft/server/client";
 
 import type { TerminalBuffer } from "@/client/terminal-buffer";
 
+// shortcut: bounded burst headroom, replace with consumption-aware delivery in the output/lifecycle follow-up.
+export const MAX_TERMINAL_LIVE_BYTES = 2 * 1024 * 1024;
+
 export type TerminalReplayStep =
   | { type: "resize"; marker: GridMarker }
   | {
@@ -27,13 +30,6 @@ export function terminalReplaySteps(
   after: ReplayProgress | null,
 ): ReplayResult {
   const missing: ReplayResult = { steps: [], needsSnapshot: true };
-  if (
-    buffer.resizes.length > 1024 ||
-    buffer.history.byteLength + buffer.chunks.reduce((n, chunk) => n + chunk.data.byteLength, 0) >
-      2 * 1024 * 1024
-  ) {
-    return missing;
-  }
   const raw = buffer.history.subarray(buffer.historyPrefixBytes);
   if (
     buffer.historyPrefixBytes < 0 ||
@@ -42,6 +38,17 @@ export function terminalReplaySteps(
   ) {
     return missing;
   }
+  if (
+    buffer.resizes.length > 1024 ||
+    raw.byteLength + buffer.chunks.reduce((n, chunk) => n + chunk.data.byteLength, 0) >
+      1024 * 1024 + MAX_TERMINAL_LIVE_BYTES
+  ) {
+    return missing;
+  }
+  const reset =
+    after === null ||
+    after.cursor < buffer.historyStartCursor ||
+    (after.gridSequence ?? 0) < (buffer.initialGridSequence ?? 0);
   const segments: Segment[] = [
     { start: buffer.historyStartCursor, end: buffer.historyCursor, data: raw, origin: "history" },
   ];
@@ -51,13 +58,15 @@ export function terminalReplaySteps(
       continue;
     }
     const start = chunk.cursor - chunk.data.byteLength;
-    if (start > tail) {
+    // Retention may retire bytes this emulator already parsed; only unread gaps need resync.
+    if (start > tail && (reset || start > after.cursor)) {
       return missing;
     }
+    const retainedStart = Math.max(tail, start);
     segments.push({
-      start: tail,
+      start: retainedStart,
       end: chunk.cursor,
-      data: chunk.data.subarray(tail - start),
+      data: chunk.data.subarray(retainedStart - start),
       origin: chunk.origin,
       ...(chunk.responseStamp === undefined ? {} : { responseStamp: chunk.responseStamp }),
     });
@@ -76,10 +85,6 @@ export function terminalReplaySteps(
     previousSequence = marker.sequence;
     previousCursor = marker.cursor;
   }
-  const reset =
-    after === null ||
-    after.cursor < buffer.historyStartCursor ||
-    (after.gridSequence ?? 0) < (buffer.initialGridSequence ?? 0);
   if (reset && after !== null && buffer.historyPrefixBytes === 0) {
     return missing;
   }

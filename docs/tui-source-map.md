@@ -132,6 +132,7 @@ remains; intentional TUI control-byte sanitizers have expression-local explanati
 - [Architecture](superpowers/specs/2026-09-16-work-craft-architecture-design.md)
 - [Original source organization](superpowers/specs/2026-09-21-tui-source-organization-design.md)
 - [Current maintainability/test-placement amendment](superpowers/specs/2026-10-20-tui-maintainability-design.md)
+- [Output/lifecycle handover and performance evidence](superpowers/handovers/2026-10-21-output-lifecycle.md)
 - [Interaction/theming and demo grouping follow-up](superpowers/specs/2026-10-20-tui-library-organization-design.md)
 - [Component adoption and intentional native boundaries](superpowers/specs/2026-10-13-tui-component-adoption-design.md#adopted-components-and-intentional-native-boundaries)
 

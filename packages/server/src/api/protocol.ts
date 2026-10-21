@@ -230,9 +230,13 @@ export type Command =
 
 export type ClientMessage = InteractiveMessage;
 
+// shortcut: bounded burst headroom, replace disconnect-based recovery in the output/lifecycle follow-up.
+export const STREAM_BACKPRESSURE_LIMIT = 8 * 1024 * 1024;
+
 export type ServerMessage =
   | InteractiveServerMessage
   | { type: "snapshot"; snapshot: Snapshot }
+  | { type: "snapshot.available"; epoch: string; revision: number }
   | {
       type: "terminal.output";
       epoch: string;

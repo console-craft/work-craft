@@ -79,6 +79,7 @@ export function useShellFocus({
       focus &&
       focus.region !== "workbench" &&
       focus.region !== "tabs" &&
+      read().model.navigation !== null &&
       read().state.focus.region === "workbench" &&
       read().state.dialog === null &&
       !entry.hasPending() &&
@@ -186,6 +187,7 @@ export function useShellFocus({
   useLayoutEffect(() => {
     if (
       dialogKey === null &&
+      model.navigation !== null &&
       !resizeBlocked &&
       !(
         navigatorMode === "drawer" &&
@@ -194,10 +196,11 @@ export function useShellFocus({
     ) {
       entry.projectFocus(resolvedFocus, () => focusShellTarget(renderer, resolvedFocus));
     }
-  }, [renderer, resolvedFocusKey, dialogKey, resizeBlocked]);
+  }, [renderer, resolvedFocusKey, dialogKey, resizeBlocked, model.navigation]);
   useLayoutEffect(() => {
     if (
       state.dialog === null &&
+      model.navigation !== null &&
       nativeTarget !== null &&
       (nativeTarget.region !== "workbench" || paneIds.includes(nativeTarget.paneId)) &&
       nativeFocus === renderer.currentFocusedRenderable &&
@@ -205,7 +208,7 @@ export function useShellFocus({
     ) {
       dispatch({ type: "focus.set", focus: nativeTarget, tabId: activeTab?.id });
     }
-  }, [nativeFocus, dialogKey, undersized, state.focus]);
+  }, [nativeFocus, dialogKey, undersized, state.focus, model.navigation]);
 
   function setFocus(target: FocusTarget): void {
     if (target.region === "navigator" && target.control === undefined) {

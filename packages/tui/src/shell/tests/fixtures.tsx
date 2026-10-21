@@ -158,6 +158,7 @@ export function workCraftStateFixture(overrides: Partial<WorkCraftState> = {}): 
     },
     command: async () => ({ ok: true, revision: 1, result: { id: "result-1" } }),
     reload: async () => {},
+    resync: async () => {},
     stream: null,
     terminals: new Map(),
     ...overrides,
@@ -167,7 +168,7 @@ export function workCraftStateFixture(overrides: Partial<WorkCraftState> = {}): 
     fixture.attachment =
       fixture.snapshot?.sessions.length === 1
         ? attachmentFixture(fixture.snapshot.sessions[0]!.id)
-        : null;
+        : attachmentFixture(null);
   }
   fixture.geometry = fixture.snapshot?.geometry ?? { sequence: 0, tabs: [], panes: [] };
   if (overrides.terminals === undefined && fixture.snapshot) {
@@ -304,6 +305,7 @@ export async function liveInputFixture(
   commands.length = 0;
   return {
     ...setup,
+    client,
     store,
     sent,
     resized,

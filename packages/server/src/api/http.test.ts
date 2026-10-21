@@ -1,4 +1,5 @@
 import { expect, spyOn, test } from "bun:test";
+import { once } from "node:events";
 import * as fs from "node:fs";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -78,6 +79,93 @@ test("a reconnect receives one coherent current snapshot", async () => {
       expect(reconnected.snapshot.sessions[0]?.name).toBe("Main");
     }
   } finally {
+    await fixture.close();
+  }
+});
+
+test("large retained history still permits attachment and snapshot updates", async () => {
+  const fixture = await startTestServer({ withPane: true });
+  const bytes = new Uint8Array(900_000).fill(120);
+  fixture.history.append("pane-1", bytes);
+  const snapshots: Snapshot[] = [];
+  const stream = await fixture.client.stream({
+    onMessage(message) {
+      if (message.type === "snapshot") {
+        snapshots.push(message.snapshot);
+      }
+    },
+  });
+  try {
+    const attachment = await stream.attach("session-1");
+    expect(attachment.sessionId).toBe("session-1");
+    expect(decodeBytes(snapshots[0]!.terminalHistories[0]!.data).byteLength).toBe(bytes.byteLength);
+    await fixture.client.command({
+      type: "session.update",
+      sessionId: "session-1",
+      name: "Still connected",
+    });
+    await stream.attach("session-1");
+    expect(snapshots.at(-1)!.sessions[0]!.name).toBe("Still connected");
+    expect(decodeBytes(snapshots.at(-1)!.terminalHistories[0]!.data).byteLength).toBe(
+      bytes.byteLength,
+    );
+  } finally {
+    stream.close();
+    await fixture.close();
+  }
+});
+
+test("snapshots above 512 KiB use HTTP notification independently of stream burst headroom", async () => {
+  const fixture = await startTestServer({ withPane: true });
+  fixture.history.append("pane-1", new Uint8Array(400_000).fill(120));
+  const socket = new WebSocket(`ws+unix:${fixture.socketPath}:/stream`);
+  try {
+    const notification = new Promise<ServerMessage>((resolve) => {
+      socket.on("message", (data) => {
+        const message = JSON.parse(data.toString()) as ServerMessage;
+        if (message.type === "snapshot" || message.type === "snapshot.available") {
+          resolve(message);
+        }
+      });
+    });
+    await once(socket, "open");
+    expect(await notification).toMatchObject({ type: "snapshot.available" });
+    expect((await fixture.client.snapshot()).terminalHistories[0]!.cursor).toBe(400_000);
+  } finally {
+    socket.terminate();
+    await fixture.close();
+  }
+});
+
+test("a closing stream drops ephemeral reports and input while requests still reject", async () => {
+  const fixture = await startTestServer({ withPane: true });
+  const stream = await fixture.client.stream({ onMessage() {} });
+  try {
+    const attachment = await stream.attach("session-1");
+    const snapshot = await fixture.client.snapshot();
+    const stamp = {
+      epoch: snapshot.epoch,
+      attachmentGeneration: attachment.generation,
+      navigationGeneration: snapshot.navigation[0]!.generation,
+      geometrySequence: snapshot.geometry.tabs[0]!.generation,
+    };
+    stream.close();
+    expect(() => stream.reportViewport(null, stamp)).not.toThrow();
+    expect(() => stream.activity(stamp, 1)).not.toThrow();
+    expect(() =>
+      stream.sendInput("pane-1", new TextEncoder().encode("dropped"), {
+        ...stamp,
+        source: "input",
+        kind: "key",
+      }),
+    ).not.toThrow();
+    await expect(stream.attach("session-1")).rejects.toThrow("Stream is disconnected");
+    await expect(
+      stream.command({ type: "session.delete", sessionId: "session-1" }, attachment.generation),
+    ).rejects.toThrow("Stream is disconnected");
+    expect((await fixture.client.snapshot()).sessions[0]!.id).toBe("session-1");
+  } finally {
+    stream.close();
     await fixture.close();
   }
 });
