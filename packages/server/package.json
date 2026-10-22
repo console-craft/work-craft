@@ -10,6 +10,7 @@
     "start": "bun src/main.ts"
   },
   "dependencies": {
+    "@opentui/core": "file:../../vendor/opentui/opentui-core-0.6.6-workcraft.1.tgz",
     "ws": "^8.18.0"
   },
   "devDependencies": {

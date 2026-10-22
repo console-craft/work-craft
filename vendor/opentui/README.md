@@ -2,7 +2,7 @@
 
 Private downstream version: `0.6.6-workcraft.1`. Nothing is published to a registry.
 The source baseline is upstream OpenTUI `212eb27da4adf5b907031ad153fc6a5b9f713fbf`
-(0.6.6); downstream source commit is `d1e5dfab235d47362a3c52731ffccdac556ca71d`
+(0.6.6); downstream source commit is `962066d80d775a24f9d733a20a915d129a5c52ef`
 on local branch `work-craft/native-terminal-contract`.
 
 `source.patch` contains that complete baseline-to-source change, including tests,
@@ -10,6 +10,10 @@ the native lockfile and package/build changes. `manifest.json` records source an
 archive SHA-256 checksums and tool versions. Ten repository-local tarballs keep
 core, React and all eight existing native variants together. Work Craft remains
 macOS/Linux-only; producing a binary is not runtime/platform acceptance.
+
+This source includes the reviewed lifetime/Buffer-paste/hidden-wide-cell fixes.
+The React packed-check script's musl selection limitation remains deferred; no
+Linux runtime acceptance is claimed by the local macOS checks.
 
 ## Reproduce From Source
 

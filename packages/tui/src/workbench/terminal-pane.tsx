@@ -102,6 +102,7 @@ export function TerminalPane({
     return (
       connected &&
       terminalPaneKey(pane.id, output.read()) === identity &&
+      !output.read()?.recovering &&
       running &&
       inputEnabled &&
       hasTerminalViewport(viewport) &&
@@ -139,6 +140,22 @@ export function TerminalPane({
           preservePresentation={preservePresentation}
           inputEnabled={inputEnabled}
           canInput={acceptsInput}
+          captureInput={() => {
+            if (!stamp || !stream || !acceptsInput()) {
+              return null;
+            }
+            const event = { ...inputEvent() };
+            return {
+              valid: acceptsInput,
+              send: (bytes) =>
+                stream.sendInput(pane.id, bytes, {
+                  ...stamp,
+                  source: "input",
+                  ...event,
+                  runtimeGeneration,
+                }),
+            };
+          }}
           canConsume={() => terminalPaneKey(pane.id, output.read()) === identity}
           canRespond={(stamp) => connected && running && canRespond(pane.id, stamp)}
           onReady={reportReady}

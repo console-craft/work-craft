@@ -1,6 +1,11 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 
-import { type InputRenderable } from "@opentui/core";
+import {
+  type EmbeddedTerminalRenderable,
+  type InputRenderable,
+  KeyEvent,
+  parseKeypress,
+} from "@opentui/core";
 import type { StreamConnection } from "@work-craft/server/client";
 import { act } from "react";
 
@@ -40,6 +45,49 @@ async function mirroredShells() {
     },
   };
 }
+
+test("an admitted native key cannot borrow away-and-back navigation authority", async () => {
+  const setup = await liveInputFixture();
+  const native = setup.renderer.root.findDescendantById(
+    "terminal:pane-1",
+  ) as EmbeddedTerminalRenderable;
+  const encode = spyOn(native, "encodeKey");
+  try {
+    const output = setup.store.getState().outputs.pane("pane-1");
+    const previous = output.read()!;
+    const cursor = previous.chunks.at(-1)?.cursor ?? previous.historyCursor;
+    await setup.store.apply({
+      type: "terminal.output",
+      paneId: "pane-1",
+      epoch: previous.epoch,
+      runtimeGeneration: previous.runtimeGeneration,
+      cursor: cursor + 5,
+      data: Buffer.from("\x1b[?1h").toString("base64"),
+      geometrySequence: setup.store.getState().geometry.sequence,
+    });
+    native.handleKeyPress(new KeyEvent(parseKeypress("\x1b[A")!));
+    const current = setup.store.snapshot()!;
+    await setup.store.apply({
+      type: "control.snapshot",
+      snapshot: {
+        ...current,
+        revision: current.revision + 1,
+        navigation: current.navigation.map((navigation) => ({
+          ...navigation,
+          generation: navigation.generation + 2,
+        })),
+      },
+    });
+    setup.renderCurrent();
+    await setup.flush();
+    expect(encode).not.toHaveBeenCalled();
+    expect(setup.sent).toEqual([]);
+  } finally {
+    encode.mockRestore();
+    setup.store.stop();
+    act(() => setup.renderer.destroy());
+  }
+});
 
 test("remote selection follows an unobscured terminal without publishing projection as activity or navigation", async () => {
   const fixture = await mirroredShells();

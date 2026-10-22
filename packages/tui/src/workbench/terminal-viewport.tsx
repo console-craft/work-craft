@@ -14,6 +14,11 @@ import type { PaneOutput } from "@/client/terminal-output";
 import type { ReplayProgress } from "@/client/terminal-replay";
 import { Box } from "@/ui/primitives/box";
 import { terminalDrainFor } from "@/workbench/terminal-drain";
+import {
+  createTerminalInput,
+  type TerminalInput,
+  type TerminalInputAdmission,
+} from "@/workbench/terminal-input";
 
 export type TerminalViewportProps = {
   paneId: string;
@@ -24,6 +29,7 @@ export type TerminalViewportProps = {
   /** Preserve native focus as a picture only; byte forwarding still checks live input gates. */
   preservePresentation?: boolean;
   canInput(): boolean;
+  captureInput?(): TerminalInputAdmission | null;
   canConsume?(): boolean;
   canRespond(stamp: InputStamp): boolean;
   onData(bytes: Uint8Array, source: "input" | "response", responseStamp?: InputStamp): void;
@@ -61,6 +67,8 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [ready, setReady] = useState(false);
   const inputReady = useRef(false);
+  const input = useRef<TerminalInput | null>(null);
+  const recoveringFocus = useRef(false);
   const progress = useRef<ReplayProgress | null>(null);
   const required = useRef<(ReplayProgress & { size: TerminalSize }) | null>(null);
   const suppressResponse = useRef(false);
@@ -75,6 +83,9 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
   }
 
   function readiness(value: boolean): void {
+    if (value) {
+      recoveringFocus.current = false;
+    }
     if (inputReady.current === value) {
       return;
     }
@@ -83,6 +94,7 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
   }
 
   function resync(): void {
+    input.current?.clear();
     readiness(false);
     required.current = null;
     const current = latest.current;
@@ -95,6 +107,13 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
 
   function drain(): void {
     scheduler.request(latest.current.paneId, drainStep);
+  }
+
+  function pauseRecovery(): void {
+    input.current?.clear();
+    recoveringFocus.current ||= terminal.current?.focused ?? false;
+    required.current = null;
+    readiness(false);
   }
 
   function drainStep(): boolean {
@@ -111,8 +130,15 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
       readiness(false);
       return false;
     }
+    if (buffer.recovering) {
+      pauseRecovery();
+      return false;
+    }
     if (resyncBuffer.current === buffer) {
       return false;
+    }
+    if (input.current?.step(progress.current)) {
+      return true;
     }
     if (!required.current || !sameSize(required.current.size, current.size)) {
       required.current = {
@@ -123,7 +149,14 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
       readiness(false);
     }
     const planned = outputProbeEnabled ? performance.now() : 0;
-    const step = current.output.next(progress.current, 8192);
+    const boundary = input.current?.frontier();
+    const quantum = boundary
+      ? Math.max(
+          1,
+          Math.min(8192, boundary.cursor - (progress.current?.cursor ?? buffer.historyStartCursor)),
+        )
+      : 8192;
+    const step = current.output.next(progress.current, quantum);
     if (outputProbeEnabled) {
       observeOutput({
         stage: "native.plan",
@@ -210,8 +243,61 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
     ) {
       readiness(true);
     }
-    return next !== null;
+    return next !== null || input.current?.frontier() !== undefined;
   }
+
+  useLayoutEffect(() => {
+    const target = terminal.current!;
+    const bridge = createTerminalInput({
+      request: drain,
+      overflow: resync,
+      capture() {
+        const current = latest.current;
+        const buffer = current.output.read();
+        if (
+          !buffer ||
+          buffer.recovering ||
+          resyncBuffer.current === buffer ||
+          (!inputReady.current && !terminal.current?.focused) ||
+          !current.inputEnabled ||
+          !current.canInput()
+        ) {
+          return null;
+        }
+        const captured = current.captureInput?.();
+        if (current.captureInput && !captured) {
+          return null;
+        }
+        const identity = [buffer.epoch, buffer.runtimeGeneration, buffer.resetGeneration].join(":");
+        return {
+          frontier: {
+            cursor: buffer.chunks.at(-1)?.cursor ?? buffer.historyCursor,
+            gridSequence: buffer.resizes.at(-1)?.sequence ?? buffer.initialGridSequence,
+          },
+          valid() {
+            const next = latest.current.output.read();
+            return (
+              !!next &&
+              !next.recovering &&
+              latest.current.inputEnabled &&
+              latest.current.canInput() &&
+              [next.epoch, next.runtimeGeneration, next.resetGeneration].join(":") === identity &&
+              current.canInput() &&
+              (captured?.valid() ?? true)
+            );
+          },
+          send: captured?.send ?? ((bytes) => current.onData(bytes, "input")),
+        };
+      },
+    });
+    input.current = bridge;
+    target.onInputAdmission = bridge.admit;
+    return () => {
+      bridge.close();
+      target.onInputAdmission = undefined;
+      input.current = null;
+    };
+  }, []);
 
   useLayoutEffect(() => {
     if (outputProbeEnabled) {
@@ -235,7 +321,12 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
   }, []);
   useLayoutEffect(drain);
   useLayoutEffect(() => {
-    const unsubscribe = props.output.subscribe(drain);
+    const unsubscribe = props.output.subscribe(() => {
+      if (latest.current.output.read()?.recovering) {
+        pauseRecovery();
+      }
+      drain();
+    });
     return () => {
       unsubscribe();
       scheduler.remove(props.paneId);
@@ -255,12 +346,17 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
     if (!target) {
       return;
     }
+    const retaining =
+      target.focused &&
+      (props.preservePresentation === true ||
+        recoveringFocus.current ||
+        props.output.read()?.recovering === true);
     const eligible =
-      ready &&
+      (ready || retaining || (target.focused && resyncBuffer.current !== props.output.read())) &&
       props.inputEnabled &&
       viewport.width >= 20 &&
       viewport.height >= 5 &&
-      (props.canInput() || props.preservePresentation === true);
+      (props.canInput() || retaining);
     target.focusable = eligible;
     if (!props.focused || !eligible) {
       target.blur();
@@ -360,6 +456,7 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
           drain();
         }}
         onScreenChange={screenChanged}
+        onMouse={onMouse}
         onData={(bytes, source) => {
           const current = latest.current;
           if (source === "response") {
@@ -381,11 +478,8 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
                 stamp,
               );
             }
-          } else if (inputReady.current && current.inputEnabled && current.canInput()) {
-            current.onData(bytes, source);
           }
         }}
-        onMouse={onMouse}
       />
     </Box>
   );

@@ -1,11 +1,15 @@
 import { expect, test } from "bun:test";
 
-import { EmbeddedTerminalRenderable } from "@opentui/core";
+import { EmbeddedTerminalRenderable, PasteEvent } from "@opentui/core";
 import { extend } from "@opentui/react";
 import type { LayoutNode, Snapshot } from "@work-craft/server/client";
 import { act, type ReactNode, useState } from "react";
 
-import { snapshotTerminals, type TerminalBuffer } from "@/client/terminal-buffer";
+import {
+  appendTerminalChunk,
+  snapshotTerminals,
+  type TerminalBuffer,
+} from "@/client/terminal-buffer";
 import { createTerminalOutputs } from "@/client/terminal-output";
 import {
   snapshotFixture,
@@ -223,7 +227,7 @@ test("baseline advance preserves native state and a genuine reset replaces only 
     "terminal:pane-1",
   ) as EmbeddedTerminalRenderable;
   const outer = native.parent!.parent;
-  const captured = native.onData!;
+  const captured = native.handlePaste.bind(native);
   try {
     outputs.set("pane-1", { ...initial, history: new Uint8Array([65, 66]), historyCursor: 2 });
     await setup.flush();
@@ -236,7 +240,7 @@ test("baseline advance preserves native state and a genuine reset replaces only 
         historyStartCursor: 10,
         historyCursor: 11,
       });
-      captured(new Uint8Array([97]), "input");
+      captured(new PasteEvent(new Uint8Array([97])));
       expect(sent).toEqual([]);
     });
     await setup.flush();
@@ -248,6 +252,59 @@ test("baseline advance preserves native state and a genuine reset replaces only 
     expect(replacement.screen().text).toContain("X");
     await setup.flush();
     expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBe(replacement);
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
+test("deferred native input keeps its original activity context and drops revoked admission", async () => {
+  const initial = terminalBufferFixture();
+  const outputs = createTerminalOutputs(new Map([["pane-1", initial]]));
+  const contexts: unknown[] = [];
+  let allowed = true;
+  let event = { kind: "paste" as "paste" | "key", activitySequence: 17 };
+  const setup = await testRender(
+    <TerminalPane
+      {...recoveryProps}
+      canRespond={() => false}
+      canReceiveInput={() => allowed}
+      inputEvent={() => event}
+      bounds={{ x: 0, y: 0, width: 80, height: 25 }}
+      output={outputs.pane("pane-1")}
+      focused
+      pane={surfaceSnapshot().panes[0]!}
+      size={{ cols: 80, rows: 24 }}
+      stream={streamFixture({ sendInput: (_paneId, _bytes, context) => contexts.push(context) })}
+      onFocus={() => {}}
+      onTerminalReady={() => {}}
+    />,
+    { width: 80, height: 28 },
+  );
+  await setup.flush();
+  const native = setup.renderer.root.findDescendantById(
+    "terminal:pane-1",
+  ) as EmbeddedTerminalRenderable;
+  try {
+    let current = appendTerminalChunk(initial, 8, new TextEncoder().encode("\x1b[?2004h"), 0);
+    outputs.set("pane-1", current);
+    native.handlePaste(new PasteEvent(new TextEncoder().encode("original")));
+    event = { kind: "key", activitySequence: 99 };
+    await setup.flush();
+    expect(contexts).toEqual([
+      {
+        ...recoveryProps.stamp,
+        runtimeGeneration: 0,
+        source: "input",
+        kind: "paste",
+        activitySequence: 17,
+      },
+    ]);
+    current = appendTerminalChunk(current, 9, new Uint8Array([120]), 0);
+    outputs.set("pane-1", current);
+    native.handlePaste(new PasteEvent(new Uint8Array([121])));
+    allowed = false;
+    await setup.flush();
+    expect(contexts).toHaveLength(1);
   } finally {
     act(() => setup.renderer.destroy());
   }
@@ -467,7 +524,7 @@ for (const direction of ["horizontal", "vertical"] as const) {
           expect(sourceTerminal.focusable).toBe(false);
           sent.length = 0;
           resized.length = 0;
-          sourceTerminal.onData!(Uint8Array.of(65), "input");
+          sourceTerminal.handlePaste(new PasteEvent(Uint8Array.of(65)));
           sourceTerminal.onData!(Uint8Array.of(66), "response");
           expect(sent).toEqual([]);
           expect(resized).toEqual([]);
@@ -499,7 +556,8 @@ for (const direction of ["horizontal", "vertical"] as const) {
       ]).toEqual(direction === "vertical" ? [0, 13, 80, 24] : [28, 1, 80, 24]);
       expect(sourceTerminal.focusable).toBe(true);
       sent.length = 0;
-      sourceTerminal.onData!(Uint8Array.of(67), "input");
+      sourceTerminal.handlePaste(new PasteEvent(Uint8Array.of(67)));
+      await setup.flush();
       expect(sent).toEqual(["pane-1"]);
     } finally {
       act(() => setup.renderer.destroy());
@@ -575,8 +633,9 @@ for (const [width, height, eligible] of [
       expect(terminal.focusable).toBe(eligible);
       sent.length = 0;
       resized.length = 0;
-      terminal.onData!(Uint8Array.of(65), "input");
+      terminal.handlePaste(new PasteEvent(Uint8Array.of(65)));
       terminal.onData!(Uint8Array.of(66), "response");
+      await setup.flush();
       expect(sent).toEqual(eligible ? ["pane-1"] : []);
       expect(resized).toEqual([]);
     } finally {
@@ -652,9 +711,8 @@ for (const status of ["exited", "failed", "interrupted"] as const) {
       live = false;
       resized.length = 0;
       // These callbacks can already be queued when the authoritative snapshot arrives.
-      for (const source of ["input", "response"] as const) {
-        captured(Uint8Array.of(65), source);
-      }
+      terminal.handlePaste(new PasteEvent(Uint8Array.of(65)));
+      captured(Uint8Array.of(65), "response");
       expect(sent).toEqual([]);
       act(() =>
         publish({ ...snapshot, panes: [{ ...snapshot.panes[0]!, processStatus: status }] }),
@@ -670,7 +728,7 @@ for (const status of ["exited", "failed", "interrupted"] as const) {
       expect(selected).toEqual(["pane-1"]);
       expect(terminal.focused).toBe(false);
       live = true;
-      terminal.onData!(Uint8Array.of(66), "input");
+      terminal.handlePaste(new PasteEvent(Uint8Array.of(66)));
       terminal.onData!(Uint8Array.of(67), "response");
       expect(sent).toEqual([]);
       act(() => setup.resize(90, 22));

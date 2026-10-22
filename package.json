@@ -24,7 +24,7 @@
     "build": "mkdir -p dist && bun build --compile src/main.ts --outfile dist/work-craft",
     "build:install": "bun run build && sh scripts/install.sh",
     "build:smoke": "bun scripts/smoke-build.ts",
-    "check": "bun run lint && bun run format:check && bun run typecheck && bun run test && bun run build && bun run build:smoke",
+    "check": "bun scripts/verify-opentui-artifacts.ts vendor/opentui && bun run lint && bun run format:check && bun run typecheck && bun run test && bun run build && bun run build:smoke",
     "cli": "bun src/main.ts",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
@@ -44,6 +44,18 @@
     "oxfmt": "^0.73.0",
     "oxlint": "^1.83.0",
     "typescript": "^7.0.2"
+  },
+  "overrides": {
+    "@opentui/core": "file:./vendor/opentui/opentui-core-0.6.6-workcraft.1.tgz",
+    "@opentui/core-darwin-arm64": "file:./vendor/opentui/opentui-core-darwin-arm64-0.6.6-workcraft.1.tgz",
+    "@opentui/core-darwin-x64": "file:./vendor/opentui/opentui-core-darwin-x64-0.6.6-workcraft.1.tgz",
+    "@opentui/core-linux-arm64": "file:./vendor/opentui/opentui-core-linux-arm64-0.6.6-workcraft.1.tgz",
+    "@opentui/core-linux-arm64-musl": "file:./vendor/opentui/opentui-core-linux-arm64-musl-0.6.6-workcraft.1.tgz",
+    "@opentui/core-linux-x64": "file:./vendor/opentui/opentui-core-linux-x64-0.6.6-workcraft.1.tgz",
+    "@opentui/core-linux-x64-musl": "file:./vendor/opentui/opentui-core-linux-x64-musl-0.6.6-workcraft.1.tgz",
+    "@opentui/core-win32-arm64": "file:./vendor/opentui/opentui-core-win32-arm64-0.6.6-workcraft.1.tgz",
+    "@opentui/core-win32-x64": "file:./vendor/opentui/opentui-core-win32-x64-0.6.6-workcraft.1.tgz",
+    "@opentui/react": "file:./vendor/opentui/opentui-react-0.6.6-workcraft.1.tgz"
   },
   "packageManager": "bun@1.4.3"
 }

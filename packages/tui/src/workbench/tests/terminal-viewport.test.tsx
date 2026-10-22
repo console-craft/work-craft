@@ -1,6 +1,14 @@
 import { expect, spyOn, test } from "bun:test";
 
-import { CliRenderEvents, EmbeddedTerminalRenderable } from "@opentui/core";
+import {
+  CliRenderEvents,
+  EmbeddedTerminalRenderable,
+  KeyEvent,
+  MouseEvent,
+  parseKeypress,
+  PasteEvent,
+  resolveRenderLib,
+} from "@opentui/core";
 import { extend } from "@opentui/react";
 import type { InputStamp } from "@work-craft/server/client";
 import { act, useState } from "react";
@@ -78,7 +86,7 @@ async function viewport(
             size={{ cols: lastGrid.cols, rows: lastGrid.rows }}
             inputEnabled
             focused
-            canInput={() => true}
+            canInput={() => outputs.pane("p").read()?.recovering !== true}
             canRespond={(stamp) => (typeof responds === "function" ? responds(stamp) : responds)}
             onData={(data, source, stamp) => {
               emitted.push({ source, text: new TextDecoder().decode(data) });
@@ -134,6 +142,40 @@ test("pane-local publication drains output without a parent control render", asy
   }
 });
 
+test("an authorized focused leaf queues physical input while its native grid is resizing", async () => {
+  const initial = buffer();
+  const setup = await viewport(initial, 60, 12);
+  const native = setup.terminal();
+  const lib = resolveRenderLib();
+  const original = lib.contextEmbeddedTerminalResize.bind(lib);
+  let injected = false;
+  const resize = spyOn(lib, "contextEmbeddedTerminalResize").mockImplementation((...args) => {
+    if (args[2] === 93 && args[3] === 25) {
+      injected = true;
+      setup.renderer.stdin.emit("data", Buffer.from("z"));
+    }
+    return original(...args);
+  });
+  try {
+    expect(native.focused).toBe(true);
+    act(() =>
+      setup.update({
+        ...initial,
+        resizes: [{ cursor: 0, sequence: 1, cols: 93, rows: 25 }],
+      }),
+    );
+    await flushMeasured(setup);
+    await flushMeasured(setup);
+    expect(injected).toBe(true);
+    expect(native.focused).toBe(true);
+    expect(setup.renderer.currentFocusedRenderable).toBe(native);
+    expect(setup.emitted).toEqual([{ source: "input", text: "z" }]);
+  } finally {
+    resize.mockRestore();
+    act(() => setup.renderer.destroy());
+  }
+});
+
 test("unmount cancels a scheduled pane drain instead of writing to a destroyed native terminal", async () => {
   const setup = await viewport(buffer(), 60, 12);
   const native = setup.terminal();
@@ -168,6 +210,7 @@ test("failed native writes do not acknowledge consumption or prevent recovery", 
   const setup = await viewport(buffer(), 60, 12);
   const output = setup.outputs.pane("p");
   const consumed = spyOn(output, "consumed");
+  const original = setup.terminal().write.bind(setup.terminal());
   const write = spyOn(setup.terminal(), "write").mockImplementation(() => {
     throw new Error("native write failed");
   });
@@ -181,6 +224,15 @@ test("failed native writes do not acknowledge consumption or prevent recovery", 
     });
     expect(setup.resyncs()).toBe(1);
     expect(setup.terminal().focusable).toBe(false);
+    const pending = output.read()!;
+    setup.outputs.set("p", { ...pending, recovering: true });
+    await flushMeasured(setup);
+    write.mockImplementation(original);
+    setup.outputs.set("p", { ...pending, recovering: false });
+    await flushMeasured(setup);
+    expect(setup.terminal().screen().text).toContain("unconsumed");
+    expect(setup.terminal().focusable).toBe(true);
+    expect(consumed).toHaveBeenCalledTimes(1);
   } finally {
     consumed.mockRestore();
     write.mockRestore();
@@ -233,6 +285,229 @@ test("screen-change callbacks coalesce cursor inspection to one per 33 milliseco
   } finally {
     now.mockRestore();
     screen.mockRestore();
+    act(() => setup.renderer.destroy());
+  }
+});
+
+test("queued keys paste mouse and focus encode only after their finite received mode frontier", async () => {
+  const initial = buffer();
+  const setup = await viewport(initial, 60, 12);
+  const native = setup.terminal();
+  const modes = encode("\x1b[?1h\x1b[?2004h\x1b[?1000h\x1b[?1006h\x1b[?1004h");
+  try {
+    setup.outputs.set("p", appendTerminalChunk(initial, modes.length, modes, 0));
+    native.handleKeyPress(new KeyEvent(parseKeypress("\x1b[A")!));
+    native.handlePaste(new PasteEvent(encode("paste")));
+    native.processMouseEvent(
+      new MouseEvent(native, {
+        type: "down",
+        button: 0,
+        x: native.screenX + 2,
+        y: native.screenY + 1,
+        modifiers: { shift: false, alt: false, ctrl: false },
+      }),
+    );
+    native.blur();
+    expect(setup.emitted.length).toBe(0);
+    await flushMeasured(setup);
+    expect(setup.emitted).toEqual([
+      { source: "input", text: "\x1bOA" },
+      { source: "input", text: "\x1b[200~paste\x1b[201~" },
+      { source: "input", text: "\x1b[<0;3;2M" },
+      { source: "input", text: "\x1b[O" },
+    ]);
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
+test("later output cannot extend an admitted key's finite parser frontier", async () => {
+  const initial = buffer();
+  const setup = await viewport(initial, 60, 12);
+  const native = setup.terminal();
+  const first = appendTerminalChunk(initial, 5, encode("\x1b[?1h"), 0);
+  const original = native.write.bind(native);
+  let appended = false;
+  const write = spyOn(native, "write").mockImplementation((bytes) => {
+    original(bytes);
+    if (!appended) {
+      appended = true;
+      setup.outputs.set("p", appendTerminalChunk(first, 10, encode("\x1b[?1l"), 0));
+    }
+  });
+  try {
+    setup.outputs.set("p", first);
+    native.handleKeyPress(new KeyEvent(parseKeypress("\x1b[A")!));
+    await flushMeasured(setup);
+    expect(setup.emitted).toEqual([{ source: "input", text: "\x1bOA" }]);
+    expect(new TextDecoder().decode(native.encodeKey(new KeyEvent(parseKeypress("\x1b[A")!)))).toBe(
+      "\x1b[A",
+    );
+  } finally {
+    write.mockRestore();
+    act(() => setup.renderer.destroy());
+  }
+});
+
+test("coalesced later bytes and same-cursor resizes cannot overtake an admitted key", async () => {
+  const initial = buffer();
+  const setup = await viewport(initial, 60, 12);
+  const native = setup.terminal();
+  const write = native.write.bind(native);
+  const encodedAt: number[] = [];
+  const lib = resolveRenderLib();
+  const originalEncode = lib.contextEmbeddedTerminalEncodeKey.bind(lib);
+  let written = 0;
+  const writes = spyOn(native, "write").mockImplementation((bytes) => {
+    written += bytes.length;
+    write(bytes);
+  });
+  const encodeKey = spyOn(lib, "contextEmbeddedTerminalEncodeKey").mockImplementation((...args) => {
+    encodedAt.push(written);
+    return originalEncode(...args);
+  });
+  try {
+    let current = appendTerminalChunk(initial, 5, encode("\x1b[?1h"), 0);
+    setup.outputs.set("p", current);
+    native.handleKeyPress(new KeyEvent(parseKeypress("\x1b[A")!));
+    current = appendTerminalChunk(current, 10, encode("\x1b[?1l"), 0);
+    setup.outputs.set("p", {
+      ...current,
+      resizes: [{ cursor: 10, sequence: 1, cols: 100, rows: 30 }],
+    });
+    await flushMeasured(setup);
+    expect(encodedAt).toEqual([5]);
+    expect(setup.emitted).toEqual([{ source: "input", text: "\x1bOA" }]);
+  } finally {
+    writes.mockRestore();
+    encodeKey.mockRestore();
+    act(() => setup.renderer.destroy());
+  }
+});
+
+test("pre-encoding input rejects oversized queued paste and releases it on unmount", async () => {
+  const initial = buffer();
+  const setup = await viewport(initial, 60, 12);
+  const native = setup.terminal();
+  setup.outputs.set("p", appendTerminalChunk(initial, 5, encode("\x1b[?1h"), 0));
+  act(() => native.handlePaste(new PasteEvent(new Uint8Array(8 * 1024 * 1024))));
+  expect(setup.resyncs()).toBe(1);
+  expect(setup.emitted.length).toBe(0);
+  act(() => setup.renderer.destroy());
+  await Bun.sleep(0);
+  expect(setup.emitted.length).toBe(0);
+});
+
+test("queued input waits through a received grid marker before native encoding", async () => {
+  const initial = buffer();
+  const setup = await viewport(initial, 60, 12);
+  const native = setup.terminal();
+  try {
+    setup.outputs.set("p", {
+      ...appendTerminalChunk(initial, 5, encode("\x1b[?1h"), 0),
+      resizes: [{ cursor: 5, sequence: 1, cols: 90, rows: 25 }],
+    });
+    native.handleKeyPress(new KeyEvent(parseKeypress("\x1b[A")!));
+    await flushMeasured(setup);
+    await flushMeasured(setup);
+    expect(native.screen().columns).toBe(90);
+    expect(setup.emitted).toEqual([{ source: "input", text: "\x1bOA" }]);
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
+test("cancelled deferred blur still releases native focus without sending a stale report", async () => {
+  const initial = buffer();
+  const setup = await viewport(initial, 60, 12);
+  const native = setup.terminal();
+  try {
+    const current = appendTerminalChunk(initial, 5, encode("\x1b[?1h"), 0);
+    setup.outputs.set("p", current);
+    native.blur();
+    expect(native.focused).toBe(false);
+    expect(setup.renderer.currentFocusedRenderable).not.toBe(native);
+    setup.outputs.set("p", { ...current, recovering: true });
+    await flushMeasured(setup);
+    expect(native.focused).toBe(false);
+    expect(setup.emitted).toEqual([]);
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
+test("native key releases also wait for received Kitty event-reporting modes", async () => {
+  const initial = buffer();
+  const setup = await viewport(initial, 60, 12);
+  const native = setup.terminal();
+  try {
+    const modes = encode("\x1b[>3u");
+    setup.outputs.set("p", appendTerminalChunk(initial, modes.length, modes, 0));
+    native.handleKeyPress(new KeyEvent({ ...parseKeypress("a")!, eventType: "release" }));
+    expect(setup.emitted).toEqual([]);
+    await flushMeasured(setup);
+    expect(setup.emitted).toEqual([{ source: "input", text: "\x1b[97;1:3u" }]);
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
+test("deferred mouse encoding preserves the clicked grid cell when its crop moves", async () => {
+  const initial = buffer();
+  const setup = await viewport(initial, 60, 12);
+  const native = setup.terminal();
+  const original = native.write.bind(native);
+  const write = spyOn(native, "write").mockImplementation((bytes) => {
+    original(bytes);
+    native.translateX = 10;
+  });
+  try {
+    const modes = encode("\x1b[?1000h\x1b[?1006h");
+    setup.outputs.set("p", appendTerminalChunk(initial, modes.length, modes, 0));
+    native.processMouseEvent(
+      new MouseEvent(native, {
+        type: "down",
+        button: 0,
+        x: native.screenX + 2,
+        y: native.screenY + 1,
+        modifiers: { shift: false, alt: false, ctrl: false },
+      }),
+    );
+    await flushMeasured(setup);
+    expect(setup.emitted).toEqual([{ source: "input", text: "\x1b[<0;3;2M" }]);
+  } finally {
+    write.mockRestore();
+    act(() => setup.renderer.destroy());
+  }
+});
+
+test("fast recovery completion still re-enables an unfocused native viewport after its control commit", async () => {
+  const initial = buffer();
+  const setup = await viewport(initial, 60, 12);
+  const native = setup.terminal();
+  try {
+    native.blur();
+    act(() => setup.update({ ...initial, recovering: true }));
+    expect(native.focusable).toBe(false);
+    setup.outputs.set("p", { ...initial, recovering: false });
+    await flushMeasured(setup);
+    expect(native.focusable).toBe(true);
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
+test("native destruction releases renderer focus even with admitted input awaiting output", async () => {
+  const initial = buffer();
+  const setup = await viewport(initial, 60, 12);
+  const native = setup.terminal();
+  try {
+    setup.outputs.set("p", appendTerminalChunk(initial, 5, encode("\x1b[?1h"), 0));
+    native.handleKeyPress(new KeyEvent(parseKeypress("\x1b[A")!));
+    native.destroy();
+    expect(setup.renderer.currentFocusedRenderable === native).toBe(false);
+    expect(native.focused).toBe(false);
+  } finally {
     act(() => setup.renderer.destroy());
   }
 });
@@ -450,6 +725,7 @@ test("same-cursor resize retains the native object and translates mouse coordina
     expect(native.screen()).toMatchObject({ columns: 120, rows: 40 });
     expect(setup.resyncs()).toBe(0);
     act(() => setup.renderer.stdin.emit("data", Buffer.from("a")));
+    await flushMeasured(setup);
     expect(setup.emitted.at(-1)).toEqual({ source: "input", text: "a" });
   } finally {
     act(() => setup.renderer.destroy());

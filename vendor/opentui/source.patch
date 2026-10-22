@@ -372,7 +372,7 @@ index 56034032..dc996dc2 100644
  
  function keyEvent(
 diff --git a/packages/core/src/renderables/EmbeddedTerminal.ts b/packages/core/src/renderables/EmbeddedTerminal.ts
-index 69056c5e..93410fc3 100644
+index 69056c5e..a2fb9503 100644
 --- a/packages/core/src/renderables/EmbeddedTerminal.ts
 +++ b/packages/core/src/renderables/EmbeddedTerminal.ts
 @@ -6,6 +6,11 @@ import type { MouseEvent } from "../renderer.js"
@@ -395,16 +395,18 @@ index 69056c5e..93410fc3 100644
    onTerminalResize?: (cols: number, rows: number) => void
    onScreenChange?: () => void
    selectable?: boolean
-@@ -50,6 +56,8 @@ export class EmbeddedTerminalRenderable extends Renderable {
+@@ -50,6 +56,10 @@ export class EmbeddedTerminalRenderable extends Renderable {
    private readonly lib: RenderLib
    private handle: ContextEmbeddedTerminalHandle | null = null
    private _onData?: (data: Uint8Array, source: EmbeddedTerminalDataSource) => void
 +  private _onInputAdmission?: EmbeddedTerminalInputAdmission
 +  private inputLifetime = 0
++  private removing = false
++  private blurring = false
    private _onTerminalResize?: (cols: number, rows: number) => void
    private _onScreenChange?: () => void
    private keyreleaseHandler: ((key: KeyEvent) => void) | null = null
-@@ -73,6 +81,7 @@ export class EmbeddedTerminalRenderable extends Renderable {
+@@ -73,6 +83,7 @@ export class EmbeddedTerminalRenderable extends Renderable {
  
      try {
        this._onData = options.onData
@@ -412,7 +414,7 @@ index 69056c5e..93410fc3 100644
        this._onTerminalResize = options.onTerminalResize
        this._onScreenChange = options.onScreenChange
        this.selectable = options.selectable ?? true
-@@ -97,6 +106,14 @@ export class EmbeddedTerminalRenderable extends Renderable {
+@@ -97,6 +108,14 @@ export class EmbeddedTerminalRenderable extends Renderable {
      this._onData = value
    }
  
@@ -427,7 +429,7 @@ index 69056c5e..93410fc3 100644
    public get onTerminalResize(): ((cols: number, rows: number) => void) | undefined {
      return this._onTerminalResize
    }
-@@ -169,16 +186,7 @@ export class EmbeddedTerminalRenderable extends Renderable {
+@@ -169,16 +188,7 @@ export class EmbeddedTerminalRenderable extends Renderable {
  
    public encodeKey(key: KeyEvent): Uint8Array {
      if (!this.handle) return new Uint8Array()
@@ -445,7 +447,33 @@ index 69056c5e..93410fc3 100644
    }
  
    public encodePaste(bytes: Uint8Array): Uint8Array {
-@@ -264,12 +272,32 @@ export class EmbeddedTerminalRenderable extends Renderable {
+@@ -251,25 +261,54 @@ export class EmbeddedTerminalRenderable extends Renderable {
+   }
+ 
+   public blur(): void {
+-    if (!this.focused) return
++    if (!this.focused || this.blurring) return
++    this.blurring = true
+     try {
++      if (this._onInputAdmission) {
++        this.removeKeyreleaseHandler()
++        super.blur()
++      }
+       this.sendFocus(false)
+     } catch {
+       // User callbacks must not prevent focus or native resource cleanup.
+     } finally {
+-      this.removeKeyreleaseHandler()
+-      super.blur()
+-      this._ctx.setCursorPosition(0, 0, false)
++      try {
++        this.removeKeyreleaseHandler()
++        super.blur()
++        this._ctx.setCursorPosition(0, 0, false)
++      } finally {
++        this.blurring = false
++      }
+     }
    }
  
    public handleKeyPress(key: KeyEvent): boolean {
@@ -470,7 +498,7 @@ index 69056c5e..93410fc3 100644
 +        bytes.byteLength,
 +        (send) => send(this.encodePaste(bytes)),
 +        () => {
-+          bytes = bytes.slice()
++          bytes = new Uint8Array(bytes)
 +        },
 +      )
 +      return
@@ -478,7 +506,7 @@ index 69056c5e..93410fc3 100644
      this.send(this.encodePaste(event.bytes), "input")
    }
  
-@@ -320,6 +348,7 @@ export class EmbeddedTerminalRenderable extends Renderable {
+@@ -320,6 +359,7 @@ export class EmbeddedTerminalRenderable extends Renderable {
    }
  
    protected destroySelf(): void {
@@ -486,15 +514,17 @@ index 69056c5e..93410fc3 100644
      const handle = this.handle
      this.handle = null
      this.selection = false
-@@ -335,37 +364,40 @@ export class EmbeddedTerminalRenderable extends Renderable {
+@@ -335,37 +375,41 @@ export class EmbeddedTerminalRenderable extends Renderable {
    }
  
    protected onRemove(): void {
 -    if (this.focused) this.blur()
++    this.inputLifetime++
++    this.removing = true
 +    try {
 +      if (this.focused) this.blur()
 +    } finally {
-+      this.inputLifetime++
++      this.removing = false
 +    }
    }
  
@@ -537,31 +567,33 @@ index 69056c5e..93410fc3 100644
  
 -  private forwardMouse(event: MouseEvent, action: EmbeddedTerminalMouse["action"]): void {
 -    if (!this.handle) return
+-    if (event.type === "down" && event.button === 0) this.focus()
+-    if (!this.handle) return
 +  private forwardMouse(event: MouseEvent, action: EmbeddedTerminalMouse["action"], beforeAdmission?: () => void): void {
 +    if (!this.handle) {
 +      beforeAdmission?.()
 +      return
 +    }
-     if (event.type === "down" && event.button === 0) this.focus()
--    if (!this.handle) return
-+    if (!this.handle) {
-+      beforeAdmission?.()
-+      return
-+    }
++    const handle = this.handle
++    const lifetime = this.inputLifetime
++    if (!beforeAdmission && event.type === "down" && event.button === 0) this.focus()
++    if (!beforeAdmission && !this.handle) return
      const mouse = {
        action,
        button: event.type === "move" && !event.isDragging ? undefined : mouseButton(event),
-@@ -374,6 +406,32 @@ export class EmbeddedTerminalRenderable extends Renderable {
+@@ -374,6 +418,35 @@ export class EmbeddedTerminalRenderable extends Renderable {
        y: event.y - this._screenY,
        anyButtonPressed: event.isDragging === true || event.type === "down",
      }
 +    if (beforeAdmission) {
++      if (event.type === "down" && event.button === 0) this.focus()
 +      // Observe caller prevention before reserving the event; never retain/replay renderer events.
 +      beforeAdmission()
 +      const clearSelection = selectionClearDefault(this._ctx, event)
 +      const scrollDirection = event.type === "scroll" ? event.scroll?.direction : undefined
 +      event.preventDefault()
 +      event.stopPropagation()
++      if (this.handle !== handle || this.inputLifetime !== lifetime || this.isDestroyed) return
 +      this.admitInput({ kind: "mouse", mouse, scrollDirection }, 0, (send) => {
 +        const output = this.lib.contextEmbeddedTerminalEncodeMouse(this.handle!.context, this.handle!, mouse)
 +        if (scrollDirection && output.byteLength === 0) {
@@ -581,10 +613,11 @@ index 69056c5e..93410fc3 100644
 +      })
 +      return
 +    }
++    if (!this.handle) return
      const output = this.lib.contextEmbeddedTerminalEncodeMouse(this.handle.context, this.handle, mouse)
      if (event.type === "scroll" && output.byteLength === 0) {
        const direction = event.scroll?.direction
-@@ -398,7 +456,52 @@ export class EmbeddedTerminalRenderable extends Renderable {
+@@ -398,7 +471,52 @@ export class EmbeddedTerminalRenderable extends Renderable {
  
    private sendFocus(focused: boolean): void {
      if (!this.handle) return
@@ -605,7 +638,7 @@ index 69056c5e..93410fc3 100644
 +      run((bytes) => this.send(bytes, "input"))
 +      return
 +    }
-+    if (!this.handle || this.isDestroyed) return
++    if (!this.handle || this.isDestroyed || this.removing) return
 +    const handle = this.handle
 +    const lifetime = this.inputLifetime
 +    const valid = () =>
@@ -638,7 +671,7 @@ index 69056c5e..93410fc3 100644
    }
  
    private removeKeyreleaseHandler(): void {
-@@ -412,6 +515,42 @@ export class EmbeddedTerminalRenderable extends Renderable {
+@@ -412,6 +530,42 @@ export class EmbeddedTerminalRenderable extends Renderable {
    }
  }
  
@@ -683,10 +716,10 @@ index 69056c5e..93410fc3 100644
    ctrl?: boolean
 diff --git a/packages/core/src/renderables/EmbeddedTerminalInput.test.ts b/packages/core/src/renderables/EmbeddedTerminalInput.test.ts
 new file mode 100644
-index 00000000..51c8578c
+index 00000000..8324cae1
 --- /dev/null
 +++ b/packages/core/src/renderables/EmbeddedTerminalInput.test.ts
-@@ -0,0 +1,267 @@
+@@ -0,0 +1,373 @@
 +import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 +import { KeyEvent, PasteEvent } from "../lib/KeyHandler.js"
 +import { parseKeypress } from "../lib/parse.keypress.js"
@@ -730,8 +763,8 @@ index 00000000..51c8578c
 +    expect(original).toEqual(["\x1bOA"])
 +  })
 +
-+  test("snapshots paste after charging and before the source mutates", () => {
-+    const bytes = new TextEncoder().encode("original")
++  test.each([false, true])("snapshots paste before mutation, Buffer backed: %s", (buffer) => {
++    const bytes = buffer ? Buffer.from("original") : new TextEncoder().encode("original")
 +    terminal.handlePaste(new PasteEvent(bytes))
 +    expect(pending).toHaveLength(1)
 +    expect(pending[0]!.payloadBytes).toBe(8)
@@ -765,63 +798,47 @@ index 00000000..51c8578c
 +  })
 +
 +  test("cancelled admission does not copy a rejected paste", () => {
-+    let copies = 0
-+    class CountedBytes extends Uint8Array {
-+      override slice(start?: number, end?: number): Uint8Array<ArrayBuffer> {
-+        copies++
-+        return super.slice(start, end)
-+      }
++    const bytes = new Uint8Array([97])
++    terminal.onInputAdmission = (request) => {
++      request.cancel()
++      structuredClone(bytes.buffer, { transfer: [bytes.buffer] })
 +    }
-+    terminal.onInputAdmission = (request) => request.cancel()
-+    terminal.handlePaste(new PasteEvent(new CountedBytes([97])))
-+    expect(copies).toBe(0)
++    expect(() => terminal.handlePaste(new PasteEvent(bytes))).not.toThrow()
 +    expect(immediate).toEqual([])
 +  })
 +
-+  test("retained admission makes exactly one lifetime copy after the callback", () => {
-+    const order: string[] = []
-+    class CountedBytes extends Uint8Array {
-+      override slice(start?: number, end?: number): Uint8Array<ArrayBuffer> {
-+        order.push("copy")
-+        return super.slice(start, end)
-+      }
-+    }
++  test("paste retention occurs after accounting and before handlePaste returns", () => {
++    const bytes = new Uint8Array([97])
 +    terminal.onInputAdmission = (request) => {
-+      order.push("charged")
++      expect(request.payloadBytes).toBe(1)
++      bytes[0] = 98
 +      pending.push(request)
 +    }
-+    terminal.handlePaste(new PasteEvent(new CountedBytes([97])))
-+    expect(order).toEqual(["charged", "copy"])
++    terminal.handlePaste(new PasteEvent(bytes))
++    bytes[0] = 99
 +    pending[0]!.resume((bytes) => immediate.push(decode(bytes)))
-+    expect(order).toEqual(["charged", "copy"])
-+    expect(immediate).toEqual(["a"])
++    expect(immediate).toEqual(["b"])
 +  })
 +
 +  test("destruction inside admission cancels before copying its paste", () => {
-+    let copies = 0
-+    class CountedBytes extends Uint8Array {
-+      override slice(start?: number, end?: number): Uint8Array<ArrayBuffer> {
-+        copies++
-+        return super.slice(start, end)
-+      }
-+    }
++    const bytes = new Uint8Array([97])
 +    terminal.onInputAdmission = (request) => {
 +      pending.push(request)
 +      terminal.destroy()
++      structuredClone(bytes.buffer, { transfer: [bytes.buffer] })
 +    }
-+    terminal.handlePaste(new PasteEvent(new CountedBytes([97])))
-+    expect(copies).toBe(0)
++    expect(() => terminal.handlePaste(new PasteEvent(bytes))).not.toThrow()
 +    pending[0]!.resume(() => immediate.push("stale"))
 +    expect(immediate).toEqual([])
 +  })
 +
 +  test("failed paste retention cancels the request and releases its action", () => {
-+    class FailingBytes extends Uint8Array {
-+      override slice(): never {
-+        throw new Error("lifetime copy failed")
-+      }
++    const bytes = new Uint8Array([97])
++    terminal.onInputAdmission = (request) => {
++      pending.push(request)
++      structuredClone(bytes.buffer, { transfer: [bytes.buffer] })
 +    }
-+    expect(() => terminal.handlePaste(new PasteEvent(new FailingBytes([97])))).toThrow("lifetime copy failed")
++    expect(() => terminal.handlePaste(new PasteEvent(bytes))).toThrow(TypeError)
 +    expect(pending).toHaveLength(1)
 +    pending[0]!.resume(() => immediate.push("stale"))
 +    expect(immediate).toEqual([])
@@ -914,6 +931,41 @@ index 00000000..51c8578c
 +    expect(immediate).toEqual(["response:\x1b[0n"])
 +  })
 +
++  test.each(["key", "paste"] as const)(
++    "removal invalidates held %s before callbacks and suppresses departing reports",
++    (kind) => {
++      let held: EmbeddedTerminalInputRequest | undefined
++      let reports = 0
++      const output: string[] = []
++      const resumeHeld = () => held?.resume((bytes) => output.push(decode(bytes)))
++      terminal.onInputAdmission = (request) => {
++        if (request.event.kind === kind) {
++          held = request
++        } else {
++          if (request.event.kind === "focus" && !request.event.focused) {
++            reports++
++            resumeHeld()
++            request.resume((bytes) => output.push(decode(bytes)))
++          }
++          request.cancel()
++        }
++      }
++      terminal.write("\x1b[?1004h")
++      terminal.focus()
++      if (kind === "key") terminal.handleKeyPress(new KeyEvent(parseKeypress("\x1b[A")!))
++      else terminal.handlePaste(new PasteEvent(Buffer.from("held")))
++      expect(held).toBeDefined()
++      terminal.on("blurred", resumeHeld)
++      setup.renderer.root.remove(terminal)
++      setup.renderer.root.add(terminal)
++      resumeHeld()
++      expect(output).toEqual([])
++      expect(reports).toBe(0)
++      expect(terminal.focused).toBe(false)
++      expect(setup.renderer.currentFocusedRenderable).not.toBe(terminal)
++    },
++  )
++
 +  test("a throwing admission callback cancels its request", () => {
 +    let retained: EmbeddedTerminalInputRequest | undefined
 +    terminal.onInputAdmission = (request) => {
@@ -938,6 +990,93 @@ index 00000000..51c8578c
 +    pending[1]!.resume(() => immediate.push("duplicate"))
 +    expect(immediate).toEqual([])
 +    expect(terminal.focused).toBe(true)
++  })
++
++  test.each([
++    [false, false],
++    [false, true],
++    [true, false],
++    [true, true],
++  ])("mouse callback removal cancels original work: reattach %s wheel %s", async (reattach, wheel) => {
++    const requests: EmbeddedTerminalInputRequest[] = []
++    let calls = 0
++    let ancestors = 0
++    let original: import("../renderer.js").MouseEvent | undefined
++    const remove = (event: import("../renderer.js").MouseEvent) => {
++      calls++
++      original = event
++      setup.renderer.root.remove(target)
++      if (reattach) setup.renderer.root.add(target)
++    }
++    const target = new EmbeddedTerminalRenderable(setup.renderer, {
++      width: 20,
++      height: 4,
++      selectable: false,
++      onMouseDown: wheel ? undefined : remove,
++      onMouseScroll: wheel ? remove : undefined,
++      onInputAdmission: (request) => {
++        if (request.event.kind === "mouse") requests.push(request)
++        else request.cancel()
++      },
++    })
++    setup.renderer.root.remove(terminal)
++    setup.renderer.root.add(target)
++    setup.renderer.root.onMouseDown = setup.renderer.root.onMouseScroll = () => {
++      ancestors++
++    }
++    target.write("0\r\n1\r\n2\r\n3\r\n4\r\n5\r\n6\r\n7\r\n8\r\n9")
++    if (!wheel) target.write("\x1b[?1000h\x1b[?1006h")
++    await setup.renderOnce()
++    expect(target.screen().lines[0]).toBe("6")
++    if (wheel) await setup.mockMouse.scroll(2, 1, "up")
++    else await setup.mockMouse.pressDown(2, 1)
++    for (const request of requests) request.resume((bytes) => immediate.push(decode(bytes)))
++    if (!target.parent) setup.renderer.root.add(target)
++    await setup.renderOnce()
++    expect(calls).toBe(1)
++    expect(original!.defaultPrevented).toBe(true)
++    expect(original!.propagationStopped).toBe(true)
++    expect(ancestors).toBe(0)
++    expect(immediate).toEqual([])
++    expect(target.screen().lines[0]).toBe("6")
++    expect(requests).toHaveLength(0)
++  })
++
++  test.each(["admission", "sink", "no-hook"] as const)("blur re-entry through %s releases one transition", (mode) => {
++    let reports = 0
++    let reentries = 0
++    const focusDuring: boolean[] = []
++    const reenter = () => {
++      reports++
++      if (mode !== "no-hook") {
++        focusDuring.push(terminal.focused || setup.renderer.currentFocusedRenderable === terminal)
++        setup.renderer.keyInput.processParsedKey(parseKeypress("\x1b[97;1:3u", { useKittyKeyboard: true })!)
++      }
++      if (++reentries <= 2) terminal.blur()
++    }
++    terminal.onData = (bytes) => {
++      if (decode(bytes) === "\x1b[O") reenter()
++    }
++    terminal.onInputAdmission =
++      mode === "no-hook"
++        ? undefined
++        : (request) => {
++            if (request.event.kind === "focus" && !request.event.focused) {
++              if (mode === "admission") reenter()
++              else request.resume(() => reenter())
++            } else if (request.event.kind === "key") {
++              immediate.push("stale-release")
++            }
++            request.cancel()
++          }
++    terminal.write("\x1b[?1004h")
++    terminal.focus()
++    terminal.blur()
++    expect(reports).toBe(1)
++    expect(focusDuring).toEqual(mode === "no-hook" ? [] : [false])
++    expect(immediate).toEqual([])
++    expect(terminal.focused).toBe(false)
++    expect(setup.renderer.currentFocusedRenderable).not.toBe(terminal)
 +  })
 +
 +  test.each([
@@ -1033,14 +1172,37 @@ index 00000000..540c3138
 +}
 diff --git a/packages/core/src/tests/embedded-terminal-material.test.ts b/packages/core/src/tests/embedded-terminal-material.test.ts
 new file mode 100644
-index 00000000..24c6bb72
+index 00000000..fc8a0ebc
 --- /dev/null
 +++ b/packages/core/src/tests/embedded-terminal-material.test.ts
-@@ -0,0 +1,31 @@
+@@ -0,0 +1,54 @@
 +import { expect, test } from "bun:test"
 +import { toArrayBuffer } from "../platform/ffi.js"
 +import { getLinkId } from "../utils.js"
 +import { resolveRenderLib } from "../zig.js"
++import { EmbeddedTerminalRenderable } from "../renderables/EmbeddedTerminal.js"
++import { createTestRenderer } from "../testing/test-renderer.js"
++
++test("public renderer preserves hidden wide OSC8 material in both destination cells", async () => {
++  const setup = await createTestRenderer({ width: 12, height: 3 })
++  try {
++    const terminal = new EmbeddedTerminalRenderable(setup.renderer, { width: 12, height: 3 })
++    setup.renderer.root.add(terminal)
++    terminal.write("\x1b]8;;https://example.test/λ\x1b\\\x1b[8m界\x1b]8;;\x1b\\")
++    await setup.renderOnce()
++    const owner = setup.renderer.nativeScene.resourceContext
++    setup.renderer.currentRenderBuffer.withBuffers(({ attributes }) => {
++      for (const x of [0, 1]) {
++        const attribute = attributes[x]!
++        expect(attribute & 255).toBe(64)
++        expect(owner.renderLib.contextGetLinkUrl(owner.context, getLinkId(attribute))).toBe("https://example.test/λ")
++      }
++    })
++  } finally {
++    setup.renderer.destroy()
++    await setup.renderer.closed
++  }
++})
 +
 +test("embedded terminal material resolves its exact OSC8 URL inside a public buffer lease", () => {
 +  const lib = resolveRenderLib()
@@ -1138,7 +1300,7 @@ index 11993374..8abe1d7a 100644
          try validateColor(bg);
          if (grapheme_bytes.len == 0 or cell_width == 0 or x >= self.width or y >= self.height) return;
 diff --git a/packages/native/src/embedded-terminal/compositor.zig b/packages/native/src/embedded-terminal/compositor.zig
-index 3820defb..576c6d1e 100644
+index 3820defb..89263007 100644
 --- a/packages/native/src/embedded-terminal/compositor.zig
 +++ b/packages/native/src/embedded-terminal/compositor.zig
 @@ -41,6 +41,8 @@ pub fn compose(
@@ -1216,7 +1378,7 @@ index 3820defb..576c6d1e 100644
  }
  
  fn encodeCodepoint(writer: *std.Io.Writer, codepoint: u21) std.Io.Writer.Error!void {
-@@ -158,13 +178,22 @@ fn encodeCodepoint(writer: *std.Io.Writer, codepoint: u21) std.Io.Writer.Error!v
+@@ -158,20 +178,34 @@ fn encodeCodepoint(writer: *std.Io.Writer, codepoint: u21) std.Io.Writer.Error!v
      try writer.writeAll(bytes[0..len]);
  }
  
@@ -1227,10 +1389,13 @@ index 3820defb..576c6d1e 100644
      if (checked) {
          const blank = text.len == 0 or style.flags.invisible;
 -        try target.drawGraphemeChecked(if (blank) " " else text, if (blank) 1 else cell_width, x, y, color(foreground), color(background), cell_attributes);
-+        if (link_id != 0) {
-+            try target.drawLinkedGraphemeChecked(if (blank) " " else text, if (blank) 1 else cell_width, x, y, color(foreground), color(background), attributes(style), link_id);
-+        } else {
-+            try target.drawGraphemeChecked(if (blank) " " else text, if (blank) 1 else cell_width, x, y, color(foreground), color(background), cell_attributes);
++        for (0..if (blank) cell_width else @as(u8, 1)) |offset| {
++            const column = x + @as(u32, @intCast(offset));
++            if (link_id != 0) {
++                try target.drawLinkedGraphemeChecked(if (blank) " " else text, if (blank) 1 else cell_width, column, y, color(foreground), color(background), attributes(style), link_id);
++            } else {
++                try target.drawGraphemeChecked(if (blank) " " else text, if (blank) 1 else cell_width, column, y, color(foreground), color(background), cell_attributes);
++            }
 +        }
          return;
      }
@@ -1240,8 +1405,23 @@ index 3820defb..576c6d1e 100644
 +        try target.storage.ensureTrackerCapacity(target.grapheme_tracker.getGraphemeCount(), @as(u64, target.link_tracker.getLinkCount()) + 1);
 +    }
      if (text.len == 0 or style.flags.invisible) {
-         target.set(x, y, .{
-             .char = buffer.DEFAULT_SPACE_CHAR,
+-        target.set(x, y, .{
+-            .char = buffer.DEFAULT_SPACE_CHAR,
+-            .fg = color(foreground),
+-            .bg = color(background),
+-            .attributes = cell_attributes,
+-        });
++        for (0..cell_width) |offset| {
++            target.set(x + @as(u32, @intCast(offset)), y, .{
++                .char = buffer.DEFAULT_SPACE_CHAR,
++                .fg = color(foreground),
++                .bg = color(background),
++                .attributes = cell_attributes,
++            });
++        }
+         return;
+     }
+     try target.drawGrapheme(text, cell_width, x, y, color(foreground), color(background), cell_attributes);
 diff --git a/packages/native/src/embedded-terminal/ghostty.zig b/packages/native/src/embedded-terminal/ghostty.zig
 index 84e03ab4..a044215c 100644
 --- a/packages/native/src/embedded-terminal/ghostty.zig
@@ -1265,10 +1445,10 @@ index 84e03ab4..a044215c 100644
      action: vt.input.KeyAction = .press,
      key: vt.input.Key = .unidentified,
 diff --git a/packages/native/src/embedded-terminal/tests.zig b/packages/native/src/embedded-terminal/tests.zig
-index cfbb2174..4bade10e 100644
+index cfbb2174..dddd2571 100644
 --- a/packages/native/src/embedded-terminal/tests.zig
 +++ b/packages/native/src/embedded-terminal/tests.zig
-@@ -7,6 +7,141 @@ const link = @import("../link.zig");
+@@ -7,6 +7,176 @@ const link = @import("../link.zig");
  const EmbeddedTerminal = @import("main.zig").EmbeddedTerminal;
  const ghostty = @import("ghostty.zig");
  
@@ -1276,6 +1456,41 @@ index cfbb2174..4bade10e 100644
 +    const id = ansi.TextAttributes.getLinkId(target.get(x, y).?.attributes);
 +    try std.testing.expect(id != 0);
 +    try std.testing.expectEqualStrings(expected, try target.link_pool.get(id));
++}
++
++fn hiddenWideMaterial(comptime checked: bool) !void {
++    var pools = TestPools.init(std.testing.allocator);
++    defer pools.deinit();
++    const target = try buffer.OptimizedBuffer.init(std.testing.allocator, 4, 2, .{ .link_pool = &pools.links, .pool = &pools.graphemes });
++    defer target.deinit();
++    {
++        const terminal = try EmbeddedTerminal.init(std.testing.io, std.testing.allocator, .{ .cols = 4, .rows = 2 });
++        defer terminal.deinit();
++        try terminal.write("\x1b]8;;https://example.test/λ\x1b\\\x1b[1;8m界\x1b]8;;\x1b\\\x1b[0mN");
++        for (0..20) |_| {
++            terminal.invalidate();
++            if (checked) try terminal.composeChecked(target, 0, 0, 8) else try terminal.compose(target, 0, 0);
++            for (0..2) |x| {
++                const cell = target.get(@intCast(x), 0).?;
++                try expectCellLink(target, @intCast(x), 0, "https://example.test/λ");
++                try std.testing.expectEqual(@as(u32, ' '), cell.char);
++                try std.testing.expectEqual(ansi.TextAttributes.BOLD | ansi.TextAttributes.HIDDEN, cell.attributes & 255);
++            }
++            try std.testing.expectEqual(@as(u32, 'N'), target.get(2, 0).?.char);
++            try std.testing.expectEqual(@as(u64, 1), pools.links.getLiveSlotCount());
++        }
++    }
++    try expectCellLink(target, 1, 0, "https://example.test/λ");
++    target.clear(ansi.rgbColor(0, 0, 0, 255), null);
++    try std.testing.expectEqual(@as(u64, 0), pools.links.getLiveSlotCount());
++}
++
++test "embedded terminal OSC8 hidden wide checked cells retain both URLs and styles" {
++    try hiddenWideMaterial(true);
++}
++
++test "embedded terminal OSC8 hidden wide ordinary cells retain both URLs and styles" {
++    try hiddenWideMaterial(false);
 +}
 +
 +test "embedded terminal OSC8 preserves destination URL after parser destruction" {
@@ -1410,7 +1625,7 @@ index cfbb2174..4bade10e 100644
  test "embedded terminal retries every row after composition allocation failure" {
      var link_pool_storage = link.LinkPool.init(std.testing.allocator);
      defer link_pool_storage.deinit();
-@@ -115,7 +250,7 @@ test "embedded terminal checked composition rejects cell bounds before changing
+@@ -115,7 +285,7 @@ test "embedded terminal checked composition rejects cell bounds before changing
      try std.testing.expect(!terminal.force_redraw);
  }
  
@@ -1419,7 +1634,7 @@ index cfbb2174..4bade10e 100644
      var failures: usize = 0;
      var succeeded = false;
      for (0..128) |fail_after| {
-@@ -134,7 +269,7 @@ test "embedded terminal checked composition owns cells and retries after every a
+@@ -134,7 +304,7 @@ test "embedded terminal checked composition owns cells and retries after every a
          const link_id = try links.acquire("https://old.example");
          try target.drawGrapheme("\u{754c}", 2, 0, 0, ansi.rgbColor(255, 255, 255, 255), ansi.rgbColor(0, 0, 0, 255), ansi.TextAttributes.setLinkId(0, link_id));
          try links.decref(link_id);
@@ -1428,7 +1643,7 @@ index cfbb2174..4bade10e 100644
  
          failing.fail_index = failing.alloc_index + fail_after;
          failing.resize_fail_index = failing.resize_index;
-@@ -159,6 +294,7 @@ test "embedded terminal checked composition owns cells and retries after every a
+@@ -159,6 +329,7 @@ test "embedded terminal checked composition owns cells and retries after every a
          }
          try std.testing.expectEqualStrings("\u{e9}", try pool.get(gp.graphemeIdFromChar(target.get(0, 0).?.char)));
          try std.testing.expectEqualStrings("e\u{301}", try pool.get(gp.graphemeIdFromChar(target.get(0, 1).?.char)));

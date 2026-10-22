@@ -4,6 +4,7 @@ import {
   BoxRenderable,
   EmbeddedTerminalRenderable,
   parseColor,
+  PasteEvent,
   type ScrollBoxRenderable,
   TextRenderable,
 } from "@opentui/core";
@@ -114,7 +115,7 @@ test("transient reattachment preserves the exact native frame and cursor without
   const reconnect = setup.store.reload();
   try {
     await entered.promise;
-    oldData(new Uint8Array([97]), "input");
+    native.handlePaste(new PasteEvent(new Uint8Array([97])));
     oldData(new Uint8Array([98]), "response");
     expect(setup.sent).toEqual([]);
     setup.renderCurrent();
@@ -166,7 +167,7 @@ test("runtime replacement changes only its native viewport once and rejects old 
       ),
     };
     await setup.store.apply({ type: "control.snapshot", snapshot: next });
-    captured(new Uint8Array([97]), "input");
+    first.handlePaste(new PasteEvent(new Uint8Array([97])));
     captured(new Uint8Array([98]), "response");
     expect(setup.sent).toEqual([]);
     setup.renderCurrent();

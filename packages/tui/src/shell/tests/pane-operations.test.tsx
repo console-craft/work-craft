@@ -3,6 +3,7 @@ import { expect, spyOn, test } from "bun:test";
 import {
   CliRenderEvents,
   EmbeddedTerminalRenderable,
+  PasteEvent,
   type Renderable,
   type ScrollBoxRenderable,
 } from "@opentui/core";
@@ -267,7 +268,7 @@ for (const change of [
         await setup.publish(next, false);
       }
       setup.resized.length = 0;
-      captured(Uint8Array.of(65), "input");
+      terminal.handlePaste(new PasteEvent(Uint8Array.of(65)));
       captured(Uint8Array.of(66), "response");
       capturedResize(80, 20);
       await act(async () => {
@@ -731,16 +732,15 @@ for (const status of ["exited", "failed", "interrupted"] as const) {
           "terminal:pane-1",
         ) as EmbeddedTerminalRenderable;
         const stoppedId = focused ? "pane-1" : "pane-2";
-        const captured = (
-          setup.renderer.root.findDescendantById(
-            `terminal:${stoppedId}`,
-          ) as EmbeddedTerminalRenderable
-        ).onData!;
+        const stoppedTerminal = setup.renderer.root.findDescendantById(
+          `terminal:${stoppedId}`,
+        ) as EmbeddedTerminalRenderable;
+        const captured = stoppedTerminal.onData!;
         const stopped = splitSurfaceSnapshot();
         stopped.revision = 5;
         stopped.panes.find((pane) => pane.id === stoppedId)!.processStatus = status;
         await setup.publish(stopped, false);
-        captured(Uint8Array.of(65), "input");
+        stoppedTerminal.handlePaste(new PasteEvent(Uint8Array.of(65)));
         captured(new TextEncoder().encode("\x1b[0n"), "response");
         expect(setup.sent).toEqual([]);
         await setup.publish(stopped);
@@ -794,7 +794,7 @@ for (const interaction of ["pointer", "spatial"] as const) {
           interaction === "spatial" ? "reactivate:pane-2" : "region:tabs",
         );
         expect(terminal.focusable).toBe(false);
-        terminal.onData!(Uint8Array.of(65), "input");
+        terminal.handlePaste(new PasteEvent(Uint8Array.of(65)));
         terminal.onData!(Uint8Array.of(66), "response");
         expect(setup.sent).toEqual([]);
         expect(setup.commands.filter((command) => command.type === "process.restart")).toEqual([]);
@@ -874,7 +874,7 @@ for (const orientation of ["stacked", "side-by-side"] as const) {
             `terminal:${id}`,
           ) as EmbeddedTerminalRenderable;
           expect(terminal.focusable).toBe(false);
-          terminal.onData!(Uint8Array.of(65), "input");
+          terminal.handlePaste(new PasteEvent(Uint8Array.of(65)));
           terminal.onData!(Uint8Array.of(66), "response");
         }
         expect(setup.sent).toEqual([]);
@@ -1105,7 +1105,7 @@ for (const change of [
       }
       expect(setup.renderer.currentFocusedRenderable).toBe(terminal);
       setup.resized.length = 0;
-      captured(Uint8Array.of(65), "input");
+      terminal.handlePaste(new PasteEvent(Uint8Array.of(65)));
       captured(Uint8Array.of(66), "response");
       capturedResize(80, 20);
       await act(async () => {
@@ -1121,7 +1121,7 @@ for (const change of [
       expect(setup.commands.filter((command) => command.type === "process.restart")).toEqual([]);
       if (change === "item archived" || change === "parent archived") {
         await setup.publish(next);
-        captured(Uint8Array.of(67), "input");
+        terminal.handlePaste(new PasteEvent(Uint8Array.of(67)));
         captured(Uint8Array.of(68), "response");
         expect(setup.sent).toEqual([]);
         expect(setup.store.snapshot()!.panes[0]!.processStatus).toBe("running");
@@ -1168,7 +1168,7 @@ for (const coverage of ["dialog", "drawer", "guard", "height", "item"] as const)
         } else {
           await setup.mockInput.pressKey("j", { hyper: true });
         }
-        captured(Uint8Array.of(65), "input");
+        terminal.handlePaste(new PasteEvent(Uint8Array.of(65)));
         captured(Uint8Array.of(66), "response");
       });
       expect(setup.sent).toEqual([]);
@@ -1204,7 +1204,7 @@ for (const entry of ["origin", "remembered"] as const) {
       setup.sent.length = 0;
       act(() => {
         setup.resize(80, 40);
-        capturedInput(Uint8Array.of(65), "input");
+        a.handlePaste(new PasteEvent(Uint8Array.of(65)));
         capturedInput(Uint8Array.of(66), "response");
       });
       expect(setup.sent).toEqual([]);
@@ -1212,7 +1212,7 @@ for (const entry of ["origin", "remembered"] as const) {
       expect([a.parent!.width, b.parent!.width]).toEqual([18, 54]);
       expect(a.focusable).toBe(false);
       expect(b.focusable).toBe(false);
-      a.onData!(Uint8Array.of(67), "input");
+      a.handlePaste(new PasteEvent(Uint8Array.of(67)));
       a.onData!(Uint8Array.of(68), "response");
       a.onTerminalResize!(80, 20);
       expect(setup.sent).toEqual([]);
@@ -1227,7 +1227,8 @@ for (const entry of ["origin", "remembered"] as const) {
       await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
       await setup.flush();
       expect(setup.renderer.currentFocusedRenderable?.id).toBe("terminal:pane-2");
-      b.onData!(Uint8Array.of(69), "input");
+      b.handlePaste(new PasteEvent(Uint8Array.of(69)));
+      await setup.flush();
       expect(setup.sent).toEqual([{ paneId: "pane-2", bytes: [69] }]);
       await act(async () => setup.mockInput.pressKey("h", { ctrl: true }));
       await setup.flush();
@@ -1257,7 +1258,7 @@ test("same-batch split resize checks the bordered interior rather than stale nat
     setup.resized.length = 0;
     await act(async () => {
       setup.resize(120, 14);
-      captured(Uint8Array.of(65), "input");
+      terminal.handlePaste(new PasteEvent(Uint8Array.of(65)));
       captured(Uint8Array.of(66), "response");
       capturedResize(80, 20);
       setup.mockInput.pressKey("x");
@@ -1280,7 +1281,7 @@ for (const coverage of ["none", "dialog", "drawer"] as const) {
     const setup = await liveInputFixture(initial);
     try {
       const terminal = setup.renderer.currentFocusedRenderable as EmbeddedTerminalRenderable;
-      const capturedInput = terminal.onData!;
+      const capturedInput = terminal.handlePaste.bind(terminal);
       if (coverage === "dialog") {
         await act(async () => setup.mockInput.pressKey("s", { hyper: true }));
       } else if (coverage === "drawer") {
@@ -1303,7 +1304,7 @@ for (const coverage of ["none", "dialog", "drawer"] as const) {
         await setup.flush();
       }
       if (coverage !== "none") {
-        capturedInput(Uint8Array.of(65), "input");
+        capturedInput(new PasteEvent(Uint8Array.of(65)));
         expect(setup.sent).toEqual([]);
         expect(setup.resized).toEqual([]);
         await act(async () => setup.mockInput.pressEscape());
