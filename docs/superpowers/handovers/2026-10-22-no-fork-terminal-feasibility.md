@@ -87,9 +87,49 @@ were not implemented on this already rejected prototype. Its held callbacks are
 only diagnostic scaffolding, not a reusable bounded input queue or a production
 candidate. No performance equivalence is inferred from its ordinary-input pass.
 
+## Daemon Candidate B — Material Gate Blocked
+
+The registry-only `daemon` route reuses the existing checked public-context
+projection fixture. Three primitive cases pass: mode retention after more than
+1 MiB raw output, viewer-local browsing without mode changes, and exactly one
+live query reply despite composing two viewer frames. These do not certify a real
+PTY/client round trip or semantic event translation.
+
+A fourth, hyperlink-free case fails before JSON transfer or client drawing:
+
+```text
+Input: ESC[1;8;48;2;68;85;102m 界 ESC[0m N
+       (no spaces surrounding the wide character in the actual bytes)
+
+Material cell       #41 attributes/background       Registry attributes/background
+first hidden cell   65 / RGB(68,85,102)              65 / RGB(68,85,102)
+second hidden cell  65 / RGB(68,85,102)               0 / default black
+following N          0 / default black               0 / default black
+```
+
+This is not hyperlink support: SGR 1 is bold, SGR 8 is invisible, and the visible
+symptom is a one-cell background/style discontinuity. Registry material has
+already turned the wide character into two spaces and lost the second cell's
+attributes. Painting the supplied cells faithfully cannot restore missing data;
+guessing that every following blank inherits the prior style would corrupt
+legitimate unstyled blanks. No claim is made that every other public native API
+or a different application rendering design could never address it.
+
+Local evidence `daemon-ym3CQC` has three pass/one fail plus the exact material
+JSON. A separate same-input check using #41's installed parser confirms
+attributes `[65,65,0]`; registry yields `[65,0,0]`. The failing assertion remains
+enabled. No URL assertion was involved or weakened.
+
+Per the design's early stop rule, there is no fabricated end-to-end success:
+the real-PTY/two-client projection leaf, full selection/copy, key-event translation,
+authority-race suite, cold recovery, large-frame transfer, compiled probe and
+capacity/performance comparisons were not built/run after the source gate failed.
+The existing primitive tests and implementation remain reusable if this extra
+upstream rendering limitation is explicitly accepted or a released fix appears.
+
 ## Remaining Work
 
-- Investigate daemon-owned public parsing after the smaller candidate's failure.
-- Compare performance only after a route preserves the required behavior.
+- Resolve the additional invisible-wide styling limitation before selecting B.
+- Compare performance only after a route preserves the agreed behavior.
 - Run full checks and one independent connected review; record all limitations.
 - No production cutover, push, merge, real-daemon restart or installed-app change.
