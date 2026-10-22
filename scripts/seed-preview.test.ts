@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { createClient } from "../packages/server/src/client";
@@ -9,7 +10,7 @@ import { stopPreview } from "./preview-command";
 import { seedPreview } from "./seed-preview";
 
 test("preview seeding uses the real binary, refuses implicit resets and preserves unrelated files", async () => {
-  const directory = await mkdtemp(join(process.env.TMPDIR!, "opencode", "seed-"));
+  const directory = await mkdtemp(join(tmpdir(), "wc-seed-"));
   const executable = join(directory, "preview binary");
   const home = join(directory, "home");
   const cwd = resolve(import.meta.dir, "..");

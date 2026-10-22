@@ -1,11 +1,12 @@
 import { expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createClient } from "./client";
 
 test("an incompatible live daemon is rejected without commands, spawning or signalling it", async () => {
-  const directory = await mkdtemp(join(process.env.TMPDIR!, "opencode", "identity-"));
+  const directory = await mkdtemp(join(tmpdir(), "wc-identity-"));
   let requests = 0;
   let protocol: string | undefined;
   const server = Bun.serve({
@@ -31,7 +32,7 @@ test("an incompatible live daemon is rejected without commands, spawning or sign
 });
 
 test("stream identity rejects old or missing protocols before exposing a usable sender", async () => {
-  const directory = await mkdtemp(join(process.env.TMPDIR!, "opencode", "stream-id-"));
+  const directory = await mkdtemp(join(tmpdir(), "wc-stream-id-"));
   let protocol: string | undefined;
   let messages = 0;
   const server = Bun.serve({

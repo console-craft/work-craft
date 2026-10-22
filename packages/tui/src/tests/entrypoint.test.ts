@@ -1399,8 +1399,9 @@ test("raw stage 1 key sequences drive the shell", async () => {
         ?.tabId,
     ).toBe(firstTabId);
 
+    const spatialEntryOutput = tui.output().length;
     tui.terminal.write(Uint8Array.of(10));
-    await waitForTerminalInput(tui, "spatial movement to focus terminal input");
+    await waitForTerminalInput(tui, "spatial movement to focus terminal input", spatialEntryOutput);
     tui.terminal.write(input.encode("printf 'WC-%s\\n' \"$((6*7))\"\r"));
     await waitForSnapshot(
       client,
@@ -1455,8 +1456,10 @@ test("raw stage 1 key sequences drive the shell", async () => {
       () => tui.output().slice(horizontalOutputLength).includes("LEADER"),
       "horizontal split leader",
     );
+    const horizontalEntryOutput = tui.output().length;
     tui.terminal.write(input.encode("s"));
     await waitForSnapshot(client, (snapshot) => snapshot.panes.length === 3, "horizontal split");
+    await waitForTerminalInput(tui, "horizontal split terminal handoff", horizontalEntryOutput);
 
     const verticalOutputLength = tui.output().length;
     tui.terminal.write(Uint8Array.of(0));
@@ -1464,12 +1467,14 @@ test("raw stage 1 key sequences drive the shell", async () => {
       () => tui.output().slice(verticalOutputLength).includes("LEADER"),
       "vertical split leader",
     );
+    const verticalEntryOutput = tui.output().length;
     tui.terminal.write(input.encode("v"));
     const splitSnapshot = await waitForSnapshot(
       client,
       (snapshot) => snapshot.panes.length === 4,
       "vertical split",
     );
+    await waitForTerminalInput(tui, "vertical split terminal handoff", verticalEntryOutput);
     const layout = splitSnapshot.tabs.find(({ id }) => id === firstTabId)?.layout;
     expect(JSON.stringify(layout)).toContain('"direction":"horizontal"');
     expect(JSON.stringify(layout)).toContain('"direction":"vertical"');
@@ -1502,13 +1507,16 @@ test("raw stage 1 key sequences drive the shell", async () => {
       "reload to reconnect and restore its attachment",
       () => `\n${tui.output().slice(reconnectOutputLength)}`,
     );
+    const reloadEntryOutput = tui.output().length;
     tui.terminal.write(Uint8Array.of(12));
-    await waitForTerminalInput(tui, "terminal input focus after reload");
+    await waitForTerminalInput(tui, "terminal input focus after reload", reloadEntryOutput);
     tui.terminal.write(input.encode("printf 'REL-%s\\n' \"$((5*5))\"\r"));
     const reloadedSnapshot = await waitForSnapshot(
       client,
       (snapshot) => snapshot.panes.some(({ id }) => terminalText(snapshot, id).includes("REL-25")),
       "terminal output after reload",
+      (snapshot) =>
+        `\nTUI: ${tui.output().slice(reloadEntryOutput)}\nPanes: ${snapshot.panes.map(({ id }) => terminalText(snapshot, id)).join("\n")}`,
     );
     focusedPaneId = reloadedSnapshot.panes.find(({ id }) =>
       terminalText(reloadedSnapshot, id).includes("REL-25"),

@@ -112,15 +112,18 @@ test("a fresh runtime never encodes input with the previous child's modes", asyn
     },
   });
   try {
+    // Own fixture exit timing so startup/drain races cannot obscure mode isolation.
     await registry.start({
       id: "p",
       cwd: process.cwd(),
       restorePolicy: {
         type: "shell",
         executable: "/bin/sh",
-        args: ["-c", "printf '\\033[?1h\\033[?2004hOLD'"],
+        args: ["-c", "stty -echo; printf '\\033[?1h\\033[?2004hOLD'; read -r ignored"],
       },
     });
+    await waitFor(() => output.includes("OLD"));
+    registry.write("p", new TextEncoder().encode("\n"));
     await registry.waitForExit("p");
     expect(registry.material("p", 0).frame.rows[0]!.some((run) => run[1] === "O")).toBe(true);
     output = "";
@@ -130,11 +133,16 @@ test("a fresh runtime never encodes input with the previous child's modes", asyn
       restorePolicy: {
         type: "shell",
         executable: "/bin/sh",
-        args: ["-c", "stty raw -echo; printf READY; dd bs=1 count=3 2>/dev/null | od -An -tx1"],
+        args: [
+          "-c",
+          "stty raw -echo; printf READY; dd bs=1 count=3 2>/dev/null | od -An -tx1; read -r ignored",
+        ],
       },
     });
     await waitFor(() => output.includes("READY"));
     await registry.writeSemantic("p", { kind: "key", key: { key: "arrow_up" } });
+    await waitFor(() => /1b\s+5b\s+41/.test(output));
+    registry.write("p", new TextEncoder().encode("\n"));
     await registry.waitForExit("p");
     expect(output).toMatch(/1b\s+5b\s+41/);
     await registry.stopAll();

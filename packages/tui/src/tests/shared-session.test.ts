@@ -28,6 +28,8 @@ test("terminal focus readiness cannot reuse a cursor shown before the entry gest
   let stopped = false;
   try {
     await focusSharedTerminal(a);
+    sharedWrite(a, "printf '\\nFOCUS-SETTLED-%s\\n' \"$((6*7))\"\r");
+    await sharedWait(() => a.frame().includes("FOCUS-SETTLED-42"), "settled shell input", a.frame);
     process.kill(-a.child.pid, "SIGSTOP");
     stopped = true;
     let ready = false;
@@ -125,11 +127,7 @@ test("a reopened normal TUI can choose a session after chatty terminal output ex
   try {
     await focusSharedTerminal(a);
     sharedWrite(a, ":");
-    await sharedWait(
-      () => a.frame().includes("sh-3.2$ :"),
-      "large-output input readiness",
-      a.frame,
-    );
+    await sharedWait(() => a.frame().includes("$ :"), "large-output input readiness", a.frame);
     const code = 'process.stdout.write("x".repeat(900_000)+"\\nLARGE-HISTORY-READY\\n")';
     sharedWrite(a, `\x1b[200~;'${process.execPath}' -e '${code}'\r\x1b[201~`);
     await sharedWait(async () => {
@@ -186,11 +184,7 @@ test.skipIf(!Bun.which("nvim"))(
       );
       await focusSharedTerminal(a);
       sharedWrite(a, ":");
-      await sharedWait(
-        () => a.frame().includes("sh-3.2$ :"),
-        "scrolling test input readiness",
-        a.frame,
-      );
+      await sharedWait(() => a.frame().includes("$ :"), "scrolling test input readiness", a.frame);
       const prefill = 'process.stdout.write("x".repeat(1_000_000)+"\\n")';
       sharedWrite(
         a,
@@ -238,7 +232,7 @@ test("two normal TUIs display one program and one logical cursor", async () => {
     }, "A's active viewport report");
     sharedWrite(a, ":");
     await sharedWait(
-      () => fixture.tuis.every((tui) => tui.frame().includes("sh-3.2$ :")),
+      () => fixture.tuis.every((tui) => tui.frame().includes("$ :")),
       "input probe before program launch",
       a.frame,
     );
@@ -322,14 +316,16 @@ test("two normal TUIs display one program and one logical cursor", async () => {
     const reconnected = fixture.startTui(160, 45);
     await sharedWait(
       () =>
-        reconnected.frame().includes("Independent") &&
-        !reconnected.frame().includes(`shared pid=${first.pid}`),
+        [b, reconnected].every(
+          (tui) =>
+            tui.frame().includes("Independent") && !tui.frame().includes(`shared pid=${first.pid}`),
+        ),
       "reconnect reads current navigation, not the old tab",
       reconnected.frame,
     );
     sharedWrite(b, "\x1b[91;15u");
     await sharedWait(
-      () => reconnected.frame().includes(`shared pid=${first.pid}`),
+      () => [b, reconnected].every((tui) => tui.frame().includes(`shared pid=${first.pid}`)),
       "retained running program after reconnect",
       reconnected.frame,
     );
@@ -490,7 +486,7 @@ test.skipIf(!Bun.which("nvim"))(
         );
       }, "A's editor viewport report");
       sharedWrite(a, ":");
-      await sharedWait(() => a.frame().includes("sh-3.2$ :"), "editor launch input probe", a.frame);
+      await sharedWait(() => a.frame().includes("$ :"), "editor launch input probe", a.frame);
       sharedWrite(a, `\x1b[200~;'${Bun.which("nvim")}' -u NONE -i NONE -n '${file}'\r\x1b[201~`);
       await sharedWait(
         () =>

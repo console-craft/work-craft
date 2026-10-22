@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { chmod, copyFile, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import {
@@ -15,7 +16,7 @@ import { seedPreview } from "./seed-preview";
 /** Relocated compiled daemon + real PTY regression, not a manual/performance evaluation. */
 export async function smokePreview(source: string): Promise<void> {
   configurePreviewEnvironment({ ...process.env });
-  const directory = await mkdtemp(join(process.env.TMPDIR!, "opencode", "pv-"));
+  const directory = await mkdtemp(join(tmpdir(), "wc-pv-"));
   const install = join(directory, "installation with spaces");
   const executable = join(install, "work-craft-preview");
   const home = join(directory, "s");

@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { CompactMaterialFrame } from "./api/terminal-material";
@@ -25,11 +27,8 @@ async function fixture() {
   let hold = false;
   let stale = false;
   let respond: (() => void) | undefined;
-  const socketPath = join(
-    process.env.TMPDIR ?? "/tmp",
-    "opencode",
-    `projection-${crypto.randomUUID()}.sock`,
-  );
+  const directory = await mkdtemp(join(tmpdir(), "wc-projection-"));
+  const socketPath = join(directory, "d.sock");
   const server = Bun.serve({
     unix: socketPath,
     fetch(request, server) {
@@ -105,6 +104,7 @@ async function fixture() {
     async close() {
       connection.close();
       await server.stop(true);
+      await rm(directory, { recursive: true });
     },
   };
 }
