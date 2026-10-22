@@ -1185,6 +1185,7 @@ test("item Enter enters and restores a remembered active-tab pane without remoun
     await setup.flush();
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("terminal:pane-1");
     await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
+    await setup.flush();
     const remembered = setup.renderer.currentFocusedRenderable;
     expect(remembered?.id).toBe("terminal:pane-2");
     await act(async () => setup.mockInput.pressKey("k", { ctrl: true }));

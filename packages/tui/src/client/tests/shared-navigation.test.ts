@@ -153,7 +153,12 @@ function fixture() {
   });
   const client: WorkCraftClient = {
     ensureDaemon: async () => {},
-    health: async () => ({ epoch: "epoch-a", revision: 4, pid: 1 }),
+    health: async () => ({
+      epoch: "epoch-a",
+      revision: 4,
+      pid: 1,
+      protocol: "work-craft-projection-preview/1",
+    }),
     snapshot: async () => snapshot,
     controlSnapshot: async () => controlSnapshotFixture(await client.snapshot()),
     paneHistory: async (paneId) => ({
@@ -168,14 +173,11 @@ function fixture() {
       throw new Error("TUI must use attached stream RPC");
     },
     streamOnce: async () => ({ type: "snapshot", snapshot }),
-    stream: async () => ({
-      close() {},
-      attach: async (sessionId) => ({ connectionId: "connection", generation: 1, sessionId }),
-      command: async () => ({ ok: true, revision: 4, result: { id: "id" } }),
-      reportViewport() {},
-      activity() {},
-      sendInput() {},
-    }),
+    stream: async () =>
+      streamFixture({
+        attach: async (sessionId) => ({ connectionId: "connection", generation: 1, sessionId }),
+        command: async () => ({ ok: true, revision: 4, result: { id: "id" } }),
+      }),
   };
   return { snapshot, client };
 }

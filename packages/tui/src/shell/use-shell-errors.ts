@@ -6,6 +6,7 @@ import {
   observeOperationalFailures,
   OPERATIONAL_ERROR_DURATION,
   type OperationalError,
+  processSourceKey,
 } from "@/shell/errors";
 import type { ShellAction } from "@/shell/state";
 
@@ -21,7 +22,15 @@ export function useShellErrors({
   error: OperationalError | null;
   dispatch(action: ShellAction): void;
   nextRequestId(): number;
-}): { now: number; reportMissingPane(paneId: string, message: string, contextKey: string): void } {
+}): {
+  now: number;
+  reportPaneFailure(
+    paneId: string,
+    message: string,
+    contextKey: string,
+    operation?: "Layout" | "Terminal",
+  ): void;
+} {
   const [clock, setClock] = useState(Date.now());
   const missingPanes = useRef(new Map<string, string>());
   useEffect(() => {
@@ -45,19 +54,25 @@ export function useShellErrors({
     });
   }, [snapshot, connectionError]);
 
-  function reportMissingPane(paneId: string, message: string, contextKey: string): void {
-    if (missingPanes.current.get(paneId) === message) {
+  function reportPaneFailure(
+    paneId: string,
+    message: string,
+    contextKey: string,
+    operation: "Layout" | "Terminal" = "Layout",
+  ): void {
+    const key = `${paneId}:${operation}`;
+    if (missingPanes.current.get(key) === message) {
       return;
     }
-    missingPanes.current.set(paneId, message);
+    missingPanes.current.set(key, message);
     const now = Date.now();
     dispatch({
       type: "source.report",
       now,
       error: {
-        sourceKey: layoutSourceKey(paneId),
+        sourceKey: operation === "Layout" ? layoutSourceKey(paneId) : processSourceKey(paneId),
         sourceLabel: "Pane",
-        operation: "Layout",
+        operation,
         epoch: snapshot?.epoch ?? "",
         contextKey,
         requestId: nextRequestId(),
@@ -67,5 +82,5 @@ export function useShellErrors({
       },
     });
   }
-  return { now: Math.max(clock, Date.now()), reportMissingPane };
+  return { now: Math.max(clock, Date.now()), reportPaneFailure };
 }

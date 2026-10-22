@@ -14,6 +14,8 @@ test("TUI server fixtures and React resolve one pinned OpenTUI core", () => {
   expect(new Set(paths).size).toBe(1);
   for (const entry of [paths[0]!, realpathSync(reactEntry)]) {
     const metadata = JSON.parse(readFileSync(join(dirname(entry), "package.json"), "utf8"));
-    expect(metadata.version).toBe("0.6.6-workcraft.1");
+    expect(metadata.version).toBe("0.6.6");
+    expect(entry).not.toContain("vendor");
+    expect(entry).not.toContain("workcraft.1");
   }
 });

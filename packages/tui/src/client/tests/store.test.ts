@@ -125,7 +125,12 @@ function fakeClient(replacement: Snapshot): WorkCraftClient & { refreshCount(): 
   let refreshes = 0;
   const client: WorkCraftClient & { refreshCount(): number } = {
     ensureDaemon: async () => {},
-    health: async () => ({ epoch: replacement.epoch, revision: replacement.revision, pid: 1 }),
+    health: async () => ({
+      epoch: replacement.epoch,
+      revision: replacement.revision,
+      pid: 1,
+      protocol: "work-craft-projection-preview/1",
+    }),
     snapshot: async () => {
       refreshes += 1;
       return replacement;

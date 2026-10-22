@@ -5,6 +5,7 @@ import {
   type TerminalInputContext,
   type ViewerReport,
 } from "./protocol.ts";
+import { parseTerminalProjectionRequest } from "./terminal-projection-protocol";
 
 function object(value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -67,6 +68,10 @@ function viewer(value: unknown): ViewerReport | null {
 export function parseInteractiveMessage(value: unknown): InteractiveMessage {
   const input = object(value);
   switch (input.type) {
+    case "terminal.material":
+    case "terminal.semantic":
+    case "terminal.paste":
+      return parseTerminalProjectionRequest(input);
     case "client.attach":
       return {
         type: input.type,

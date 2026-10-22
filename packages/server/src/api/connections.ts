@@ -1,6 +1,8 @@
 import { projectPaneLayout } from "../application/layout.ts";
 import type { NavigationCatalog } from "../application/navigation.ts";
+import { TERMINAL_PROTOCOL } from "./identity";
 import { parseInteractiveMessage } from "./interactive-protocol.ts";
+import { STREAM_BACKPRESSURE_LIMIT } from "./protocol";
 import {
   type ClientAttachment,
   type CommandResponse,
@@ -14,6 +16,10 @@ import {
   type TerminalInputContext,
   type ViewerReport,
 } from "./protocol.ts";
+import type { CompactMaterialFrame, SemanticTerminalInput } from "./terminal-material";
+import { createPasteReceiver } from "./terminal-paste";
+import type { TerminalProjectionRequest } from "./terminal-projection-protocol";
+import type { TerminalProjectionContext } from "./terminal-projection-protocol";
 
 export type InteractiveSnapshot = Omit<NavigationCatalog, "panes"> &
   Pick<Snapshot, "epoch" | "revision" | "panes"> & {
@@ -38,6 +44,7 @@ type Connection = {
   lastRequestId: number;
   requests: Set<number>;
   report: ViewerReport | null;
+  paste: ReturnType<typeof createPasteReceiver>;
 };
 type ConnectionOptions = {
   epoch: string;
@@ -49,6 +56,12 @@ type ConnectionOptions = {
   onActivity(connectionId: string, sequence: number): void;
   onDisconnect(connectionId: string): void;
   onInput(paneId: string, bytes: Uint8Array, source: "input" | "response"): void;
+  onMaterial?(
+    paneId: string,
+    scrollOffset: number,
+  ): { sequence: number; frame: CompactMaterialFrame };
+  onSemantic?(paneId: string, input: SemanticTerminalInput | Uint8Array): Promise<boolean>;
+  inputPending?(paneId: string): boolean;
 };
 
 function send(socket: Bun.ServerWebSocket<unknown>, message: InteractiveServerMessage): void {
@@ -74,6 +87,7 @@ function validPane(
   snapshot: InteractiveSnapshot,
   navigation: SessionNavigation,
   paneId: string,
+  requireRunning = true,
 ): boolean {
   const pane = snapshot.panes.find(({ id }) => id === paneId);
   const tab = snapshot.tabs.find(({ id }) => id === navigation.tabId);
@@ -82,7 +96,7 @@ function validPane(
   const parent = snapshot.items.find(({ id }) => id === item?.parentId);
   return (
     pane?.kind === "terminal" &&
-    pane.processStatus === "running" &&
+    (!requireRunning || pane.processStatus === "running") &&
     pane.surfaceId === surface?.id &&
     item !== undefined &&
     item.id === navigation.itemId &&
@@ -111,14 +125,198 @@ export function createConnections(options: ConnectionOptions): ConnectionRegistr
   function close(socket: Bun.ServerWebSocket<unknown>): void {
     const connection = connections.get(socket);
     if (connection) {
+      connection.paste.clear();
       connections.delete(socket);
       options.onDisconnect(connection.attachment.connectionId);
     }
   }
 
   function withdraw(connection: Connection): void {
+    connection.paste.clear();
     connection.report = null;
     options.onViewer(connection.attachment.connectionId, null);
+  }
+
+  function eligible(
+    snapshot: InteractiveSnapshot,
+    connection: Connection,
+    navigation: SessionNavigation,
+    paneId: string,
+  ): boolean {
+    const report = connection.report;
+    const layout = snapshot.tabs.find(({ id }) => id === navigation.tabId)?.layout ?? null;
+    const rect =
+      report &&
+      projectPaneLayout(layout, {
+        x: 0,
+        y: 0,
+        width: report.canvas.cols,
+        height: report.canvas.rows,
+      }).panes.find((pane) => pane.paneId === paneId)?.rect;
+    return (
+      paneId === navigation.paneId &&
+      report?.eligible === true &&
+      report.tabId === navigation.tabId &&
+      report.canvas.cols >= 60 &&
+      report.canvas.rows >= 6 &&
+      !!rect &&
+      rect.width >= 20 &&
+      rect.height - 1 >= 5
+    );
+  }
+
+  function projectionScope(
+    connection: Connection,
+    paneId: string,
+    stamp: TerminalProjectionContext,
+    requireRunning: boolean,
+  ): { snapshot: InteractiveSnapshot; navigation: SessionNavigation } {
+    const snapshot = options.snapshot();
+    const navigation = context(snapshot, connection, stamp);
+    const tab = snapshot.geometry.tabs.find((entry) => entry.tabId === navigation?.tabId);
+    if (
+      !navigation ||
+      tab?.generation !== stamp.geometrySequence ||
+      stamp.runtimeGeneration !== options.runtimeGeneration?.(paneId) ||
+      !validPane(snapshot, navigation, paneId, requireRunning)
+    ) {
+      throw new ProtocolError("Stale or unauthorized terminal scope");
+    }
+    return { snapshot, navigation };
+  }
+
+  function clearObsoletePaste(connection: Connection): void {
+    const stamp = connection.paste.stamp;
+    if (!stamp) {
+      return;
+    }
+    try {
+      const scope = projectionScope(connection, stamp.paneId, stamp, true);
+      if (!eligible(scope.snapshot, connection, scope.navigation, stamp.paneId)) {
+        connection.paste.clear();
+      }
+    } catch {
+      connection.paste.clear();
+    }
+  }
+
+  function receivePaste(
+    connection: Connection,
+    message: Extract<TerminalProjectionRequest, { type: "terminal.paste" }>,
+  ): Uint8Array | null {
+    const { transfer } = message;
+    const stamp = { ...message.context, paneId: message.paneId };
+    switch (transfer.operation) {
+      case "begin":
+        return connection.paste.accept(
+          { type: "paste.begin", id: transfer.id, total: transfer.total, stamp },
+          stamp,
+        );
+      case "chunk":
+        return connection.paste.accept(
+          {
+            type: "paste.chunk",
+            id: transfer.id,
+            offset: transfer.offset,
+            data: transfer.data,
+            stamp,
+          },
+          stamp,
+        );
+      case "commit":
+      case "cancel":
+        return connection.paste.accept(
+          {
+            type: transfer.operation === "commit" ? "paste.commit" : "paste.cancel",
+            id: transfer.id,
+            stamp,
+          },
+          stamp,
+        );
+    }
+  }
+
+  async function projection(
+    socket: Bun.ServerWebSocket<unknown>,
+    connection: Connection,
+    message: TerminalProjectionRequest,
+  ): Promise<void> {
+    if (message.type === "terminal.paste" && message.transfer.operation === "cancel") {
+      receivePaste(connection, message);
+      send(socket, {
+        type: "terminal.input.result",
+        requestId: message.requestId,
+        forwarded: false,
+      });
+      return;
+    }
+    clearObsoletePaste(connection);
+    const { snapshot, navigation } = projectionScope(
+      connection,
+      message.paneId,
+      message.context,
+      message.type !== "terminal.material",
+    );
+    let reply: InteractiveServerMessage;
+    if (message.type === "terminal.material") {
+      if (!options.onMaterial) {
+        throw new ProtocolError("Terminal material is unavailable");
+      }
+      reply = {
+        type: "terminal.material.result",
+        requestId: message.requestId,
+        material: {
+          paneId: message.paneId,
+          context: message.context,
+          ...options.onMaterial(message.paneId, message.scrollOffset),
+        },
+      };
+    } else {
+      if (!eligible(snapshot, connection, navigation, message.paneId)) {
+        throw new ProtocolError("Terminal is not eligible for input");
+      }
+      if (
+        message.context.kind !== "focus" &&
+        message.context.activitySequence !== undefined &&
+        (message.type === "terminal.semantic" || message.transfer.operation === "begin")
+      ) {
+        options.onActivity(connection.attachment.connectionId, message.context.activitySequence);
+        for (const entry of connections.values()) {
+          clearObsoletePaste(entry);
+        }
+      }
+      const current = projectionScope(connection, message.paneId, message.context, true);
+      if (!eligible(current.snapshot, connection, current.navigation, message.paneId)) {
+        throw new ProtocolError("Terminal input scope changed during activity");
+      }
+      if (!options.onSemantic) {
+        throw new ProtocolError("Semantic input is unavailable");
+      }
+      if (options.inputPending?.(message.paneId)) {
+        throw new ProtocolError("Terminal input in flight");
+      }
+      let forwarded = false;
+      if (message.type === "terminal.paste") {
+        const complete = receivePaste(connection, message);
+        if (complete) {
+          forwarded = await options.onSemantic(message.paneId, complete);
+        }
+      } else {
+        if (connection.paste.bytes) {
+          throw new ProtocolError("Paste pending; input cannot overtake it");
+        }
+        forwarded = await options.onSemantic(message.paneId, message.input);
+      }
+      reply = { type: "terminal.input.result", requestId: message.requestId, forwarded };
+    }
+    if (connections.get(socket) !== connection) {
+      return;
+    }
+    const encoded = JSON.stringify(reply);
+    if (Buffer.byteLength(encoded) > STREAM_BACKPRESSURE_LIMIT) {
+      throw new ProtocolError("Projection frame envelope byte limit");
+    }
+    socket.send(encoded);
   }
 
   function input(
@@ -127,6 +325,9 @@ export function createConnections(options: ConnectionOptions): ConnectionRegistr
     data: string,
     stamp: TerminalInputContext,
   ): void {
+    if (stamp.source === "input" && (connection.paste.bytes || options.inputPending?.(paneId))) {
+      return;
+    }
     const snapshot = options.snapshot();
     const navigation = context(snapshot, connection, stamp);
     const tab = snapshot.geometry.tabs.find(({ tabId }) => tabId === navigation?.tabId);
@@ -146,26 +347,7 @@ export function createConnections(options: ConnectionOptions): ConnectionRegistr
       }
       return;
     }
-    const report = connection.report;
-    const layout = snapshot.tabs.find(({ id }) => id === navigation.tabId)?.layout ?? null;
-    const rect =
-      report &&
-      projectPaneLayout(layout, {
-        x: 0,
-        y: 0,
-        width: report.canvas.cols,
-        height: report.canvas.rows,
-      }).panes.find((pane) => pane.paneId === paneId)?.rect;
-    if (
-      paneId !== navigation.paneId ||
-      !report?.eligible ||
-      report.tabId !== navigation.tabId ||
-      report.canvas.cols < 60 ||
-      report.canvas.rows < 6 ||
-      !rect ||
-      rect.width < 20 ||
-      rect.height - 1 < 5
-    ) {
+    if (!eligible(snapshot, connection, navigation, paneId)) {
       return;
     }
     const previousSize = snapshot.geometry.panes.find((pane) => pane.paneId === paneId)?.size;
@@ -193,8 +375,14 @@ export function createConnections(options: ConnectionOptions): ConnectionRegistr
         lastRequestId: 0,
         requests: new Set(),
         report: null,
+        paste: createPasteReceiver(),
       });
-      send(socket, { type: "client.ready", epoch: options.epoch, connectionId });
+      send(socket, {
+        type: "client.ready",
+        epoch: options.epoch,
+        connectionId,
+        protocol: TERMINAL_PROTOCOL,
+      });
       return connectionId;
     },
     close,
@@ -213,6 +401,7 @@ export function createConnections(options: ConnectionOptions): ConnectionRegistr
     reconcile() {
       const snapshot = options.snapshot();
       for (const [socket, connection] of connections) {
+        clearObsoletePaste(connection);
         const sessionId = connection.attachment.sessionId;
         if (sessionId !== null && !snapshot.sessions.some(({ id }) => id === sessionId)) {
           withdraw(connection);
@@ -242,14 +431,23 @@ export function createConnections(options: ConnectionOptions): ConnectionRegistr
       }
       try {
         const message = parseInteractiveMessage(value);
-        if (message.type === "client.attach" || message.type === "client.command") {
+        if (
+          message.type === "client.attach" ||
+          message.type === "client.command" ||
+          message.type === "terminal.material" ||
+          message.type === "terminal.semantic" ||
+          message.type === "terminal.paste"
+        ) {
           if (message.requestId <= connection.lastRequestId) {
             throw new ProtocolError("interactive request IDs must increase");
           }
           connection.lastRequestId = message.requestId;
           if (connection.requests.size >= 128) {
             send(socket, {
-              type: "command.error",
+              type:
+                message.type === "client.attach" || message.type === "client.command"
+                  ? "command.error"
+                  : "terminal.error",
               requestId: message.requestId,
               message: "Too many interactive requests in flight",
             });
@@ -257,7 +455,13 @@ export function createConnections(options: ConnectionOptions): ConnectionRegistr
           }
           connection.requests.add(message.requestId);
           try {
-            if (message.type === "client.attach") {
+            if (
+              message.type === "terminal.material" ||
+              message.type === "terminal.semantic" ||
+              message.type === "terminal.paste"
+            ) {
+              await projection(socket, connection, message);
+            } else if (message.type === "client.attach") {
               if (
                 message.sessionId !== null &&
                 !options.snapshot().sessions.some(({ id }) => id === message.sessionId)
@@ -296,12 +500,27 @@ export function createConnections(options: ConnectionOptions): ConnectionRegistr
             }
           } catch (error) {
             if (connections.get(socket) === connection) {
-              send(socket, {
-                type: "command.error",
-                requestId: message.requestId,
-                message: error instanceof ProtocolError ? error.message : "Internal server error",
-                ...(error instanceof ProtocolError && error.field ? { field: error.field } : {}),
-              });
+              if (
+                message.type === "terminal.material" ||
+                message.type === "terminal.semantic" ||
+                message.type === "terminal.paste"
+              ) {
+                send(socket, {
+                  type: "terminal.error",
+                  requestId: message.requestId,
+                  message: (error instanceof Error
+                    ? error.message
+                    : "Terminal request failed"
+                  ).slice(0, 256),
+                });
+              } else {
+                send(socket, {
+                  type: "command.error",
+                  requestId: message.requestId,
+                  message: error instanceof ProtocolError ? error.message : "Internal server error",
+                  ...(error instanceof ProtocolError && error.field ? { field: error.field } : {}),
+                });
+              }
             }
           } finally {
             connection.requests.delete(message.requestId);
@@ -332,6 +551,9 @@ export function createConnections(options: ConnectionOptions): ConnectionRegistr
           }
         } else if (connection.report?.eligible && connection.report.tabId === navigation.tabId) {
           options.onActivity(connection.attachment.connectionId, message.sequence);
+        }
+        for (const entry of connections.values()) {
+          clearObsoletePaste(entry);
         }
       } catch {
         close(socket);

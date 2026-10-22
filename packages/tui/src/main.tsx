@@ -1,4 +1,4 @@
-import { CliRenderEvents, createCliRenderer, EmbeddedTerminalRenderable } from "@opentui/core";
+import { CliRenderEvents, createCliRenderer } from "@opentui/core";
 import { createRoot, extend } from "@opentui/react";
 
 import { App } from "@/app.tsx";
@@ -6,14 +6,15 @@ import { observeOutput, outputProbeEnabled } from "@/client/output-probe";
 import { ComponentsDemo } from "@/demos/components";
 import { ControlsDemo } from "@/demos/controls";
 import { configureRendererListeners } from "@/ui/renderer";
+import { TerminalMaterialRenderable } from "@/workbench/terminal-material";
 
 declare module "@opentui/react" {
   interface OpenTUIComponents {
-    terminal: typeof EmbeddedTerminalRenderable;
+    terminal: typeof TerminalMaterialRenderable;
   }
 }
 
-extend({ terminal: EmbeddedTerminalRenderable });
+extend({ terminal: TerminalMaterialRenderable });
 
 let component = null;
 

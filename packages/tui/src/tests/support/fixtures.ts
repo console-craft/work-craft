@@ -28,6 +28,12 @@ export function streamFixture(overrides: Partial<StreamConnection> = {}): Stream
   return {
     close() {},
     sendInput() {},
+    requestMaterial: async () => {
+      throw new Error("Fixture has no material source");
+    },
+    sendSemantic: async () => {
+      throw new Error("Fixture has no semantic sink");
+    },
     reportViewport() {},
     activity() {},
     attach: async (sessionId) => attachmentFixture(sessionId),

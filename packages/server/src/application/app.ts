@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 
 import { type CommandOrigin, createConnections } from "../api/connections.ts";
+import { TERMINAL_PROTOCOL } from "../api/identity";
 import { encodeBytes, parseCommand, ProtocolError } from "../api/protocol.ts";
 import type {
   ClientMessage,
@@ -23,7 +24,7 @@ import { normalizeSessionNavigations, readNavigationCatalog } from "./navigation
 import { createTerminalSizing, type GeometryDecision } from "./sizing.ts";
 import { readSnapshot, readSnapshotState } from "./snapshot.ts";
 
-export type Health = { epoch: string; revision: number; pid: number };
+export type Health = { epoch: string; revision: number; pid: number; protocol: string };
 
 const MAX_INLINE_SNAPSHOT_BYTES = 512 * 1024;
 
@@ -418,12 +419,15 @@ export function createApp(options: {
     snapshot: () => readSnapshotState(options.db, epoch, revision, sizing.current()),
     execute,
     runtimeGeneration: (paneId) => runtime.generation(paneId),
+    onMaterial: (paneId, scrollOffset) => runtime.material(paneId, scrollOffset),
+    onSemantic: (paneId, input) => runtime.writeSemantic(paneId, input),
+    inputPending: (paneId) => runtime.inputPending(paneId),
     onViewer: (id, report) => applyGeometry(sizing.report(id, report)),
     onAttachActivity: (id) => applyGeometry(sizing.attachmentActivity(id)),
     onActivity: (id, sequence) => applyGeometry(sizing.activity(id, sequence)),
     onDisconnect: (id) => applyGeometry(sizing.remove(id)),
-    onInput: (paneId, bytes) => {
-      if (runtime.isLive(paneId)) {
+    onInput: (paneId, bytes, source) => {
+      if (source === "input" && runtime.isLive(paneId)) {
         runtime.write(paneId, bytes);
       }
     },
@@ -582,7 +586,7 @@ export function createApp(options: {
     closeDirectoryRefresh,
     execute,
     health() {
-      return { epoch, revision, pid: process.pid };
+      return { epoch, revision, pid: process.pid, protocol: TERMINAL_PROTOCOL };
     },
     receive: (socket, message) => connections.receive(socket, message),
     subscribe(socket, options) {

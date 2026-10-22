@@ -583,6 +583,7 @@ test("buffered spatial movement uses the actual native source", async () => {
     await openFixtureItem(setup);
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:navigator");
     await act(async () => setup.mockInput.pressKeys(["\x0c", "\x0c"]));
+    await setup.flush();
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("terminal:pane-2");
     await act(async () => setup.mockInput.pressKey("s", { hyper: true }));
     await act(async () => setup.mockInput.pressEscape());
@@ -780,6 +781,7 @@ test("buffered movement through tabs restores the last native pane", async () =>
     await setup.flush();
     await openFixtureItem(setup);
     await act(async () => setup.mockInput.pressKeys(["\x0c", "\x0c", "\x0b", "\n"]));
+    await setup.flush();
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("terminal:pane-2");
   } finally {
     act(() => setup.renderer.destroy());

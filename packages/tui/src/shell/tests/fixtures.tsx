@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 
-import { EmbeddedTerminalRenderable, type Renderable, TextRenderable } from "@opentui/core";
+import { type Renderable, TextRenderable } from "@opentui/core";
 import { extend } from "@opentui/react";
 import {
   type Command,
@@ -23,13 +23,15 @@ import {
   streamFixture,
   terminalSnapshotFixture,
 } from "@/tests/support/fixtures.ts";
+import { materialStreamFixture } from "@/tests/support/material-stream";
 import { flushMeasured } from "@/tests/support/measured-render";
 import { testRender as renderWithoutTheme } from "@/tests/support/render";
 import { ThemeProvider } from "@/ui/theming/theme-provider.tsx";
 import { defaultTheme } from "@/ui/theming/themes/default.ts";
 import { paneIds } from "@/workbench/layout.ts";
+import { TerminalMaterialRenderable } from "@/workbench/terminal-material";
 
-extend({ terminal: EmbeddedTerminalRenderable });
+extend({ terminal: TerminalMaterialRenderable });
 
 export async function testRender(
   node: ReactNode,
@@ -191,6 +193,17 @@ export function workCraftStateFixture(
   if (overrides.outputs === undefined && initial && "terminalHistories" in initial) {
     fixture.outputs = createTerminalOutputs(snapshotTerminals(initial, new Map()));
   }
+  if (fixture.status === "connected" && overrides.stream !== null) {
+    fixture.stream = materialStreamFixture(
+      (paneId) => fixture.outputs.pane(paneId).read(),
+      (paneId) =>
+        fixture.geometry.panes.find((pane) => pane.paneId === paneId)?.size ?? {
+          cols: 80,
+          rows: 24,
+        },
+      fixture.stream ?? streamFixture(),
+    );
+  }
   return fixture;
 }
 
@@ -211,7 +224,12 @@ export async function liveInputFixture(
   let commit: ((state: WorkCraftState) => void) | undefined;
   const client: WorkCraftClient = {
     ensureDaemon: async () => {},
-    health: async () => ({ epoch: initial.epoch, revision: initial.revision, pid: 1 }),
+    health: async () => ({
+      epoch: initial.epoch,
+      revision: initial.revision,
+      pid: 1,
+      protocol: "work-craft-projection-preview/1",
+    }),
     snapshot: async () => initial,
     controlSnapshot: async () => controlSnapshotFixture(initial),
     paneHistory: async (paneId) => ({
@@ -222,13 +240,21 @@ export async function liveInputFixture(
     }),
     streamOnce: async () => ({ type: "snapshot", snapshot: initial }),
     stream: async () =>
-      streamFixture({
-        close() {},
-        sendInput: (paneId, bytes) => sent.push({ paneId, bytes: [...bytes] }),
-        reportViewport: (report) => viewports.push(report),
-        activity: (...args) => activities.push(args),
-        command: (command) => client.command(command),
-      }),
+      materialStreamFixture(
+        (paneId) => store.getState().outputs.pane(paneId).read(),
+        (paneId) =>
+          store.getState().geometry.panes.find((pane) => pane.paneId === paneId)?.size ?? {
+            cols: 80,
+            rows: 24,
+          },
+        streamFixture({
+          close() {},
+          sendInput: (paneId, bytes) => sent.push({ paneId, bytes: [...bytes] }),
+          reportViewport: (report) => viewports.push(report),
+          activity: (...args) => activities.push(args),
+          command: (command) => client.command(command),
+        }),
+      ),
     command: async (command) => {
       commands.push(command);
       if (command.type === "directory.register") {
@@ -340,10 +366,10 @@ export async function liveInputFixture(
     splits,
     tabCreates,
     registrations,
-    async output(text: string): Promise<void> {
+    async output(text: string, targetPaneId?: string): Promise<void> {
       const current = store.getState();
       const navigation = current.snapshot!.navigation[0]!;
-      const paneId = navigation.paneId!;
+      const paneId = targetPaneId ?? navigation.paneId!;
       const buffer = current.outputs.pane(paneId).read()!;
       const bytes = new TextEncoder().encode(text);
       await store.apply({

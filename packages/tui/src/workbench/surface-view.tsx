@@ -1,4 +1,4 @@
-import type { BoxRenderable, EmbeddedTerminalRenderable } from "@opentui/core";
+import type { BoxRenderable, Renderable } from "@opentui/core";
 import {
   type ControlSnapshot,
   projectPaneLayout,
@@ -18,10 +18,7 @@ import { selectedTab } from "@/workbench/model";
 import { paneNotice } from "@/workbench/pane-state.ts";
 import { TerminalPane, type TerminalPaneProps } from "@/workbench/terminal-pane.tsx";
 
-export type SurfaceViewProps = Pick<
-  TerminalPaneProps,
-  "stamp" | "canRespond" | "inputEvent" | "onMouseInput" | "onResync"
-> & {
+export type SurfaceViewProps = Pick<TerminalPaneProps, "stamp" | "inputEvent" | "onMouseInput"> & {
   activeTabId: string | null;
   connected: boolean;
   preservePresentation?: boolean;
@@ -36,8 +33,12 @@ export type SurfaceViewProps = Pick<
   workbenchFocused: boolean;
   undersized: boolean;
   onFocusPane(paneId: string): void;
-  onTerminalReady(paneId: string, terminal: EmbeddedTerminalRenderable | null): void;
-  onSourceFailure?(source: { paneId: string; message: string }): void;
+  onTerminalReady(paneId: string, terminal: Renderable | null): void;
+  onSourceFailure?(source: {
+    paneId: string;
+    message: string;
+    operation?: "Layout" | "Terminal";
+  }): void;
   inputEnabled?: boolean;
   canReceiveInput?(paneId?: string): boolean;
 };
@@ -50,10 +51,8 @@ export function SurfaceView({
   onReactivatePane,
   activeTabId,
   stamp,
-  canRespond,
   inputEvent,
   onMouseInput,
-  onResync,
   inputEnabled = true,
   canReceiveInput,
   focusedPaneId,
@@ -149,10 +148,11 @@ export function SurfaceView({
                     pane={pane}
                     size={snapshot.geometry.panes.find((entry) => entry.paneId === paneId)!.size}
                     stamp={stamp}
-                    canRespond={canRespond}
                     inputEvent={inputEvent}
                     onMouseInput={onMouseInput}
-                    onResync={onResync}
+                    onError={(message) =>
+                      onSourceFailure?.({ paneId, message, operation: "Terminal" })
+                    }
                     stream={stream}
                     inputEnabled={inputEnabled && usable}
                     canReceiveInput={canReceiveInput}

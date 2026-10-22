@@ -7,7 +7,12 @@ import { act, useRef, useState } from "react";
 import { flushMeasured } from "@/tests/support/measured-render";
 import { testRender } from "@/tests/support/render";
 
-extend({ terminal: EmbeddedTerminalRenderable });
+declare module "@opentui/react" {
+  interface OpenTUIComponents {
+    gridReference: typeof EmbeddedTerminalRenderable;
+  }
+}
+extend({ gridReference: EmbeddedTerminalRenderable });
 
 async function nativeViewport(width: number, height: number) {
   const resizes: { cols: number; rows: number }[] = [];
@@ -20,7 +25,7 @@ async function nativeViewport(width: number, height: number) {
     const [offset, setOffset] = useState({ x: 0, y: 0 });
     return (
       <box position="absolute" left={2} top={2} width={width} height={height} overflow="hidden">
-        <terminal
+        <gridReference
           id="shared-terminal"
           ref={terminal}
           cols={100}
