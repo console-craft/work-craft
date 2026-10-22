@@ -5,8 +5,22 @@ import type {
 } from "./terminal-projection-types";
 
 const limit = 8 * 1024 * 1024;
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+function fields(value: unknown, names: readonly string[]): void {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Invalid projection object");
+  }
+  for (const name of Object.keys(value)) {
+    if (!names.includes(name)) {
+      throw new Error("Unexpected projection field");
+    }
+  }
+}
 
 function geometry(size: MaterialFrame["size"], cursor: MaterialFrame["cursor"]): void {
+  fields(size, ["cols", "rows"]);
+  fields(cursor, ["x", "y", "visible", "blinking", "style"]);
   if (
     !size ||
     ![size.cols, size.rows].every((n) => Number.isSafeInteger(n) && n >= 1 && n <= 4096) ||
@@ -27,6 +41,7 @@ function geometry(size: MaterialFrame["size"], cursor: MaterialFrame["cursor"]):
 }
 
 function styleValue(style: CompactMaterialFrame["styles"][number]): void {
+  fields(style, ["fg", "bg", "attributes"]);
   if (
     !style ||
     ![style.fg, style.bg].every(
@@ -54,6 +69,7 @@ export function validateCompactFrame(value: unknown): CompactMaterialFrame {
   if (!frame || typeof frame !== "object") {
     throw new Error("Invalid projection frame");
   }
+  fields(frame, ["size", "cursor", "styles", "rows"]);
   geometry(frame.size, frame.cursor);
   if (
     !Array.isArray(frame.styles) ||
@@ -102,6 +118,13 @@ export function validateCompactFrame(value: unknown): CompactMaterialFrame {
         (width === 2 && count !== 1)
       ) {
         throw new Error("Invalid projection cell width/text");
+      }
+      if (width !== 0) {
+        const segments = graphemes.segment(text)[Symbol.iterator]();
+        segments.next();
+        if (!segments.next().done || Bun.stringWidth(text) !== width) {
+          throw new Error("Projection cell text/width mismatch");
+        }
       }
       tail = width === 2;
       columns += count;

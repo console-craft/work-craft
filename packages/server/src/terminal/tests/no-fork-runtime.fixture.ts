@@ -29,6 +29,7 @@ async function serve(socket: string, log: string): Promise<void> {
   let bytes = 0;
   let token = 0;
   let inputFrontier = 0;
+  let inputInFlight = false;
   function writeInput(data: Uint8Array): number {
     if (inputFrontier + data.length > 8 * 1024 * 1024) {
       throw new Error("Input observation limit");
@@ -151,6 +152,7 @@ async function serve(socket: string, log: string): Promise<void> {
             bytes,
             input,
             inputBytes,
+            inputFrontier,
             inputHash: inputHash.copy().digest("hex"),
             stamp,
             sequence: ++sequence,
@@ -192,6 +194,9 @@ async function serve(socket: string, log: string): Promise<void> {
         if (url.pathname === "/input" && request.method === "POST") {
           let encoded: Uint8Array;
           const message = (await request.json()) as ProjectionInput | PasteMessage;
+          if (inputInFlight) {
+            throw new Error("Input in flight; wait for child acknowledgement");
+          }
           if (message && "type" in message) {
             const completed = paste.accept(message, stamp);
             if (!completed) {
@@ -273,15 +278,20 @@ async function serve(socket: string, log: string): Promise<void> {
               throw new Error("Unsupported fixture input");
             }
           }
-          const required = writeInput(encoded);
-          const deadline = Date.now() + 4000;
-          while (inputBytes < required && Date.now() < deadline && !failure) {
-            await Bun.sleep(1);
+          inputInFlight = true;
+          try {
+            const required = writeInput(encoded);
+            const deadline = Date.now() + 4000;
+            while (inputBytes < required && Date.now() < deadline && !failure) {
+              await Bun.sleep(1);
+            }
+            if (failure || inputBytes < required) {
+              throw new Error(failure ?? "Child input acknowledgement timed out");
+            }
+            return Response.json({ forwarded: encoded.length > 0 });
+          } finally {
+            inputInFlight = false;
           }
-          if (failure || inputBytes < required) {
-            throw new Error(failure ?? "Child input acknowledgement timed out");
-          }
-          return Response.json({ forwarded: encoded.length > 0 });
         }
         return new Response("Unknown fixture request", { status: 404 });
       } catch (error) {

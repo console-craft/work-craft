@@ -34,6 +34,7 @@ type RuntimeState = {
   bytes: number;
   input: number[];
   inputBytes: number;
+  inputFrontier: number;
   inputHash: string;
   frame: CompactMaterialFrame;
 };
@@ -860,6 +861,15 @@ test("invalid compact material retains the last picture and later valid material
     view.requestRender();
     await setup.flush();
     expect(setup.captureCharFrame()).toBe(before);
+    const badWidth = structuredClone(state.frame);
+    badWidth.rows[0] = [
+      [1, "ab", 1, 0],
+      [11, " ", 1, 0],
+    ];
+    expect(() => view.setFrame(badWidth)).toThrow("width");
+    view.requestRender();
+    await setup.flush();
+    expect(setup.captureCharFrame()).toBe(before);
     await live.output("\x1b[HAFTER ");
     view.setFrame((await live.state()).frame);
     await setup.flush();
@@ -1029,6 +1039,85 @@ test("paste chunk boundaries preserve native sanitization and UTF8 bytes", async
     const received = await live.state();
     expect(received.inputBytes).toBe(expected.length);
     expect(received.inputHash).toBe(createHash("sha256").update(expected).digest("hex"));
+  } finally {
+    reference.destroy();
+    await setup.dispose();
+    await live.close();
+  }
+});
+
+test("an unacknowledged paste commit excludes another full-budget transfer", async () => {
+  const live = await runtime();
+  let pid: number | undefined;
+  let committing: Promise<unknown> | undefined;
+  try {
+    const state = await live.state();
+    pid = state.pid;
+    process.kill(pid, "SIGSTOP");
+    const identity = { stamp: state.stamp, id: "in-flight-paste" };
+    await live.wireInput({ ...identity, type: "paste.begin", total: 1048576 });
+    for (let offset = 0; offset < 1048576; offset += 65536) {
+      await live.wireInput({
+        ...identity,
+        type: "paste.chunk",
+        offset,
+        data: Buffer.alloc(65536, 120).toString("base64"),
+      });
+    }
+    committing = live
+      .wireInput({ ...identity, type: "paste.commit" })
+      .catch((error) => ({ error: String(error) }));
+    await waitFor(live.state, (s) => s.inputFrontier === 1048576);
+    await expect(
+      live.wireInput({ type: "paste.begin", id: "next-paste", stamp: state.stamp, total: 8388480 }),
+    ).rejects.toThrow("flight");
+    process.kill(pid, "SIGCONT");
+    pid = undefined;
+    await committing;
+    expect((await live.state()).inputBytes).toBe(1048576);
+    await live.wireInput({ type: "paste.begin", id: "after-ack", stamp: state.stamp, total: 0 });
+    await live.wireInput({ type: "paste.commit", id: "after-ack", stamp: state.stamp });
+  } finally {
+    if (pid !== undefined) {
+      try {
+        process.kill(pid, "SIGCONT");
+      } catch {}
+    }
+    await committing;
+    await live.close();
+  }
+});
+
+test("regional-indicator material preserves native following-text columns", async () => {
+  const live = await runtime();
+  const setup = await createTestRenderer({ width: 12, height: 3 });
+  const reference = new EmbeddedTerminalRenderable(setup.renderer, { width: 12, height: 3 });
+  let failure: string | null = null;
+  let nativeColumns = -1;
+  let materialColumns = -1;
+  try {
+    const output = "🇦🇧\x1b[31mX";
+    reference.write(output);
+    setup.renderer.root.add(reference);
+    await setup.flush();
+    const spans = setup.captureSpans().lines[0]!.spans;
+    nativeColumns = spans[0]!.width;
+    reference.destroy();
+    await live.output(output);
+    try {
+      const state = await live.state();
+      setup.renderer.root.add(new NoForkMaterialView(setup.renderer, state.frame));
+      await setup.flush();
+      materialColumns = setup.captureSpans().lines[0]!.spans[0]!.width;
+    } catch (error) {
+      failure = String(error);
+    }
+    await Bun.write(
+      join(live.directory, "regional-indicator-observation.json"),
+      JSON.stringify({ nativeColumns, materialColumns, failure }, null, 2),
+    );
+    expect(failure).toBeNull();
+    expect(materialColumns).toBe(nativeColumns);
   } finally {
     reference.destroy();
     await setup.dispose();

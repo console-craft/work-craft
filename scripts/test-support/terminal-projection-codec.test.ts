@@ -158,3 +158,77 @@ test("incremental native rows must match declared geometry", () => {
   expect(() => builder.addRow([cell("x")])).toThrow();
   expect(() => compactFrame({ ...source, rows: source.rows.slice(0, 1) })).toThrow();
 });
+
+test("cell text must be one grapheme with the declared display width", () => {
+  const good: CompactMaterialFrame = {
+    size: { cols: 2, rows: 1 },
+    cursor: { ...cursor, x: 0 },
+    styles: [{ fg, bg, attributes: 0 }],
+    rows: [
+      [
+        [1, "x", 1, 0],
+        [1, "Z", 1, 0],
+      ],
+    ],
+  };
+  for (const text of ["ab", "🙂", "\u0301"]) {
+    expect(() =>
+      validateCompactFrame({
+        ...good,
+        rows: [
+          [
+            [1, text, 1, 0],
+            [1, "Z", 1, 0],
+          ],
+        ],
+      }),
+    ).toThrow();
+  }
+  expect(() =>
+    validateCompactFrame({
+      ...good,
+      rows: [
+        [
+          [1, "ab", 2, 0],
+          [1, "", 0, 0],
+        ],
+      ],
+    }),
+  ).toThrow();
+  expect(
+    validateCompactFrame({
+      ...good,
+      rows: [
+        [
+          [1, "e\u0301", 1, 0],
+          [1, "Z", 1, 0],
+        ],
+      ],
+    }).rows[0]![1]![1],
+  ).toBe("Z");
+});
+
+test("unknown frame fields reject before serializing unbounded values", () => {
+  const good: CompactMaterialFrame = {
+    size: { cols: 1, rows: 1 },
+    cursor: { ...cursor, x: 0 },
+    styles: [{ fg, bg, attributes: 0 }],
+    rows: [[[1, "x", 1, 0]]],
+  };
+  let serialized = 0;
+  const oversized = {
+    toJSON() {
+      serialized++;
+      return "x".repeat(16777216);
+    },
+  };
+  for (const value of [
+    { ...good, unknown: oversized },
+    { ...good, size: { ...good.size, unknown: oversized } },
+    { ...good, cursor: { ...good.cursor, unknown: oversized } },
+    { ...good, styles: [{ ...good.styles[0], unknown: oversized }] },
+  ]) {
+    expect(() => validateCompactFrame(value)).toThrow("Unexpected");
+  }
+  expect(serialized).toBe(0);
+});

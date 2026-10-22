@@ -110,7 +110,13 @@ export function createPasteReceiver(): {
           }
           pending = {
             id: message.id,
-            stamp: { ...message.stamp },
+            stamp: {
+              epoch: current.epoch,
+              runtime: current.runtime,
+              attachment: current.attachment,
+              navigation: current.navigation,
+              geometry: current.geometry,
+            },
             data: Buffer.allocUnsafe(message.total),
             offset: 0,
           };
@@ -152,7 +158,9 @@ export function createPasteReceiver(): {
         clear();
         return data;
       } catch (error) {
-        clear();
+        if (pending?.id === message?.id && sameStamp(message?.stamp, pending.stamp)) {
+          clear();
+        }
         throw error;
       }
     },

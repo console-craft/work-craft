@@ -65,8 +65,6 @@ test("malformed paste chunks release storage without committing", () => {
     { ...chunk, offset: -1 },
     { ...chunk, data: "YWJjZA==" },
     { ...chunk, data: "eA==".repeat(65536) },
-    { ...chunk, id: "different" },
-    { ...begin, id: "other-paste" },
     commit,
   ];
   for (const message of invalid) {
@@ -79,6 +77,23 @@ test("malformed paste chunks release storage without committing", () => {
     } finally {
       receiver.clear();
     }
+  }
+});
+
+test("late stale and overlapping requests cannot destroy a newer paste owner", () => {
+  const receiver = createPasteReceiver();
+  const newer = { ...stamp, navigation: stamp.navigation + 2 };
+  const owner = { id: "replacement", stamp: newer };
+  try {
+    receiver.accept({ ...begin, ...owner }, newer);
+    expect(() => receiver.accept(commit, newer)).toThrow("stale");
+    expect(() => receiver.accept({ ...begin, id: "unrelated", stamp: newer }, newer)).toThrow();
+    expect(() => receiver.accept({ ...chunk, id: "unrelated", stamp: newer }, newer)).toThrow();
+    expect(receiver.bytes).toBe(131);
+    receiver.accept({ ...chunk, ...owner }, newer);
+    expect(receiver.accept({ ...commit, ...owner }, newer)).toEqual(new Uint8Array([97, 98, 99]));
+  } finally {
+    receiver.clear();
   }
 });
 
@@ -113,6 +128,23 @@ test("each revoked authority generation discards incomplete paste", () => {
     } finally {
       receiver.clear();
     }
+  }
+});
+
+test("receiver snapshots only trusted authority fields instead of retaining unknown stamp data", () => {
+  const receiver = createPasteReceiver();
+  const untrusted = Object.defineProperty({ ...stamp }, "unknown", {
+    enumerable: true,
+    get() {
+      throw new Error("Unknown stamp field was copied");
+    },
+  });
+  try {
+    expect(() => receiver.accept({ ...begin, stamp: untrusted }, stamp)).not.toThrow();
+    receiver.accept(chunk, stamp);
+    expect(receiver.accept(commit, stamp)).toEqual(new Uint8Array([97, 98, 99]));
+  } finally {
+    receiver.clear();
   }
 });
 
