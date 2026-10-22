@@ -1,15 +1,11 @@
 import { expect, test } from "bun:test";
 
+import type { CompactMaterialFrame, MaterialCell, MaterialFrame } from "./terminal-material";
 import {
   compactFrame,
   createCompactFrameBuilder,
   validateCompactFrame,
-} from "./terminal-projection-codec";
-import type {
-  CompactMaterialFrame,
-  MaterialCell,
-  MaterialFrame,
-} from "./terminal-projection-types";
+} from "./terminal-material-codec";
 
 const fg: MaterialCell["fg"] = [17 / 255, 34 / 255, 51 / 255, 1];
 const bg: MaterialCell["bg"] = [68 / 255, 85 / 255, 102 / 255, 1];

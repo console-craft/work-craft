@@ -25,6 +25,17 @@ import { resolvePaths } from "./daemon/paths.ts";
 import { observeOutput, outputProbeEnabled } from "./terminal/output-probe.ts";
 
 export { decodeBytes, STREAM_BACKPRESSURE_LIMIT } from "./api/protocol.ts";
+export {
+  compactFrame,
+  createCompactFrameBuilder,
+  validateCompactFrame,
+} from "./api/terminal-material-codec";
+export type {
+  CompactMaterialFrame,
+  MaterialCell,
+  MaterialFrame,
+  SemanticTerminalInput,
+} from "./api/terminal-material";
 export { projectPaneLayout } from "./application/layout.ts";
 export type { PaneRect, PaneGeometry } from "./application/layout.ts";
 export type {
