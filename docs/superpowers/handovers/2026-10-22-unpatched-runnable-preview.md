@@ -88,6 +88,12 @@ The shared focus gesture now observes mouse-down blur before release activates
 the tab, without a redundant Return that can cancel pending entry. Three local
 repetitions of the shared-session/burst suites passed (21 tests); Linux CI must
 verify this follow-up too. No timeout, skip or application changes are introduced.
+
+Linux run `39866187437` then passed reconnect and every other case except burst
+entry (**1,823 passes / 23 existing skips / one failure**). Burst setup now waits
+for both clients to render all four actual program PIDs before attempting native
+focus; child ready-files alone did not establish that client-side layout/material
+had caught up. Existing input, one-second latency, output and PID assertions remain.
 The subsequent readiness diagnosis captured zero new output on the second entry
 while the old cursor remained visible. The regression now establishes actual
 shell input with a computed-output round trip before freezing the TUI; it still

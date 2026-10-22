@@ -94,15 +94,23 @@ test("four busy panes retain both client surfaces and active input during a four
       target: { kind: "pane", paneId: fixture.paneId },
     });
     control.close();
+    const pids = await Promise.all(
+      paneIds.map((_, index) => readFile(join(fixture.home, `ready-${index}`), "utf8")),
+    );
+    await sharedWait(
+      () =>
+        fixture.tuis.every((tui) =>
+          pids.every((pid, index) => tui.frame().includes(`pane-${index} pid=${pid} tick=0`)),
+        ),
+      "both clients render the four-pane fixture before input",
+      () => a.frame() + "\n" + b.frame(),
+    );
     await focusSharedTerminal(a);
     sharedWrite(a, "z");
     await sharedWait(
       () => a.frame().includes("typed=z") && a.cursor().visible,
       "burst input readiness",
       a.frame,
-    );
-    const pids = await Promise.all(
-      paneIds.map((_, index) => readFile(join(fixture.home, `ready-${index}`), "utf8")),
     );
     const daemonPid = (await fixture.client.health()).pid;
     const samples = [residentKiB(daemonPid, [a.child.pid, b.child.pid])];
