@@ -2,7 +2,9 @@ import { toArrayBuffer } from "bun:ffi";
 
 import { getLinkId, resolveRenderLib, RGBA } from "@opentui/core";
 
+import { createCompactFrameBuilder } from "../../../../../scripts/test-support/terminal-projection-codec";
 import type {
+  CompactMaterialFrame,
   MaterialCell,
   MaterialFrame,
   SemanticInput,
@@ -12,6 +14,7 @@ type ProjectionFixture = {
   write(bytes: Uint8Array): void;
   resize(size: MaterialFrame["size"]): void;
   frame(scrollOffset: number): MaterialFrame;
+  compactFrame(scrollOffset: number): CompactMaterialFrame;
   encode(event: SemanticInput): Uint8Array;
   encodePaste(bytes: Uint8Array): Uint8Array;
   replies(): Uint8Array;
@@ -61,7 +64,7 @@ export function createProjectionFixture(
     throw error;
   }
 
-  function frame(scrollOffset: number): MaterialFrame {
+  function readFrame(scrollOffset: number, compact: boolean): MaterialFrame | CompactMaterialFrame {
     if (!Number.isSafeInteger(scrollOffset) || scrollOffset < 0) {
       throw new RangeError("Scroll offset must be a nonnegative integer");
     }
@@ -80,9 +83,11 @@ export function createProjectionFixture(
         const fg = new Uint16Array(toArrayBuffer(lease.fg, 0, cells * 4 * 2));
         const bg = new Uint16Array(toArrayBuffer(lease.bg, 0, cells * 4 * 2));
         const attributes = new Uint32Array(toArrayBuffer(lease.attributes, 0, cells * 4));
-        const bytes = new Uint8Array(
-          lib.contextBufferLeaseGetRealCharSize(context, lease.handle, false),
-        );
+        const byteLength = lib.contextBufferLeaseGetRealCharSize(context, lease.handle, false);
+        if (compact && byteLength > 8 * 1024 * 1024) {
+          throw new Error("Projection extraction character budget");
+        }
+        const bytes = new Uint8Array(byteLength);
         const lengths = new Uint8Array(cells);
         lib.contextBufferLeaseWriteResolvedChars(context, lease.handle, bytes, false, lengths);
         const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
@@ -91,36 +96,46 @@ export function createProjectionFixture(
           const rgba = RGBA.fromArray(plane.subarray(index * 4, index * 4 + 4));
           return [rgba.r, rgba.g, rgba.b, rgba.a];
         }
-        const rows: MaterialCell[][] = [];
-        for (let y = 0; y < lease.height; y++) {
-          const row: MaterialCell[] = [];
+        const position: MaterialFrame["cursor"] = {
+          x: cursor.x,
+          y: cursor.y,
+          visible: cursor.hasValue && cursor.visible,
+          style: cursor.style,
+          blinking: cursor.blinking,
+        };
+        const builder = compact ? createCompactFrameBuilder(size, position) : undefined;
+        function* rowCells(y: number): Generator<MaterialCell> {
           for (let x = 0; x < lease.width; x++) {
             const index = y * lease.width + x;
             const length = lengths[index]!;
             const text = decoder.decode(bytes.subarray(offset, offset + length));
             offset += length;
             const linkId = getLinkId(attributes[index]!);
-            row.push({
+            yield {
               text,
               width: length === 0 ? 0 : x + 1 < lease.width && lengths[index + 1] === 0 ? 2 : 1,
               fg: color(fg, index),
               bg: color(bg, index),
               attributes: attributes[index]! & 255,
-              ...(linkId ? { link: lib.contextGetLinkUrl(context, linkId) } : {}),
-            });
+              ...(!compact && linkId ? { link: lib.contextGetLinkUrl(context, linkId) } : {}),
+            };
           }
-          rows.push(row);
+        }
+        const rows: MaterialCell[][] = [];
+        for (let y = 0; y < lease.height; y++) {
+          if (builder) {
+            builder.addRow(rowCells(y));
+          } else {
+            rows.push([...rowCells(y)]);
+          }
+        }
+        if (builder) {
+          return builder.finish();
         }
         return {
           size: { ...size },
           rows,
-          cursor: {
-            x: cursor.x,
-            y: cursor.y,
-            visible: cursor.hasValue && cursor.visible,
-            style: cursor.style,
-            blinking: cursor.blinking,
-          },
+          cursor: position,
         };
       } finally {
         lib.contextReleaseBufferLease(context, lease.handle);
@@ -132,7 +147,8 @@ export function createProjectionFixture(
 
   return {
     destroy,
-    frame,
+    frame: (offset) => readFrame(offset, false) as MaterialFrame,
+    compactFrame: (offset) => readFrame(offset, true) as CompactMaterialFrame,
     write: (bytes) => lib.contextEmbeddedTerminalWrite(context, terminal!, bytes),
     resize(next) {
       lib.contextEmbeddedTerminalResize(context, terminal!, next.cols, next.rows);

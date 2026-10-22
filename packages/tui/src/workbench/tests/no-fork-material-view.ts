@@ -15,9 +15,11 @@ import {
 import { semanticKey } from "@/workbench/tests/no-fork-input";
 import { sameProjectionStamp } from "@/workbench/tests/no-fork-input-queue";
 
+// oxlint-disable-next-line no-restricted-imports -- Test-only bounded material validation.
+import { validateCompactFrame } from "../../../../../scripts/test-support/terminal-projection-codec";
 // oxlint-disable-next-line no-restricted-imports -- Test-only plain material DTO.
 import type {
-  MaterialFrame,
+  CompactMaterialFrame,
   ProjectionEnvelope,
   ProjectionStamp,
   SemanticInput,
@@ -80,7 +82,7 @@ export class NoForkMaterialView extends Renderable {
   }
   private readonly texts: TextBuffer[] = [];
   private readonly views: TextBufferView[] = [];
-  private frame: MaterialFrame;
+  private frame: CompactMaterialFrame;
 
   private readonly release = (event: KeyEvent): void => {
     if (this.focused && !this.isDestroyed) {
@@ -90,7 +92,7 @@ export class NoForkMaterialView extends Renderable {
 
   constructor(
     context: RenderContext,
-    frame: MaterialFrame,
+    frame: CompactMaterialFrame,
     private readonly send?: (event: SemanticInput) => void,
     private readonly canSend: () => boolean = () => true,
   ) {
@@ -171,35 +173,50 @@ export class NoForkMaterialView extends Renderable {
     }
   }
 
-  setFrame(frame: MaterialFrame): void {
+  setFrame(frame: CompactMaterialFrame): void {
     if (this.isDestroyed) {
       return;
     }
+    validateCompactFrame(frame);
+    const texts: TextBuffer[] = [];
+    const views: TextBufferView[] = [];
+    try {
+      for (const row of frame.rows) {
+        const text = TextBuffer.create("unicode", this.ctx.nativeScene);
+        texts.push(text);
+        text.setStyledText(
+          new StyledText(
+            row
+              .filter(([, , width]) => width !== 0)
+              .map(([count, value, , style]) => ({
+                __isChunk: true,
+                text: value.repeat(count),
+                fg: RGBA.fromValues(...frame.styles[style]!.fg),
+                bg: RGBA.fromValues(...frame.styles[style]!.bg),
+                attributes: frame.styles[style]!.attributes,
+              })),
+          ),
+        );
+        const view = TextBufferView.create(text);
+        views.push(view);
+        view.setWrapMode("none");
+        view.setViewportSize(frame.size.cols, 1);
+      }
+    } catch (error) {
+      for (const view of views) {
+        view.destroy();
+      }
+      for (const text of texts) {
+        text.destroy();
+      }
+      throw error;
+    }
     this.clearRows();
+    this.texts.push(...texts);
+    this.views.push(...views);
     this.frame = frame;
     this.width = frame.size.cols;
     this.height = frame.size.rows;
-    for (const row of frame.rows) {
-      const text = TextBuffer.create("unicode", this.ctx.nativeScene);
-      this.texts.push(text);
-      text.setStyledText(
-        new StyledText(
-          row
-            .filter((cell) => cell.width !== 0)
-            .map((cell) => ({
-              __isChunk: true,
-              text: cell.text,
-              fg: RGBA.fromValues(...cell.fg),
-              bg: RGBA.fromValues(...cell.bg),
-              attributes: cell.attributes,
-            })),
-        ),
-      );
-      const view = TextBufferView.create(text);
-      this.views.push(view);
-      view.setWrapMode("none");
-      view.setViewportSize(frame.size.cols, 1);
-    }
     this.requestRender();
   }
 

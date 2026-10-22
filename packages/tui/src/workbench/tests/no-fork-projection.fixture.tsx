@@ -11,10 +11,14 @@ import { createTestRenderer } from "@opentui/core/testing";
 import { projectionInputQueue } from "@/workbench/tests/no-fork-input-queue";
 import { NoForkMaterialView } from "@/workbench/tests/no-fork-material-view";
 
+// oxlint-disable-next-line no-restricted-imports -- Test-only plain reference expansion.
+import { compactFrame } from "../../../../../scripts/test-support/terminal-projection-codec";
 // oxlint-disable-next-line no-restricted-imports -- Test-only wire sender.
 import { sendProjectionInput } from "../../../../../scripts/test-support/terminal-projection-paste";
 // oxlint-disable-next-line no-restricted-imports -- Test-only plain material DTO.
 import type {
+  CompactMaterialFrame,
+  MaterialCell,
   MaterialFrame,
   PasteMessage,
   ProjectionInput,
@@ -31,7 +35,7 @@ type RuntimeState = {
   input: number[];
   inputBytes: number;
   inputHash: string;
-  frame: MaterialFrame;
+  frame: CompactMaterialFrame;
 };
 
 async function waitFor<T>(read: () => Promise<T>, ready: (value: T) => boolean): Promise<T> {
@@ -63,11 +67,16 @@ async function runtime() {
     { stdin: "ignore", stdout: fd, stderr: fd },
   );
   closeSync(fd);
+  let maxInputRequestBytes = 0;
   async function request<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+    const serialized = body === undefined ? undefined : JSON.stringify(body);
+    if (path === "/input" && serialized !== undefined) {
+      maxInputRequestBytes = Math.max(maxInputRequestBytes, Buffer.byteLength(serialized));
+    }
     const response = await fetch(`http://fixture${path}`, {
       unix: socket,
       signal,
-      ...(body === undefined ? {} : { method: "POST", body: JSON.stringify(body) }),
+      ...(serialized === undefined ? {} : { method: "POST", body: serialized }),
     });
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${await response.text()}`);
@@ -99,6 +108,7 @@ async function runtime() {
       directory,
       close,
       runtimePid: child.pid,
+      maxInputRequestBytes: () => maxInputRequestBytes,
       state: (offset = 0) => request<RuntimeState>(`/state?offset=${offset}`),
       output: (text: string) =>
         request<void>("/output", { bytes: [...new TextEncoder().encode(text)] }),
@@ -138,6 +148,15 @@ function material(output: string): MaterialFrame {
   });
   expect({ code: child.exitCode, error: child.stderr.toString() }).toEqual({ code: 0, error: "" });
   return JSON.parse(child.stdout.toString());
+}
+
+function smallRow(frame: CompactMaterialFrame): MaterialCell[] {
+  if (frame.size.cols * frame.size.rows > 10000) {
+    throw new Error("Reference expansion is small-frame only");
+  }
+  return frame.rows[0]!.flatMap(([count, text, width, style]) =>
+    Array.from({ length: count }, () => ({ text, width, ...frame.styles[style]! })),
+  );
 }
 
 test("research-only exception records upstream invisible-wide second-cell styling loss", () => {
@@ -251,23 +270,22 @@ test("partial UTF8 CSI and long OSC8 repaint remain ordinary material", async ()
     for (const byte of bytes) {
       await live.outputBytes(new Uint8Array([byte]));
     }
-    expect((await live.state()).frame.rows[0]!.slice(0, 5).map(({ text }) => text)).toEqual([
-      "λ",
-      "🙂",
-      "",
-      "e\u0301",
-      "Z",
-    ]);
-    expect((await live.state()).frame.rows[0]![4]!.attributes).toBe(13);
+    expect(
+      smallRow((await live.state()).frame)
+        .slice(0, 5)
+        .map(({ text }) => text),
+    ).toEqual(["λ", "🙂", "", "e\u0301", "Z"]);
+    expect(smallRow((await live.state()).frame)[4]!.attributes).toBe(13);
     const url = "https://example.test/" + "x".repeat(600);
     await live.output(`\x1b[0m\x1b[2J\x1b[H\x1b]8;;${url}\x1b\\LINK\x1b]8;;\x1b\\`);
     expect(
-      (await live.state()).frame.rows[0]!.slice(0, 4)
+      smallRow((await live.state()).frame)
+        .slice(0, 4)
         .map(({ text }) => text)
         .join(""),
     ).toBe("LINK");
     await live.output("\x1b[2J\x1b[HPLAIN");
-    const plain = (await live.state()).frame.rows[0]!.slice(0, 5);
+    const plain = smallRow((await live.state()).frame).slice(0, 5);
     expect(plain.map(({ text }) => text).join("")).toBe("PLAIN");
     expect(plain.every((cell) => cell.attributes === 0 && cell.link === undefined)).toBe(true);
   } finally {
@@ -774,13 +792,29 @@ test("queued and in-flight payloads share the 8 MiB ceiling and teardown cancels
 
 test("a valid large canonical grid must remain displayable without exceeding the retained-frame ceiling", async () => {
   const live = await runtime();
+  const a = await createTestRenderer({ width: 12, height: 3 });
+  const b = await createTestRenderer({ width: 20, height: 5 });
   let failure: string | null = null;
+  let serialized = 0;
   try {
     try {
       await live.resize(512, 512);
+      await live.output("\x1b[Hλ🙂e\u0301\x1b[1;3;4;38;2;17;34;51;48;2;68;85;102m \x1b[6 q");
       const state = await live.state();
+      serialized = Buffer.byteLength(JSON.stringify(state));
       expect(state.frame.size).toEqual({ cols: 512, rows: 512 });
-      expect(Buffer.byteLength(JSON.stringify(state))).toBeLessThanOrEqual(8 * 1024 * 1024);
+      expect(serialized).toBeLessThanOrEqual(8 * 1024 * 1024);
+      expect(state.frame.styles.length).toBeGreaterThan(1);
+      for (const setup of [a, b]) {
+        setup.renderer.root.add(new NoForkMaterialView(setup.renderer, state.frame));
+        await setup.flush();
+        expect(setup.captureCharFrame()).toContain("λ🙂e\u0301");
+        expect(setup.renderer.getCursorState()).toMatchObject({ visible: true, style: "line" });
+        const styled = setup.captureSpans().lines[0]!.spans.find((span) => span.attributes === 13)!;
+        expect(styled.fg.toInts()).toEqual([17, 34, 51, 255]);
+        expect(styled.bg.toInts()).toEqual([68, 85, 102, 255]);
+      }
+      expect((await live.state()).frame.size).toEqual({ cols: 512, rows: 512 });
     } catch (error) {
       failure = String(error);
     }
@@ -793,6 +827,7 @@ test("a valid large canonical grid must remain displayable without exceeding the
           existingMaximumCells: 1_048_576,
           ceiling: 8 * 1024 * 1024,
           minimumFullMaterialBytes: 512 * 512 * 64,
+          compactEnvelopeBytes: serialized,
           failure,
         },
         null,
@@ -801,21 +836,82 @@ test("a valid large canonical grid must remain displayable without exceeding the
     );
     expect(failure).toBeNull();
   } finally {
+    await a.dispose();
+    await b.dispose();
     await live.close();
   }
 });
 
-test("oversized material fails explicitly before copying and a later small frame still works", async () => {
+test("invalid compact material retains the last picture and later valid material still draws", async () => {
+  const live = await runtime();
+  const setup = await createTestRenderer({ width: 12, height: 3 });
+  try {
+    await live.output("BEFORE");
+    const state = await live.state();
+    const view = new NoForkMaterialView(setup.renderer, state.frame);
+    setup.renderer.root.add(view);
+    await setup.flush();
+    const before = setup.captureCharFrame();
+    const malformed = {
+      ...state.frame,
+      rows: [[[Number.MAX_SAFE_INTEGER, "x", 1, 0]]],
+    } as CompactMaterialFrame;
+    expect(() => view.setFrame(malformed)).toThrow();
+    view.requestRender();
+    await setup.flush();
+    expect(setup.captureCharFrame()).toBe(before);
+    await live.output("\x1b[HAFTER ");
+    view.setFrame((await live.state()).frame);
+    await setup.flush();
+    expect(setup.captureCharFrame()).toContain("AFTER");
+  } finally {
+    await setup.dispose();
+    await live.close();
+  }
+});
+
+test("irregular text and alternating styles retain exact small-frame material", async () => {
   const live = await runtime();
   try {
-    await live.resize(512, 512);
-    await expect(live.state()).rejects.toThrow("Projection frame budget");
-    await live.resize(12, 3);
-    expect((await live.state()).frame.size).toEqual({ cols: 12, rows: 3 });
+    const output = "A\x1b[38;2;17;34;51mλ\x1b[48;2;68;85;102m🙂\x1b[0me\u0301 Z";
+    await live.output(output);
+    expect((await live.state()).frame).toEqual(compactFrame(material(output)));
   } finally {
     await live.close();
   }
 });
+
+test("a valid unique-color grid must remain displayable within the unchanged budget", async () => {
+  const live = await runtime();
+  let failure: string | null = null;
+  try {
+    await live.resize(512, 512);
+    for (let y = 0; y < 512; y++) {
+      let output = `\x1b[${y + 1};1H`;
+      for (let x = 0; x < 512; x++) {
+        const n = y * 512 + x;
+        output += `\x1b[38;2;${n & 255};${(n >>> 8) & 255};${n >>> 16}m${String.fromCharCode(65 + (n % 26))}`;
+      }
+      await live.output(output);
+    }
+    try {
+      const state = await live.state();
+      expect(state.frame.size).toEqual({ cols: 512, rows: 512 });
+      expect(Buffer.byteLength(JSON.stringify(state))).toBeLessThanOrEqual(8388608);
+    } catch (error) {
+      failure = String(error);
+    }
+    await Bun.write(
+      join(live.directory, "irregular-frame-observation.json"),
+      JSON.stringify({ cols: 512, rows: 512, cells: 262144, ceiling: 8388608, failure }, null, 2),
+    );
+    await live.resize(12, 3);
+    expect((await live.state()).frame.size).toEqual({ cols: 12, rows: 3 });
+    expect(failure).toBeNull();
+  } finally {
+    await live.close();
+  }
+}, 30000);
 
 test("bounded paste reaches the real child once with one bracketed envelope", async () => {
   const live = await runtime();
@@ -829,7 +925,12 @@ test("bounded paste reaches the real child once with one bracketed envelope", as
     const queue = projectionInputQueue();
     queue.enqueue(input, state.stamp, (event, signal) => live.rawInput(event, signal));
     const charged = queue.bytes;
-    await queue.flush(() => state.stamp);
+    let failure: string | null = null;
+    try {
+      await queue.flush(() => state.stamp);
+    } catch (error) {
+      failure = String(error);
+    }
     const received = await live.state();
     const expected = createHash("sha256")
       .update("\x1b[200~")
@@ -839,16 +940,25 @@ test("bounded paste reaches the real child once with one bracketed envelope", as
     await Bun.write(
       join(live.directory, "paste-transfer-observation.json"),
       JSON.stringify(
-        { charged, inputBytes: received.inputBytes, inputHash: received.inputHash, expected },
+        {
+          charged,
+          maxInputRequestBytes: live.maxInputRequestBytes(),
+          failure,
+          inputBytes: received.inputBytes,
+          inputHash: received.inputHash,
+          expected,
+        },
         null,
         2,
       ),
     );
     expect(charged).toBe(3 * 1024 * 1024 + 128);
+    expect(queue.bytes).toBe(0);
+    expect(live.maxInputRequestBytes()).toBeLessThan(90000);
+    expect(failure).toBeNull();
     expect(received.inputBytes).toBe(3145740);
     expect(received.inputHash).toBe(expected);
     expect(Buffer.byteLength(JSON.stringify(received))).toBeLessThan(65536);
-    expect(queue.bytes).toBe(0);
   } finally {
     await live.close();
   }

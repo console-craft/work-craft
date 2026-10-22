@@ -13,7 +13,6 @@ import { createProjectionFixture } from "./projection-fixture";
 
 async function serve(socket: string, log: string): Promise<void> {
   const parser = createProjectionFixture({ cols: 12, rows: 3 }, 2 * 1_048_576);
-  let canonicalSize = { cols: 12, rows: 3 };
   const input: number[] = [];
   let inputBytes = 0;
   const inputHash = createHash("sha256");
@@ -134,7 +133,6 @@ async function serve(socket: string, log: string): Promise<void> {
           parser.resize(size);
           paste.clear();
           terminal.resize(size.cols, size.rows);
-          canonicalSize = { ...size };
           stamp.geometry++;
           sequence++;
           return Response.json({ ok: true });
@@ -145,25 +143,9 @@ async function serve(socket: string, log: string): Promise<void> {
           return Response.json({ ok: true });
         }
         if (url.pathname === "/state" && request.method === "GET") {
-          // Even an empty plain cell needs more than 64 JSON bytes in this DTO.
-          if (canonicalSize.cols * canonicalSize.rows * 64 >= 8 * 1024 * 1024) {
-            throw new Error(
-              "Projection frame budget: full material cannot fit the retained boundary",
-            );
-          }
           const offset = Number(url.searchParams.get("offset") ?? 0);
-          const frame = parser.frame(offset);
-          let retained =
-            Buffer.byteLength(JSON.stringify({ size: frame.size, cursor: frame.cursor })) + 2;
-          for (const row of frame.rows) {
-            retained += Buffer.byteLength(JSON.stringify(row)) + 1;
-            if (retained > 8 * 1024 * 1024) {
-              throw new Error(
-                "Projection frame budget: styled material exceeds the retained boundary",
-              );
-            }
-          }
-          return Response.json({
+          const frame = parser.compactFrame(offset);
+          const serialized = JSON.stringify({
             ready,
             pid: child.pid,
             bytes,
@@ -174,6 +156,10 @@ async function serve(socket: string, log: string): Promise<void> {
             sequence: ++sequence,
             frame,
           });
+          if (Buffer.byteLength(serialized) > 8 * 1024 * 1024) {
+            throw new Error("Projection frame envelope budget");
+          }
+          return new Response(serialized, { headers: { "content-type": "application/json" } });
         }
         if (url.pathname === "/output" && request.method === "POST") {
           const body = (await request.json()) as { bytes: number[] };

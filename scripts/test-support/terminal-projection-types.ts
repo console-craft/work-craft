@@ -20,6 +20,13 @@ export type MaterialFrame = {
   };
 };
 
+export type CompactMaterialFrame = {
+  size: MaterialFrame["size"];
+  cursor: MaterialFrame["cursor"];
+  styles: Pick<MaterialCell, "fg" | "bg" | "attributes">[];
+  rows: [count: number, text: string, width: MaterialCell["width"], styleIndex: number][][];
+};
+
 export type SemanticInput =
   | {
       kind: "key";
@@ -56,7 +63,11 @@ export type ProjectionStamp = {
   geometry: number;
 };
 
-export type ProjectionEnvelope = { stamp: ProjectionStamp; sequence: number; frame: MaterialFrame };
+export type ProjectionEnvelope = {
+  stamp: ProjectionStamp;
+  sequence: number;
+  frame: CompactMaterialFrame;
+};
 export type ProjectionInput = { stamp: ProjectionStamp; input: SemanticInput };
 
 export type PasteMessage = { id: string; stamp: ProjectionStamp } & (
