@@ -153,7 +153,12 @@ function fixture() {
   });
   const client: WorkCraftClient = {
     ensureDaemon: async () => {},
-    health: async () => ({ epoch: "epoch-a", revision: 4, pid: 1 }),
+    health: async () => ({
+      epoch: "epoch-a",
+      revision: 4,
+      pid: 1,
+      protocol: "work-craft-projection-preview/1",
+    }),
     snapshot: async () => snapshot,
     controlSnapshot: async () => controlSnapshotFixture(await client.snapshot()),
     paneHistory: async (paneId) => ({

@@ -80,7 +80,7 @@ export type InteractiveMessage =
 
 export type InteractiveServerMessage =
   | TerminalProjectionReply
-  | { type: "client.ready"; epoch: string; connectionId: string }
+  | { type: "client.ready"; epoch: string; connectionId: string; protocol: string }
   | { type: "client.attached"; requestId: number | null; attachment: ClientAttachment }
   | { type: "command.result"; requestId: number; response: CommandResponse }
   | { type: "command.error"; requestId: number; message: string; field?: ValidationField }

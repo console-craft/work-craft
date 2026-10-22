@@ -90,6 +90,7 @@ function fixture() {
   const materialReads: string[] = [];
   const semanticInputs: string[] = [];
   const semanticEvents: unknown[] = [];
+  let pendingInput = false;
   let runtimeGeneration = 1;
   let execute = async (_value: unknown, _origin: CommandOrigin): Promise<CommandResponse> => ({
     ok: true,
@@ -141,6 +142,7 @@ function fixture() {
       semanticEvents.push(input);
       return true;
     },
+    inputPending: () => pendingInput,
   });
   function stamp(socket: Bun.ServerWebSocket): InputStamp {
     const attachment = registry.attachment(socket)!;
@@ -191,6 +193,9 @@ function fixture() {
     materialReads,
     semanticInputs,
     semanticEvents,
+    holdInput() {
+      pendingInput = true;
+    },
     snapshot,
     stamp,
     attach,
@@ -204,6 +209,17 @@ function fixture() {
     },
   };
 }
+
+test("raw external input cannot overtake semantic bytes awaiting native PTY drain", async () => {
+  const f = fixture();
+  const a = socketFixture();
+  f.registry.open(a.socket);
+  await f.attach(a.socket);
+  await f.report(a.socket);
+  f.holdInput();
+  await f.input(a.socket);
+  expect(f.inputs).toEqual([]);
+});
 
 test("projection requests authorize the actual socket and reject every stale generation", async () => {
   const f = fixture();

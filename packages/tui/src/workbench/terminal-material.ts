@@ -1,4 +1,5 @@
 import {
+  convertGlobalToLocalSelection,
   type KeyEvent,
   type MouseEvent,
   type OptimizedBuffer,
@@ -8,6 +9,7 @@ import {
   type RenderableOptions,
   type RenderContext,
   RGBA,
+  type Selection,
 } from "@opentui/core";
 import {
   type CompactMaterialFrame,
@@ -32,6 +34,7 @@ export class TerminalMaterialRenderable extends Renderable {
   private readonly canInput: () => boolean;
   private anchor?: { x: number; y: number };
   private end?: { x: number; y: number };
+  private selecting = false;
   scrollOffset = 0;
   private readonly release = (event: KeyEvent): void => {
     if (this.focused && !this.isDestroyed) {
@@ -47,6 +50,7 @@ export class TerminalMaterialRenderable extends Renderable {
     this.send = onInput;
     this.canInput = canInput ?? (() => true);
     this.focusable = true;
+    this.selectable = true;
     context.keyInput.on("keyrelease", this.release);
     this.on(RenderableEvents.FOCUSED, () => this.forward({ kind: "focus", focused: true }));
     this.on(RenderableEvents.BLURRED, () => {
@@ -87,7 +91,7 @@ export class TerminalMaterialRenderable extends Renderable {
   }
 
   protected onMouseEvent(event: MouseEvent): void {
-    if (!this.canInput()) {
+    if (!this.canInput() || !["down", "up", "move", "drag", "scroll"].includes(event.type)) {
       return;
     }
     const button =
@@ -95,9 +99,11 @@ export class TerminalMaterialRenderable extends Renderable {
         ? event.scroll?.direction === "up"
           ? "four"
           : "five"
-        : ((["left", "middle", "right", "unknown", "four", "five", "six", "seven"] as const)[
-            event.button
-          ] ?? "unknown");
+        : event.type === "move" && !event.isDragging
+          ? undefined
+          : ((["left", "middle", "right", "unknown", "four", "five", "six", "seven"] as const)[
+              event.button
+            ] ?? "unknown");
     const count =
       event.type === "scroll" ? Math.max(1, Math.ceil(Math.abs(event.scroll?.delta ?? 1))) : 1;
     if (!Number.isSafeInteger(count) || count > 65536) {
@@ -120,7 +126,8 @@ export class TerminalMaterialRenderable extends Renderable {
             (event.modifiers.shift ? 1 : 0) |
             (event.modifiers.ctrl ? 2 : 0) |
             (event.modifiers.alt ? 4 : 0),
-          anyButtonPressed: event.isDragging === true,
+          anyButtonPressed:
+            event.isDragging === true || event.type === "drag" || event.type === "down",
         },
       });
     }
@@ -138,17 +145,40 @@ export class TerminalMaterialRenderable extends Renderable {
     if (mouse.button !== "left") {
       return;
     }
-    const point = {
-      x: Math.max(0, Math.min(this.picture.size.cols - 1, Math.floor(mouse.x))),
-      y: Math.max(0, Math.min(this.picture.size.rows - 1, Math.floor(mouse.y))),
-    };
+    const x = this.screenX + mouse.x;
+    const y = this.screenY + mouse.y;
     if (mouse.action === "press") {
-      this.anchor = point;
+      this.ctx.startSelection(this, x, y);
+    } else if (this.selecting || (mouse.action === "release" && this.hasSelection())) {
+      this.ctx.updateSelection(this, x, y, { finishDragging: mouse.action === "release" });
     }
-    if (this.anchor) {
-      this.end = point;
-      this.requestRender();
+  }
+
+  shouldStartSelection(): boolean {
+    // The daemon decides whether the child consumed the press before local selection starts.
+    return false;
+  }
+
+  onSelectionChanged(selection: Selection | null): boolean {
+    const local = convertGlobalToLocalSelection(selection, this.screenX, this.screenY);
+    this.selecting = selection?.isDragging === true;
+    if (local?.isActive) {
+      const point = (x: number, y: number) => ({
+        x: Math.max(0, Math.min(this.picture.size.cols - 1, Math.floor(x))),
+        y: Math.max(0, Math.min(this.picture.size.rows - 1, Math.floor(y))),
+      });
+      this.anchor = point(local.anchorX, local.anchorY);
+      this.end = point(local.focusX, local.focusY);
+    } else {
+      this.anchor = undefined;
+      this.end = undefined;
     }
+    this.requestRender();
+    return this.hasSelection();
+  }
+
+  hasSelection(): boolean {
+    return this.anchor !== undefined && this.end !== undefined;
   }
 
   private selected(x: number, y: number, width = 1): boolean {

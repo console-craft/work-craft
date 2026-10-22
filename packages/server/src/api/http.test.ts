@@ -879,6 +879,14 @@ test("applies a newer snapshot frame after a pending gap refresh", async () => {
     websocket: {
       open(socket) {
         streamSocket = socket;
+        socket.send(
+          JSON.stringify({
+            type: "client.ready",
+            epoch: "epoch-1",
+            connectionId: "test",
+            protocol: "work-craft-projection-preview/1",
+          }),
+        );
         socket.send(JSON.stringify({ type: "snapshot", snapshot: snapshot(0) }));
       },
       message() {},

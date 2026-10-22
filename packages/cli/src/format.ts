@@ -12,7 +12,7 @@ type Counts = Omit<
   { [Key in keyof Snapshot]: Snapshot[Key] extends unknown[] ? number : never },
   "epoch" | "revision" | "sessionWorkspaces" | "terminalHistories" | "navigation" | "geometry"
 >;
-export type Status = Health & { running: true; counts: Counts };
+export type Status = Omit<Health, "protocol"> & { running: true; counts: Counts };
 
 export function snapshotCounts(snapshot: Snapshot): Counts {
   return {

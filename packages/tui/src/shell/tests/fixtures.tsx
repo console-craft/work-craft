@@ -224,7 +224,12 @@ export async function liveInputFixture(
   let commit: ((state: WorkCraftState) => void) | undefined;
   const client: WorkCraftClient = {
     ensureDaemon: async () => {},
-    health: async () => ({ epoch: initial.epoch, revision: initial.revision, pid: 1 }),
+    health: async () => ({
+      epoch: initial.epoch,
+      revision: initial.revision,
+      pid: 1,
+      protocol: "work-craft-projection-preview/1",
+    }),
     snapshot: async () => initial,
     controlSnapshot: async () => controlSnapshotFixture(initial),
     paneHistory: async (paneId) => ({

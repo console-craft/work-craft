@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 
 import { type CommandOrigin, createConnections } from "../api/connections.ts";
+import { TERMINAL_PROTOCOL } from "../api/identity";
 import { encodeBytes, parseCommand, ProtocolError } from "../api/protocol.ts";
 import type {
   ClientMessage,
@@ -23,7 +24,7 @@ import { normalizeSessionNavigations, readNavigationCatalog } from "./navigation
 import { createTerminalSizing, type GeometryDecision } from "./sizing.ts";
 import { readSnapshot, readSnapshotState } from "./snapshot.ts";
 
-export type Health = { epoch: string; revision: number; pid: number };
+export type Health = { epoch: string; revision: number; pid: number; protocol: string };
 
 const MAX_INLINE_SNAPSHOT_BYTES = 512 * 1024;
 
@@ -585,7 +586,7 @@ export function createApp(options: {
     closeDirectoryRefresh,
     execute,
     health() {
-      return { epoch, revision, pid: process.pid };
+      return { epoch, revision, pid: process.pid, protocol: TERMINAL_PROTOCOL };
     },
     receive: (socket, message) => connections.receive(socket, message),
     subscribe(socket, options) {

@@ -38,6 +38,16 @@ async function fixture() {
       }
     },
     websocket: {
+      open(socket) {
+        socket.send(
+          JSON.stringify({
+            type: "client.ready",
+            epoch: "e",
+            connectionId: "test",
+            protocol: "work-craft-projection-preview/1",
+          }),
+        );
+      },
       message(socket, data) {
         const message = JSON.parse(data.toString()) as TerminalProjectionRequest;
         received.push(message);

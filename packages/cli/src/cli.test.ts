@@ -1519,7 +1519,7 @@ test("retries status reads until snapshot and health revisions match", async () 
     },
     async health() {
       healthCalls += 1;
-      return { epoch: "epoch", revision: 2, pid: 42 };
+      return { epoch: "epoch", revision: 2, pid: 42, protocol: "work-craft-projection-preview/1" };
     },
   } satisfies Pick<WorkCraftClient, "health" | "snapshot">;
 
@@ -1563,7 +1563,12 @@ test("bounds incoherent status reads", async () => {
       };
     },
     async health() {
-      return { epoch: "new", revision: calls, pid: 42 };
+      return {
+        epoch: "new",
+        revision: calls,
+        pid: 42,
+        protocol: "work-craft-projection-preview/1",
+      };
     },
   } satisfies Pick<WorkCraftClient, "health" | "snapshot">;
 

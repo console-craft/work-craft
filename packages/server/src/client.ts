@@ -5,6 +5,9 @@ import { fileURLToPath } from "node:url";
 
 import WebSocket from "ws";
 
+import { assertTerminalProtocol } from "./api/identity";
+export { TERMINAL_PROTOCOL } from "./api/identity";
+
 import { encodeBytes, STREAM_BACKPRESSURE_LIMIT } from "./api/protocol.ts";
 import type {
   ClientAttachment,
@@ -195,7 +198,11 @@ function healthSignal(deadline: number): AbortSignal {
 }
 
 async function requestHealth(socketPath: string, deadline: number): Promise<Health> {
-  return (await requestJson(socketPath, "/health", { signal: healthSignal(deadline) })) as Health;
+  const health = (await requestJson(socketPath, "/health", {
+    signal: healthSignal(deadline),
+  })) as Health;
+  assertTerminalProtocol(health.protocol);
+  return health;
 }
 
 function isConnectionFailure(error: unknown): boolean {
@@ -306,6 +313,10 @@ export function createClient(options: { socketPath?: string } = {}): WorkCraftCl
         `ws+unix:${socketPath}:/stream${control ? "?view=control" : ""}`,
       );
       let opened = false;
+      const handshake = setTimeout(
+        () => closeWith(new Error("Daemon protocol handshake timed out")),
+        3000,
+      );
       let closeError: Error | undefined;
       let current: Pick<Snapshot, "epoch" | "revision"> | undefined;
       let snapshots = Promise.resolve();
@@ -510,6 +521,15 @@ export function createClient(options: { socketPath?: string } = {}): WorkCraftCl
             throw new Error("Stream response byte limit");
           }
           const message = JSON.parse(data.toString()) as ServerMessage;
+          if (!opened) {
+            if (message.type !== "client.ready") {
+              throw new Error("Incompatible daemon: missing protocol handshake");
+            }
+            assertTerminalProtocol(message.protocol);
+            clearTimeout(handshake);
+            acceptConnection();
+            return;
+          }
           if (
             message.type === "terminal.material.result" ||
             message.type === "terminal.input.result" ||
@@ -621,7 +641,7 @@ export function createClient(options: { socketPath?: string } = {}): WorkCraftCl
           closeWith(error);
         }
       });
-      socket.once("open", () => {
+      function acceptConnection(): void {
         opened = true;
         resolve({
           close: () => socket.close(),
@@ -640,7 +660,7 @@ export function createClient(options: { socketPath?: string } = {}): WorkCraftCl
           requestMaterial,
           sendSemantic,
         });
-      });
+      }
       socket.once("error", (error) => {
         closeError = error;
         if (!opened) {
@@ -648,6 +668,7 @@ export function createClient(options: { socketPath?: string } = {}): WorkCraftCl
         }
       });
       socket.once("close", () => {
+        clearTimeout(handshake);
         alive = false;
         abort.abort();
         for (const item of pending.values()) {
@@ -667,7 +688,9 @@ export function createClient(options: { socketPath?: string } = {}): WorkCraftCl
   return {
     ensureDaemon,
     async health() {
-      return (await requestJson(socketPath, "/health")) as Health;
+      const health = (await requestJson(socketPath, "/health")) as Health;
+      assertTerminalProtocol(health.protocol);
+      return health;
     },
     async snapshot() {
       return (await requestJson(socketPath, "/snapshot")) as Snapshot;

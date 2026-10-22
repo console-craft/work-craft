@@ -24,6 +24,8 @@
     "build": "mkdir -p dist && bun build --compile src/main.ts --outfile dist/work-craft",
     "build:install": "bun run build && sh scripts/install.sh",
     "build:smoke": "bun scripts/smoke-build.ts",
+    "preview:build": "bun scripts/build-preview.ts",
+    "preview:smoke": "bun scripts/smoke-preview.ts",
     "check": "bun scripts/verify-opentui-artifacts.ts vendor/opentui && bun run lint && bun run format:check && bun run typecheck && bun run test && bun run build && bun run build:smoke",
     "cli": "bun src/main.ts",
     "format": "oxfmt --write .",

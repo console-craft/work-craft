@@ -1,5 +1,6 @@
 import { projectPaneLayout } from "../application/layout.ts";
 import type { NavigationCatalog } from "../application/navigation.ts";
+import { TERMINAL_PROTOCOL } from "./identity";
 import { parseInteractiveMessage } from "./interactive-protocol.ts";
 import { STREAM_BACKPRESSURE_LIMIT } from "./protocol";
 import {
@@ -324,7 +325,7 @@ export function createConnections(options: ConnectionOptions): ConnectionRegistr
     data: string,
     stamp: TerminalInputContext,
   ): void {
-    if (stamp.source === "input" && connection.paste.bytes) {
+    if (stamp.source === "input" && (connection.paste.bytes || options.inputPending?.(paneId))) {
       return;
     }
     const snapshot = options.snapshot();
@@ -376,7 +377,12 @@ export function createConnections(options: ConnectionOptions): ConnectionRegistr
         report: null,
         paste: createPasteReceiver(),
       });
-      send(socket, { type: "client.ready", epoch: options.epoch, connectionId });
+      send(socket, {
+        type: "client.ready",
+        epoch: options.epoch,
+        connectionId,
+        protocol: TERMINAL_PROTOCOL,
+      });
       return connectionId;
     },
     close,
