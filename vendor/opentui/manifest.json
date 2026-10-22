@@ -1,0 +1,63 @@
+{
+  "baseline": "212eb27da4adf5b907031ad153fc6a5b9f713fbf",
+  "sourceCommit": "d1e5dfab235d47362a3c52731ffccdac556ca71d",
+  "sourcePatchSha256": "be87f5a20f20b51d86e78319e130c10be4840d3ac8edc21fd6258d23f55289c9",
+  "version": "0.6.6-workcraft.1",
+  "tools": {
+    "bun": "1.4.3",
+    "zig": "0.16.0",
+    "node": "v26.5.0"
+  },
+  "artifacts": [
+    {
+      "name": "@opentui/core",
+      "file": "opentui-core-0.6.6-workcraft.1.tgz",
+      "sha256": "6db36a54c2c5c6ef1ef8634cac1596bec4d50a1467ce0fc264c1825d579378bf"
+    },
+    {
+      "name": "@opentui/react",
+      "file": "opentui-react-0.6.6-workcraft.1.tgz",
+      "sha256": "fc0fae8b0d01b05973753c3a61bfd36dda01c65e61bc934c259abef80bf8520d"
+    },
+    {
+      "name": "@opentui/core-darwin-arm64",
+      "file": "opentui-core-darwin-arm64-0.6.6-workcraft.1.tgz",
+      "sha256": "55c1823f2cec8a11173714380fd1e3b7be8c42f6285f65ca17a9b28c655cdd53"
+    },
+    {
+      "name": "@opentui/core-darwin-x64",
+      "file": "opentui-core-darwin-x64-0.6.6-workcraft.1.tgz",
+      "sha256": "51a8f5f05702d3c1ff10b1a4aa2d86c8438ba3fa80f4366eac66f9b12423fe00"
+    },
+    {
+      "name": "@opentui/core-linux-arm64",
+      "file": "opentui-core-linux-arm64-0.6.6-workcraft.1.tgz",
+      "sha256": "7643e15a793ac9d2439be6f937406b85d5dac6b2dd1cb531d7b91f479c31aaff"
+    },
+    {
+      "name": "@opentui/core-linux-x64",
+      "file": "opentui-core-linux-x64-0.6.6-workcraft.1.tgz",
+      "sha256": "c5f0e874a015eb49ca208fe5190e714b6a2bc60c6cff2b61bb66333fedb097ca"
+    },
+    {
+      "name": "@opentui/core-linux-arm64-musl",
+      "file": "opentui-core-linux-arm64-musl-0.6.6-workcraft.1.tgz",
+      "sha256": "4ca4846abeba3c933ae133b6c8569ffd5e6a784598c045a57ce3f34ab8d253ff"
+    },
+    {
+      "name": "@opentui/core-linux-x64-musl",
+      "file": "opentui-core-linux-x64-musl-0.6.6-workcraft.1.tgz",
+      "sha256": "72753423c5d1c9d1a860e9c887a45e86d588560a3a7e3b86168090c079325ee4"
+    },
+    {
+      "name": "@opentui/core-win32-arm64",
+      "file": "opentui-core-win32-arm64-0.6.6-workcraft.1.tgz",
+      "sha256": "3188b7e3a1b5e4bad8b9f113bf822ab63db06605442de81566eec91811cbd7b9"
+    },
+    {
+      "name": "@opentui/core-win32-x64",
+      "file": "opentui-core-win32-x64-0.6.6-workcraft.1.tgz",
+      "sha256": "c07121d818c5e96bfddc0886006e1c701a7ba7986fe7538e9dcd1d6ed6815352"
+    }
+  ]
+}

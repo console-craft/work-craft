@@ -1,0 +1,1569 @@
+diff --git a/bun.lock b/bun.lock
+index 4a54ff76..c1d517d6 100644
+--- a/bun.lock
++++ b/bun.lock
+@@ -11,7 +11,7 @@
+     },
+     "packages/core": {
+       "name": "@opentui/core",
+-      "version": "0.6.6",
++      "version": "0.6.6-workcraft.1",
+       "dependencies": {
+         "bun-ffi-structs": "0.3.1",
+         "diff": "9.0.0",
+@@ -27,14 +27,14 @@
+         "web-tree-sitter": "0.25.10",
+       },
+       "optionalDependencies": {
+-        "@opentui/core-darwin-arm64": "0.6.6",
+-        "@opentui/core-darwin-x64": "0.6.6",
+-        "@opentui/core-linux-arm64": "0.6.6",
+-        "@opentui/core-linux-arm64-musl": "0.6.6",
+-        "@opentui/core-linux-x64": "0.6.6",
+-        "@opentui/core-linux-x64-musl": "0.6.6",
+-        "@opentui/core-win32-arm64": "0.6.6",
+-        "@opentui/core-win32-x64": "0.6.6",
++        "@opentui/core-darwin-arm64": "0.6.6-workcraft.1",
++        "@opentui/core-darwin-x64": "0.6.6-workcraft.1",
++        "@opentui/core-linux-arm64": "0.6.6-workcraft.1",
++        "@opentui/core-linux-arm64-musl": "0.6.6-workcraft.1",
++        "@opentui/core-linux-x64": "0.6.6-workcraft.1",
++        "@opentui/core-linux-x64-musl": "0.6.6-workcraft.1",
++        "@opentui/core-win32-arm64": "0.6.6-workcraft.1",
++        "@opentui/core-win32-x64": "0.6.6-workcraft.1",
+       },
+       "peerDependencies": {
+         "web-tree-sitter": "0.25.10",
+@@ -93,7 +93,7 @@
+     },
+     "packages/native": {
+       "name": "@opentui/native",
+-      "version": "0.6.6",
++      "version": "0.6.6-workcraft.1",
+     },
+     "packages/qrcode": {
+       "name": "@opentui/qrcode",
+@@ -119,7 +119,7 @@
+     },
+     "packages/react": {
+       "name": "@opentui/react",
+-      "version": "0.6.6",
++      "version": "0.6.6-workcraft.1",
+       "dependencies": {
+         "@opentui/core": "workspace:*",
+         "react-reconciler": "^0.33.0",
+diff --git a/packages/core/package.json b/packages/core/package.json
+index b4d093f0..ec33faf3 100644
+--- a/packages/core/package.json
++++ b/packages/core/package.json
+@@ -9,7 +9,7 @@
+   "types": "src/index.ts",
+   "module": "src/index.ts",
+   "main": "src/index.ts",
+-  "version": "0.6.6",
++  "version": "0.6.6-workcraft.1",
+   "type": "module",
+   "imports": {
+     "#opentui/runtime-assets": {
+@@ -79,14 +79,14 @@
+     "web-tree-sitter": "0.25.10"
+   },
+   "optionalDependencies": {
+-    "@opentui/core-darwin-x64": "0.6.6",
+-    "@opentui/core-darwin-arm64": "0.6.6",
+-    "@opentui/core-linux-x64": "0.6.6",
+-    "@opentui/core-linux-arm64": "0.6.6",
+-    "@opentui/core-win32-x64": "0.6.6",
+-    "@opentui/core-win32-arm64": "0.6.6",
+-    "@opentui/core-linux-x64-musl": "0.6.6",
+-    "@opentui/core-linux-arm64-musl": "0.6.6"
++    "@opentui/core-darwin-x64": "0.6.6-workcraft.1",
++    "@opentui/core-darwin-arm64": "0.6.6-workcraft.1",
++    "@opentui/core-linux-x64": "0.6.6-workcraft.1",
++    "@opentui/core-linux-arm64": "0.6.6-workcraft.1",
++    "@opentui/core-win32-x64": "0.6.6-workcraft.1",
++    "@opentui/core-win32-arm64": "0.6.6-workcraft.1",
++    "@opentui/core-linux-x64-musl": "0.6.6-workcraft.1",
++    "@opentui/core-linux-arm64-musl": "0.6.6-workcraft.1"
+   },
+   "exports": {
+     ".": {
+diff --git a/packages/core/scripts/dist-test.ts b/packages/core/scripts/dist-test.ts
+index 1c817e29..de64bd00 100644
+--- a/packages/core/scripts/dist-test.ts
++++ b/packages/core/scripts/dist-test.ts
+@@ -25,6 +25,37 @@ const packageJson = JSON.parse(readFileSync(join(rootDir, "package.json"), "utf8
+ const nativePackageName = `${packageJson.name}-${process.platform}-${process.arch}`
+ const nativePackageDir = join(rootDir, "node_modules", nativePackageName)
+ 
++const terminalContractSmoke = String.raw`
++const terminalSetup = await testing.createTestRenderer({ width: 12, height: 3 })
++try {
++  const pending = []
++  const output = []
++  const terminal = new core.EmbeddedTerminalRenderable(terminalSetup.renderer, {
++    cols: 12, rows: 3, onInputAdmission: (request) => pending.push(request),
++  })
++  terminalSetup.renderer.root.add(terminal)
++  terminal.handleKeyPress(new core.KeyEvent({
++    name: "up", sequence: "\x1b[A", raw: "\x1b[A", eventType: "press", source: "raw",
++    ctrl: false, meta: false, shift: false, option: false, number: false,
++  }))
++  if (pending.length !== 1) throw new Error("Packed terminal lacks input admission")
++  terminal.write("\x1b[?1h\x1b]8;;https://example.test/λ\x1b\\L\x1b]8;;\x1b\\")
++  pending[0].resume((bytes) => output.push(new TextDecoder().decode(bytes)))
++  if (output.length !== 1 || output[0] !== "\x1bOA") throw new Error("Packed terminal encoded stale modes")
++  await terminalSetup.renderOnce()
++  terminalSetup.renderer.currentRenderBuffer.withBuffers(({ attributes }) => {
++    const id = core.getLinkId(attributes[0])
++    const owner = terminalSetup.renderer.nativeScene.resourceContext
++    if (!id || owner.renderLib.contextGetLinkUrl(owner.context, id) !== "https://example.test/λ") {
++      throw new Error("Packed terminal lost OSC8 URL material")
++    }
++  })
++} finally {
++  terminalSetup.renderer.destroy()
++  await terminalSetup.renderer.closed
++}
++`
++
+ const nativeSceneSmoke = `
+ const scene = await testing.createTestRenderer({
+   width: 16, height: 6, useMouse: true,
+@@ -152,6 +183,15 @@ function ensureBuildArtifacts(): void {
+   if (!existsSync(distDir)) {
+     throw new Error(`Missing dist directory at ${distDir}. Run bun run build first.`)
+   }
++  const packedCore = JSON.parse(readFileSync(join(distDir, "package.json"), "utf8"))
++  const packedNative = JSON.parse(readFileSync(join(nativePackageDir, "package.json"), "utf8"))
++  if (
++    packedCore.version !== "0.6.6-workcraft.1" ||
++    packedNative.version !== packedCore.version ||
++    packedCore.optionalDependencies[nativePackageName] !== packedCore.version
++  ) {
++    throw new Error("Packed terminal contract versions must match 0.6.6-workcraft.1")
++  }
+ 
+   if (!existsSync(nativePackageDir)) {
+     throw new Error(`Missing native package directory at ${nativePackageDir}. Run bun run build first.`)
+@@ -379,6 +419,7 @@ try {
+ }
+ 
+ ${nativeSceneSmoke}
++${terminalContractSmoke}
+ 
+ const image = core.NativeImage.fromRgba(Uint8Array.of(1, 2, 3, 255), 1, 1)
+ const raw = image.takeRaw()
+@@ -529,6 +570,7 @@ describe("${packageJson.name} dist smoke test", () => {
+       imported.dispose()
+     }
+     ${nativeSceneSmoke}
++    ${terminalContractSmoke}
+   })
+ })
+ `,
+diff --git a/packages/core/scripts/standalone-test.ts b/packages/core/scripts/standalone-test.ts
+index 4f489894..67347383 100644
+--- a/packages/core/scripts/standalone-test.ts
++++ b/packages/core/scripts/standalone-test.ts
+@@ -311,6 +311,11 @@ try {
+     ),
+   )
+   run(nodePath, ["--build-sea", "sea-config.json"], consumerDir, "Node SEA build failed", { timeout: 10 * 60_000 })
++  if (process.platform === "darwin") {
++    // Node SEA output is unsigned; macOS requires an ad-hoc signature before execution.
++    run("codesign", ["--force", "--sign", "-", builtExecutable], consumerDir, "Node SEA ad-hoc signing failed")
++    run("codesign", ["--verify", "--strict", builtExecutable], consumerDir, "Node SEA signature verification failed")
++  }
+ 
+   const deployedExecutable = join(deployDir, process.platform === "win32" ? "opentui-sea.exe" : "opentui-sea")
+   const deployedBunExecutable = join(deployDir, process.platform === "win32" ? "opentui-bun.exe" : "opentui-bun")
+diff --git a/packages/core/src/index.ts b/packages/core/src/index.ts
+index 6f776f6d..6dceeb42 100644
+--- a/packages/core/src/index.ts
++++ b/packages/core/src/index.ts
+@@ -27,6 +27,11 @@ export { createIcyStreamDemuxer } from "./audio-stream/icy/demuxer.js"
+ export type { IcyStreamDemuxerOptions } from "./audio-stream/icy/demuxer.js"
+ export * from "./image.js"
+ export * from "./renderables/index.js"
++export type {
++  EmbeddedTerminalInputAdmission,
++  EmbeddedTerminalInputEvent,
++  EmbeddedTerminalInputRequest,
++} from "./renderables/EmbeddedTerminalInput.js"
+ // Scene staging and paint recording stay internal: list the public zig.ts names.
+ export {
+   FFIRenderLib,
+diff --git a/packages/core/src/renderables/EmbeddedTerminal.test.ts b/packages/core/src/renderables/EmbeddedTerminal.test.ts
+index 56034032..dc996dc2 100644
+--- a/packages/core/src/renderables/EmbeddedTerminal.test.ts
++++ b/packages/core/src/renderables/EmbeddedTerminal.test.ts
+@@ -6,6 +6,8 @@ import { RGBA } from "../lib/RGBA.js"
+ import { resolveRenderLib } from "../zig.js"
+ import { nativeSymbols, withStubbedSymbols } from "../tests/native-symbol-stubs.js"
+ import { EmbeddedTerminalRenderable } from "./EmbeddedTerminal.js"
++import type { EmbeddedTerminalInputRequest } from "./EmbeddedTerminalInput.js"
++import type { MouseEvent } from "../renderer.js"
+ 
+ class MissingFramebufferTerminal extends EmbeddedTerminalRenderable {
+   protected createFrameBuffer(): void {
+@@ -484,6 +486,163 @@ describe("EmbeddedTerminalRenderable", () => {
+ 
+     expect(new TextDecoder().decode(output.at(-1))).toBe("\x1b[97;1:3u")
+   })
++
++  test("mouse admission reserves routing and preserves the clicked cell across crop motion", async () => {
++    const pending: EmbeddedTerminalInputRequest[] = []
++    const output: string[] = []
++    const callbacks: boolean[] = []
++    let originalEvent: MouseEvent | undefined
++    let ancestors = 0
++    setup.renderer.root.onMouseDown = () => {
++      ancestors++
++    }
++    const terminal = new EmbeddedTerminalRenderable(setup.renderer, {
++      width: 20,
++      height: 4,
++      selectable: false,
++      onInputAdmission: (request) => (request.event.kind === "mouse" ? pending.push(request) : request.cancel()),
++      onData: (bytes) => output.push(new TextDecoder().decode(bytes)),
++      onMouseDown: function (event) {
++        originalEvent = event
++        callbacks.push(this === terminal)
++      },
++    })
++    setup.renderer.root.add(terminal)
++    await setup.renderOnce()
++    await setup.mockMouse.pressDown(2, 1)
++    expect(pending).toHaveLength(1)
++    expect(callbacks).toEqual([true])
++    expect(originalEvent!.defaultPrevented).toBe(true)
++    expect(originalEvent!.propagationStopped).toBe(true)
++    expect(ancestors).toBe(0)
++    expect(terminal.focused).toBe(true)
++    terminal.x = 5
++    await setup.renderOnce()
++    terminal.write("\x1b[?1000h\x1b[?1006h")
++    pending[0]!.resume((bytes) => output.push(new TextDecoder().decode(bytes)))
++    expect(output).toEqual(["\x1b[<0;3;2M"])
++    expect(callbacks).toHaveLength(1)
++    expect(ancestors).toBe(0)
++  })
++
++  test("mouse admission chooses local wheel fallback once after tracking disables", async () => {
++    const pending: EmbeddedTerminalInputRequest[] = []
++    const output: string[] = []
++    let ancestors = 0
++    setup.renderer.root.onMouseScroll = () => {
++      ancestors++
++    }
++    const terminal = new EmbeddedTerminalRenderable(setup.renderer, {
++      width: 20,
++      height: 4,
++      onInputAdmission: (request) => pending.push(request),
++      onData: (bytes) => output.push(new TextDecoder().decode(bytes)),
++    })
++    setup.renderer.root.add(terminal)
++    terminal.write("0\r\n1\r\n2\r\n3\r\n4\r\n5\r\n6\r\n7\r\n8\r\n9\x1b[?1000h\x1b[?1006h")
++    await setup.renderOnce()
++    expect(terminal.screen().lines[0]).toBe("6")
++    await setup.mockMouse.scroll(1, 1, "up")
++    expect(pending).toHaveLength(1)
++    expect(output).toEqual([])
++    terminal.write("\x1b[?1000l")
++    pending[0]!.resume((bytes) => output.push(new TextDecoder().decode(bytes)))
++    pending[0]!.resume(() => output.push("duplicate"))
++    await setup.renderOnce()
++    expect(terminal.screen().lines[0]).toBe("3")
++    expect(output).toEqual([])
++    expect(ancestors).toBe(0)
++    await setup.mockMouse.scroll(1, 1, "left")
++    expect(pending).toHaveLength(2)
++    pending[1]!.resume((bytes) => output.push(new TextDecoder().decode(bytes)))
++    await setup.renderOnce()
++    expect(terminal.screen().lines[0]).toBe("3")
++    await setup.mockMouse.scroll(1, 1, "down")
++    pending[2]!.cancel()
++    pending[2]!.resume(() => output.push("cancelled"))
++    await setup.renderOnce()
++    expect(terminal.screen().lines[0]).toBe("3")
++    expect(output).toEqual([])
++  })
++
++  test.each([
++    [false, "deferred"],
++    [true, "deferred"],
++    [false, "immediate"],
++    [true, "immediate"],
++    [false, "no-hook"],
++    [true, "no-hook"],
++  ] as const)("mouse admission preserves selection/copy with tracking %s and %s", async (tracking, admission) => {
++    const pending: EmbeddedTerminalInputRequest[] = []
++    const terminal = new EmbeddedTerminalRenderable(setup.renderer, {
++      width: 20,
++      height: 4,
++      onInputAdmission:
++        admission === "no-hook"
++          ? undefined
++          : (request) => {
++              if (admission === "immediate") request.resume(() => {})
++              else if (request.event.kind === "mouse") pending.push(request)
++              else request.cancel()
++            },
++    })
++    setup.renderer.root.add(terminal)
++    terminal.write("hello" + (tracking ? "\x1b[?1000h\x1b[?1006h" : ""))
++    await setup.renderOnce()
++    await setup.mockMouse.pressDown(1, 0)
++    await setup.mockMouse.moveTo(3, 0)
++    await setup.mockMouse.release(3, 0)
++    expect(terminal.getSelectedText()).toBe("ell")
++    expect(setup.renderer.getSelection()?.isDragging).toBe(false)
++    if (admission === "deferred") expect(pending.length).toBeGreaterThan(0)
++    await setup.mockMouse.pressDown(4, 0, 0, { modifiers: { ctrl: true } })
++    await setup.mockMouse.release(4, 0, 0, { modifiers: { ctrl: true } })
++    expect(terminal.getSelectedText()).toBe("ello")
++    for (const request of pending.splice(0)) request.resume(() => {})
++    expect(terminal.getSelectedText()).toBe("ello")
++    await setup.mockMouse.pressDown(9, 0)
++    await setup.mockMouse.release(9, 0)
++    expect(terminal.hasSelection()).toBe(false)
++    for (const request of pending) request.resume(() => {})
++    expect(terminal.hasSelection()).toBe(false)
++  })
++
++  test.each([
++    [false, false],
++    [true, false],
++    [false, true],
++  ])("mouse admission clears only original selection: replace %s prevent %s", async (replace, prevent) => {
++    const pending: EmbeddedTerminalInputRequest[] = []
++    const left = new EmbeddedTerminalRenderable(setup.renderer, { width: 10, height: 4 })
++    const right = new EmbeddedTerminalRenderable(setup.renderer, {
++      position: "absolute",
++      left: 10,
++      top: 0,
++      width: 10,
++      height: 4,
++      selectable: false,
++      onInputAdmission: (request) => (request.event.kind === "mouse" ? pending.push(request) : request.cancel()),
++      onMouseDown: (event) => {
++        if (prevent) event.preventDefault()
++      },
++    })
++    setup.renderer.root.add(left)
++    setup.renderer.root.add(right)
++    left.write("hello")
++    await setup.renderOnce()
++    setup.renderer.startSelection(left, 1, 0)
++    setup.renderer.updateSelection(left, 3, 0, { finishDragging: true })
++    expect(left.getSelectedText()).toBe("ell")
++    await setup.mockMouse.pressDown(11, 0)
++    expect(pending).toHaveLength(1)
++    expect(left.getSelectedText()).toBe("ell")
++    if (replace) {
++      setup.renderer.startSelection(left, 0, 0)
++      setup.renderer.updateSelection(left, 1, 0, { finishDragging: true })
++    }
++    pending[0]!.resume(() => {})
++    expect(left.getSelectedText()).toBe(replace ? "he" : prevent ? "ell" : "")
++  })
+ })
+ 
+ function keyEvent(
+diff --git a/packages/core/src/renderables/EmbeddedTerminal.ts b/packages/core/src/renderables/EmbeddedTerminal.ts
+index 69056c5e..93410fc3 100644
+--- a/packages/core/src/renderables/EmbeddedTerminal.ts
++++ b/packages/core/src/renderables/EmbeddedTerminal.ts
+@@ -6,6 +6,11 @@ import type { MouseEvent } from "../renderer.js"
+ import type { OptimizedBuffer } from "../buffer.js"
+ import type { ContextEmbeddedTerminalHandle, EmbeddedTerminalKey, EmbeddedTerminalMouse, RenderLib } from "../zig.js"
+ import { convertGlobalToLocalSelection, type Selection } from "../lib/selection.js"
++import {
++  createEmbeddedTerminalInputRequest,
++  type EmbeddedTerminalInputAdmission,
++  type EmbeddedTerminalInputEvent,
++} from "./EmbeddedTerminalInput.js"
+ 
+ export type EmbeddedTerminalDataSource = "input" | "response"
+ 
+@@ -15,6 +20,7 @@ export interface EmbeddedTerminalOptions extends RenderableOptions<EmbeddedTermi
+   maxScrollback?: number
+   transparentBackground?: boolean
+   onData?: (data: Uint8Array, source: EmbeddedTerminalDataSource) => void
++  onInputAdmission?: EmbeddedTerminalInputAdmission
+   onTerminalResize?: (cols: number, rows: number) => void
+   onScreenChange?: () => void
+   selectable?: boolean
+@@ -50,6 +56,8 @@ export class EmbeddedTerminalRenderable extends Renderable {
+   private readonly lib: RenderLib
+   private handle: ContextEmbeddedTerminalHandle | null = null
+   private _onData?: (data: Uint8Array, source: EmbeddedTerminalDataSource) => void
++  private _onInputAdmission?: EmbeddedTerminalInputAdmission
++  private inputLifetime = 0
+   private _onTerminalResize?: (cols: number, rows: number) => void
+   private _onScreenChange?: () => void
+   private keyreleaseHandler: ((key: KeyEvent) => void) | null = null
+@@ -73,6 +81,7 @@ export class EmbeddedTerminalRenderable extends Renderable {
+ 
+     try {
+       this._onData = options.onData
++      this._onInputAdmission = options.onInputAdmission
+       this._onTerminalResize = options.onTerminalResize
+       this._onScreenChange = options.onScreenChange
+       this.selectable = options.selectable ?? true
+@@ -97,6 +106,14 @@ export class EmbeddedTerminalRenderable extends Renderable {
+     this._onData = value
+   }
+ 
++  public get onInputAdmission(): EmbeddedTerminalInputAdmission | undefined {
++    return this._onInputAdmission
++  }
++
++  public set onInputAdmission(value: EmbeddedTerminalInputAdmission | undefined) {
++    this._onInputAdmission = value
++  }
++
+   public get onTerminalResize(): ((cols: number, rows: number) => void) | undefined {
+     return this._onTerminalResize
+   }
+@@ -169,16 +186,7 @@ export class EmbeddedTerminalRenderable extends Renderable {
+ 
+   public encodeKey(key: KeyEvent): Uint8Array {
+     if (!this.handle) return new Uint8Array()
+-    const text = textualKey(key)
+-    const physical = physicalKey(key)
+-    const options: EmbeddedTerminalKey = {
+-      action: key.eventType === "release" ? "release" : key.repeated ? "repeat" : "press",
+-      key: physical,
+-      mods: modifiers(key),
+-      text,
+-      unshiftedCodepoint: unshiftedCodepoint(key, physical),
+-    }
+-    return this.lib.contextEmbeddedTerminalEncodeKey(this.handle.context, this.handle, options)
++    return this.lib.contextEmbeddedTerminalEncodeKey(this.handle.context, this.handle, normalizeKey(key))
+   }
+ 
+   public encodePaste(bytes: Uint8Array): Uint8Array {
+@@ -264,12 +272,32 @@ export class EmbeddedTerminalRenderable extends Renderable {
+   }
+ 
+   public handleKeyPress(key: KeyEvent): boolean {
++    if (this._onInputAdmission) {
++      const normalized = normalizeKey(key)
++      const payloadBytes = Buffer.byteLength(normalized.key ?? "") + Buffer.byteLength(normalized.text ?? "")
++      this.admitInput({ kind: "key", key: normalized }, payloadBytes, (send) => {
++        send(this.lib.contextEmbeddedTerminalEncodeKey(this.handle!.context, this.handle!, normalized))
++      })
++      return true
++    }
+     const output = this.encodeKey(key)
+     this.send(output, "input")
+     return output.byteLength > 0
+   }
+ 
+   public handlePaste(event: PasteEvent): void {
++    if (this._onInputAdmission) {
++      let bytes = event.bytes
++      this.admitInput(
++        { kind: "paste", byteLength: bytes.byteLength },
++        bytes.byteLength,
++        (send) => send(this.encodePaste(bytes)),
++        () => {
++          bytes = bytes.slice()
++        },
++      )
++      return
++    }
+     this.send(this.encodePaste(event.bytes), "input")
+   }
+ 
+@@ -320,6 +348,7 @@ export class EmbeddedTerminalRenderable extends Renderable {
+   }
+ 
+   protected destroySelf(): void {
++    this.inputLifetime++
+     const handle = this.handle
+     this.handle = null
+     this.selection = false
+@@ -335,37 +364,40 @@ export class EmbeddedTerminalRenderable extends Renderable {
+   }
+ 
+   protected onRemove(): void {
+-    if (this.focused) this.blur()
++    try {
++      if (this.focused) this.blur()
++    } finally {
++      this.inputLifetime++
++    }
+   }
+ 
+   private setupMouse(options: EmbeddedTerminalOptions): void {
+     const { onMouseDown, onMouseUp, onMouseMove, onMouseDrag, onMouseScroll } = options
+-    this.onMouseDown = (event) => {
+-      this.forwardMouse(event, "press")
+-      onMouseDown?.call(this, event)
+-    }
+-    this.onMouseUp = (event) => {
+-      this.forwardMouse(event, "release")
+-      onMouseUp?.call(this, event)
+-    }
+-    this.onMouseMove = (event) => {
+-      this.forwardMouse(event, "motion")
+-      onMouseMove?.call(this, event)
+-    }
+-    this.onMouseDrag = (event) => {
+-      this.forwardMouse(event, "motion")
+-      onMouseDrag?.call(this, event)
+-    }
+-    this.onMouseScroll = (event) => {
+-      this.forwardMouse(event, "press")
+-      onMouseScroll?.call(this, event)
+-    }
++    const bind = (action: EmbeddedTerminalMouse["action"], callback: typeof onMouseDown) => (event: MouseEvent) => {
++      if (this._onInputAdmission) {
++        this.forwardMouse(event, action, () => callback?.call(this, event))
++      } else {
++        this.forwardMouse(event, action)
++        callback?.call(this, event)
++      }
++    }
++    this.onMouseDown = bind("press", onMouseDown)
++    this.onMouseUp = bind("release", onMouseUp)
++    this.onMouseMove = bind("motion", onMouseMove)
++    this.onMouseDrag = bind("motion", onMouseDrag)
++    this.onMouseScroll = bind("press", onMouseScroll)
+   }
+ 
+-  private forwardMouse(event: MouseEvent, action: EmbeddedTerminalMouse["action"]): void {
+-    if (!this.handle) return
++  private forwardMouse(event: MouseEvent, action: EmbeddedTerminalMouse["action"], beforeAdmission?: () => void): void {
++    if (!this.handle) {
++      beforeAdmission?.()
++      return
++    }
+     if (event.type === "down" && event.button === 0) this.focus()
+-    if (!this.handle) return
++    if (!this.handle) {
++      beforeAdmission?.()
++      return
++    }
+     const mouse = {
+       action,
+       button: event.type === "move" && !event.isDragging ? undefined : mouseButton(event),
+@@ -374,6 +406,32 @@ export class EmbeddedTerminalRenderable extends Renderable {
+       y: event.y - this._screenY,
+       anyButtonPressed: event.isDragging === true || event.type === "down",
+     }
++    if (beforeAdmission) {
++      // Observe caller prevention before reserving the event; never retain/replay renderer events.
++      beforeAdmission()
++      const clearSelection = selectionClearDefault(this._ctx, event)
++      const scrollDirection = event.type === "scroll" ? event.scroll?.direction : undefined
++      event.preventDefault()
++      event.stopPropagation()
++      this.admitInput({ kind: "mouse", mouse, scrollDirection }, 0, (send) => {
++        const output = this.lib.contextEmbeddedTerminalEncodeMouse(this.handle!.context, this.handle!, mouse)
++        if (scrollDirection && output.byteLength === 0) {
++          if (scrollDirection === "up" || scrollDirection === "down") {
++            this.lib.contextEmbeddedTerminalScroll(
++              this.handle!.context,
++              this.handle!,
++              scrollDirection === "up" ? -3 : 3,
++            )
++            this.requestRender()
++          }
++        } else if (output.byteLength > 0) {
++          send(output)
++        } else {
++          clearSelection?.()
++        }
++      })
++      return
++    }
+     const output = this.lib.contextEmbeddedTerminalEncodeMouse(this.handle.context, this.handle, mouse)
+     if (event.type === "scroll" && output.byteLength === 0) {
+       const direction = event.scroll?.direction
+@@ -398,7 +456,52 @@ export class EmbeddedTerminalRenderable extends Renderable {
+ 
+   private sendFocus(focused: boolean): void {
+     if (!this.handle) return
+-    this.send(this.lib.contextEmbeddedTerminalEncodeFocus(this.handle.context, this.handle, focused), "input")
++    this.admitInput({ kind: "focus", focused }, 0, (send) => {
++      send(this.lib.contextEmbeddedTerminalEncodeFocus(this.handle!.context, this.handle!, focused))
++    })
++  }
++
++  private admitInput(
++    event: EmbeddedTerminalInputEvent,
++    payloadBytes: number,
++    run: (send: (bytes: Uint8Array) => void) => void,
++    retainPayload?: () => void,
++  ): void {
++    const admit = this._onInputAdmission
++    if (!admit) {
++      run((bytes) => this.send(bytes, "input"))
++      return
++    }
++    if (!this.handle || this.isDestroyed) return
++    const handle = this.handle
++    const lifetime = this.inputLifetime
++    const valid = () =>
++      this.handle === handle &&
++      this.inputLifetime === lifetime &&
++      !this.isDestroyed &&
++      !this._ctx.nativeScene.driver.contextDisposed
++    const controller = createEmbeddedTerminalInputRequest(
++      event,
++      payloadBytes,
++      (send) => {
++        if (!valid()) return
++        run((bytes) => {
++          if (valid() && bytes.byteLength > 0) send(bytes)
++        })
++      },
++      retainPayload,
++    )
++    try {
++      admit(controller.request)
++      if (valid()) {
++        controller.retain()
++      } else {
++        controller.request.cancel()
++      }
++    } catch (error) {
++      controller.request.cancel()
++      throw error
++    }
+   }
+ 
+   private removeKeyreleaseHandler(): void {
+@@ -412,6 +515,42 @@ export class EmbeddedTerminalRenderable extends Renderable {
+   }
+ }
+ 
++function selectionClearDefault(context: RenderContext, event: MouseEvent): (() => void) | undefined {
++  if (event.type !== "down" || event.button !== 0 || event.defaultPrevented) return
++  const selection = context.getSelection()
++  if (!selection || selection.isDragging) return
++  const original = new WeakRef(selection)
++  const anchor = selection.anchor
++  const focus = selection.focus
++  const behavior = selection.behavior
++  return () => {
++    const current = context.getSelection()
++    if (
++      current &&
++      current === original.deref() &&
++      !current.isDragging &&
++      current.anchor.x === anchor.x &&
++      current.anchor.y === anchor.y &&
++      current.focus.x === focus.x &&
++      current.focus.y === focus.y &&
++      current.behavior === behavior
++    ) {
++      context.clearSelection()
++    }
++  }
++}
++
++function normalizeKey(key: KeyEvent): EmbeddedTerminalKey {
++  const physical = physicalKey(key)
++  return {
++    action: key.eventType === "release" ? "release" : key.repeated ? "repeat" : "press",
++    key: physical,
++    mods: modifiers(key),
++    text: textualKey(key),
++    unshiftedCodepoint: unshiftedCodepoint(key, physical),
++  }
++}
++
+ function modifiers(input: {
+   shift?: boolean
+   ctrl?: boolean
+diff --git a/packages/core/src/renderables/EmbeddedTerminalInput.test.ts b/packages/core/src/renderables/EmbeddedTerminalInput.test.ts
+new file mode 100644
+index 00000000..51c8578c
+--- /dev/null
++++ b/packages/core/src/renderables/EmbeddedTerminalInput.test.ts
+@@ -0,0 +1,267 @@
++import { afterEach, beforeEach, describe, expect, test } from "bun:test"
++import { KeyEvent, PasteEvent } from "../lib/KeyHandler.js"
++import { parseKeypress } from "../lib/parse.keypress.js"
++import { createTestRenderer, type TestRendererSetup } from "../testing/test-renderer.js"
++import { EmbeddedTerminalRenderable } from "./EmbeddedTerminal.js"
++import { createEmbeddedTerminalInputRequest, type EmbeddedTerminalInputRequest } from "./EmbeddedTerminalInput.js"
++
++const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes)
++
++describe("embedded terminal input admission", () => {
++  let setup: TestRendererSetup
++  let terminal: EmbeddedTerminalRenderable
++  let pending: EmbeddedTerminalInputRequest[]
++  let immediate: string[]
++
++  beforeEach(async () => {
++    setup = await createTestRenderer({ width: 30, height: 8 })
++    pending = []
++    immediate = []
++    terminal = new EmbeddedTerminalRenderable(setup.renderer, {
++      width: 20,
++      height: 4,
++      onInputAdmission: (request) => pending.push(request),
++      onData: (bytes, source) => immediate.push(`${source}:${decode(bytes)}`),
++    })
++    setup.renderer.root.add(terminal)
++  })
++
++  afterEach(() => setup.renderer.destroy())
++
++  test("uses parsed modes and the original sink", () => {
++    const original: string[] = []
++    terminal.handleKeyPress(new KeyEvent(parseKeypress("\x1b[A")!))
++    expect(pending).toHaveLength(1)
++    expect(immediate).toEqual([])
++    terminal.write("\x1b[?1h")
++    terminal.onData = () => {
++      throw new Error("borrowed a later sender")
++    }
++    pending[0]!.resume((bytes) => original.push(decode(bytes)))
++    expect(original).toEqual(["\x1bOA"])
++  })
++
++  test("snapshots paste after charging and before the source mutates", () => {
++    const bytes = new TextEncoder().encode("original")
++    terminal.handlePaste(new PasteEvent(bytes))
++    expect(pending).toHaveLength(1)
++    expect(pending[0]!.payloadBytes).toBe(8)
++    bytes.fill(120)
++    terminal.write("\x1b[?2004h")
++    pending[0]!.resume((value) => immediate.push(decode(value)))
++    expect(immediate).toEqual(["\x1b[200~original\x1b[201~"])
++  })
++
++  test("settles before a reentrant sink and only sends once", () => {
++    terminal.handlePaste(new PasteEvent(new TextEncoder().encode("once")))
++    expect(pending).toHaveLength(1)
++    const request = pending[0]!
++    const output: string[] = []
++    request.resume((bytes) => {
++      output.push(decode(bytes))
++      request.resume(() => output.push("reentrant"))
++    })
++    request.resume(() => output.push("twice"))
++    request.cancel()
++    expect(output).toEqual(["once"])
++  })
++
++  test("cancelled requests cannot resume", () => {
++    terminal.handlePaste(new PasteEvent(new TextEncoder().encode("cancelled")))
++    expect(pending).toHaveLength(1)
++    pending[0]!.cancel()
++    pending[0]!.cancel()
++    pending[0]!.resume(() => immediate.push("stale"))
++    expect(immediate).toEqual([])
++  })
++
++  test("cancelled admission does not copy a rejected paste", () => {
++    let copies = 0
++    class CountedBytes extends Uint8Array {
++      override slice(start?: number, end?: number): Uint8Array<ArrayBuffer> {
++        copies++
++        return super.slice(start, end)
++      }
++    }
++    terminal.onInputAdmission = (request) => request.cancel()
++    terminal.handlePaste(new PasteEvent(new CountedBytes([97])))
++    expect(copies).toBe(0)
++    expect(immediate).toEqual([])
++  })
++
++  test("retained admission makes exactly one lifetime copy after the callback", () => {
++    const order: string[] = []
++    class CountedBytes extends Uint8Array {
++      override slice(start?: number, end?: number): Uint8Array<ArrayBuffer> {
++        order.push("copy")
++        return super.slice(start, end)
++      }
++    }
++    terminal.onInputAdmission = (request) => {
++      order.push("charged")
++      pending.push(request)
++    }
++    terminal.handlePaste(new PasteEvent(new CountedBytes([97])))
++    expect(order).toEqual(["charged", "copy"])
++    pending[0]!.resume((bytes) => immediate.push(decode(bytes)))
++    expect(order).toEqual(["charged", "copy"])
++    expect(immediate).toEqual(["a"])
++  })
++
++  test("destruction inside admission cancels before copying its paste", () => {
++    let copies = 0
++    class CountedBytes extends Uint8Array {
++      override slice(start?: number, end?: number): Uint8Array<ArrayBuffer> {
++        copies++
++        return super.slice(start, end)
++      }
++    }
++    terminal.onInputAdmission = (request) => {
++      pending.push(request)
++      terminal.destroy()
++    }
++    terminal.handlePaste(new PasteEvent(new CountedBytes([97])))
++    expect(copies).toBe(0)
++    pending[0]!.resume(() => immediate.push("stale"))
++    expect(immediate).toEqual([])
++  })
++
++  test("failed paste retention cancels the request and releases its action", () => {
++    class FailingBytes extends Uint8Array {
++      override slice(): never {
++        throw new Error("lifetime copy failed")
++      }
++    }
++    expect(() => terminal.handlePaste(new PasteEvent(new FailingBytes([97])))).toThrow("lifetime copy failed")
++    expect(pending).toHaveLength(1)
++    pending[0]!.resume(() => immediate.push("stale"))
++    expect(immediate).toEqual([])
++  })
++
++  test("controller retention is idempotent and cancellation never retains", () => {
++    let copies = 0
++    const first = createEmbeddedTerminalInputRequest(
++      { kind: "paste", byteLength: 1 },
++      1,
++      (send) => send(new Uint8Array([97])),
++      () => {
++        copies++
++      },
++    )
++    first.retain()
++    first.retain()
++    first.request.resume((bytes) => immediate.push(decode(bytes)))
++    first.retain()
++    const second = createEmbeddedTerminalInputRequest(
++      { kind: "paste", byteLength: 1 },
++      1,
++      () => {
++        throw new Error("cancelled")
++      },
++      () => {
++        copies++
++      },
++    )
++    second.request.cancel()
++    second.retain()
++    expect(copies).toBe(1)
++    expect(immediate).toEqual(["a"])
++  })
++
++  test("an encoder failure settles the request before propagating", () => {
++    let encodes = 0
++    const controller = createEmbeddedTerminalInputRequest({ kind: "focus", focused: true }, 0, () => {
++      encodes++
++      throw new Error("encode failed")
++    })
++    expect(() => controller.request.resume(() => {})).toThrow("encode failed")
++    controller.request.resume(() => immediate.push("stale"))
++    expect(encodes).toBe(1)
++    expect(immediate).toEqual([])
++  })
++
++  test("focus transfer and release listeners do not wait for reports", () => {
++    terminal.focus()
++    expect(terminal.focused).toBe(true)
++    expect(setup.renderer.currentFocusedRenderable).toBe(terminal)
++    expect(pending.map((request) => request.event.kind)).toEqual(["focus"])
++    const release = parseKeypress("\x1b[97;1:3u", { useKittyKeyboard: true })!
++    setup.renderer.keyInput.processParsedKey(release)
++    expect(pending).toHaveLength(2)
++    terminal.blur()
++    expect(terminal.focused).toBe(false)
++    expect(setup.renderer.currentFocusedRenderable).not.toBe(terminal)
++    setup.renderer.keyInput.processParsedKey(release)
++    expect(pending).toHaveLength(3)
++    terminal.write("\x1b[?1004h\x1b[>3u")
++    for (const request of pending) {
++      request.resume((bytes) => immediate.push(decode(bytes)))
++    }
++    expect(immediate).toEqual(["\x1b[I", "\x1b[97;1:3u", "\x1b[O"])
++    expect(terminal.focused).toBe(false)
++  })
++
++  test.each(["remove", "destroy"] as const)("%s invalidates pending requests without retaining focus", (action) => {
++    terminal.focus()
++    terminal.handlePaste(new PasteEvent(new TextEncoder().encode("stale")))
++    if (action === "remove") {
++      setup.renderer.root.remove(terminal)
++      setup.renderer.root.add(terminal)
++    } else {
++      terminal.destroy()
++    }
++    expect(terminal.focused).toBe(false)
++    expect(setup.renderer.currentFocusedRenderable).not.toBe(terminal)
++    for (const request of pending) {
++      request.resume(() => immediate.push("stale"))
++    }
++    expect(immediate).toEqual([])
++  })
++
++  test("automatic replies bypass held input admission", () => {
++    terminal.handlePaste(new PasteEvent(new TextEncoder().encode("held")))
++    terminal.write("\x1b[5n")
++    expect(pending).toHaveLength(1)
++    expect(immediate).toEqual(["response:\x1b[0n"])
++  })
++
++  test("a throwing admission callback cancels its request", () => {
++    let retained: EmbeddedTerminalInputRequest | undefined
++    terminal.onInputAdmission = (request) => {
++      retained = request
++      throw new Error("admission failed")
++    }
++    expect(() => terminal.handlePaste(new PasteEvent(new Uint8Array([97])))).toThrow("admission failed")
++    expect(retained).toBeDefined()
++    retained!.resume(() => immediate.push("stale"))
++    expect(immediate).toEqual([])
++  })
++
++  test("a throwing sink remains settled without changing focus", () => {
++    terminal.focus()
++    terminal.handlePaste(new PasteEvent(new Uint8Array([97])))
++    expect(pending).toHaveLength(2)
++    expect(() =>
++      pending[1]!.resume(() => {
++        throw new Error("sink failed")
++      }),
++    ).toThrow("sink failed")
++    pending[1]!.resume(() => immediate.push("duplicate"))
++    expect(immediate).toEqual([])
++    expect(terminal.focused).toBe(true)
++  })
++
++  test.each([
++    ["Unicode", "λ", "", "λ"],
++    ["Dvorak press", "\x1b[117::102;5u", "\x1b[>3u", "\x1b[117;5u"],
++    ["Dvorak repeat", "\x1b[117::102;5:2u", "\x1b[>3u", "\x1b[117;5:2u"],
++    ["Dvorak release", "\x1b[117::102;5:3u", "\x1b[>3u", "\x1b[117;5:3u"],
++    ["base layout", "\x1b[117::102;5u", "\x1b[>5u", "\x1b[117::102;5u"],
++  ])("normalization preserves %s", (_label, raw, modes, expected) => {
++    terminal.handleKeyPress(new KeyEvent(parseKeypress(raw, { useKittyKeyboard: true })!))
++    expect(pending).toHaveLength(1)
++    terminal.write(modes)
++    pending[0]!.resume((bytes) => immediate.push(decode(bytes)))
++    expect(immediate).toEqual([expected])
++  })
++})
+diff --git a/packages/core/src/renderables/EmbeddedTerminalInput.ts b/packages/core/src/renderables/EmbeddedTerminalInput.ts
+new file mode 100644
+index 00000000..540c3138
+--- /dev/null
++++ b/packages/core/src/renderables/EmbeddedTerminalInput.ts
+@@ -0,0 +1,71 @@
++import type { EmbeddedTerminalKey, EmbeddedTerminalMouse } from "../zig.js"
++
++export type EmbeddedTerminalInputEvent =
++  | { readonly kind: "key"; readonly key: Readonly<EmbeddedTerminalKey> }
++  | { readonly kind: "paste"; readonly byteLength: number }
++  | {
++      readonly kind: "mouse"
++      readonly mouse: Readonly<EmbeddedTerminalMouse>
++      readonly scrollDirection?: "up" | "down" | "left" | "right"
++    }
++  | { readonly kind: "focus"; readonly focused: boolean }
++
++/** Caller-owned, one-shot encoding against the same live terminal's current modes. */
++export type EmbeddedTerminalInputRequest = {
++  readonly event: EmbeddedTerminalInputEvent
++  readonly payloadBytes: number
++  resume(send: (bytes: Uint8Array) => void): void
++  cancel(): void
++}
++
++/** Resolve synchronously or retain in a bounded caller queue; automatic replies bypass this hook. */
++export type EmbeddedTerminalInputAdmission = (request: EmbeddedTerminalInputRequest) => void
++
++/** Internal controller separates admission/accounting from the mutable payload's lifetime copy. */
++export function createEmbeddedTerminalInputRequest(
++  event: EmbeddedTerminalInputEvent,
++  payloadBytes: number,
++  run: (send: (bytes: Uint8Array) => void) => void,
++  retainPayload?: () => void,
++): { request: EmbeddedTerminalInputRequest; retain(): void } {
++  let action: typeof run | undefined = run
++  let retainAction = retainPayload
++  let retained = false
++  const descriptor = Object.freeze(
++    event.kind === "key"
++      ? { ...event, key: Object.freeze({ ...event.key }) }
++      : event.kind === "mouse"
++        ? { ...event, mouse: Object.freeze({ ...event.mouse }) }
++        : { ...event },
++  )
++
++  function cancel(): void {
++    action = undefined
++    retainAction = undefined
++  }
++
++  return {
++    request: Object.freeze({
++      event: descriptor,
++      payloadBytes,
++      cancel,
++      resume(send: (bytes: Uint8Array) => void): void {
++        const next = action
++        cancel()
++        next?.(send)
++      },
++    }),
++    retain(): void {
++      if (!action || retained) return
++      retained = true
++      const copy = retainAction
++      retainAction = undefined
++      try {
++        copy?.()
++      } catch (error) {
++        cancel()
++        throw error
++      }
++    },
++  }
++}
+diff --git a/packages/core/src/tests/embedded-terminal-material.test.ts b/packages/core/src/tests/embedded-terminal-material.test.ts
+new file mode 100644
+index 00000000..24c6bb72
+--- /dev/null
++++ b/packages/core/src/tests/embedded-terminal-material.test.ts
+@@ -0,0 +1,31 @@
++import { expect, test } from "bun:test"
++import { toArrayBuffer } from "../platform/ffi.js"
++import { getLinkId } from "../utils.js"
++import { resolveRenderLib } from "../zig.js"
++
++test("embedded terminal material resolves its exact OSC8 URL inside a public buffer lease", () => {
++  const lib = resolveRenderLib()
++  const context = lib.createContext({ objectCapacity: 8, renderCellsMax: 36 })
++  const terminal = lib.createContextEmbeddedTerminal(context, { cols: 12, rows: 3 })
++  const target = lib.createContextBuffer(context, { width: 12, height: 3 })
++  try {
++    lib.contextEmbeddedTerminalWrite(context, terminal, "\x1b]8;;https://example.test/λ\x1b\\L\x1b]8;;\x1b\\")
++    lib.contextEmbeddedTerminalCompose({ context, target, frame: null }, terminal, 0, 0)
++    const lease = lib.contextAcquireBufferLease(context, target)
++    try {
++      const attributes = new Uint32Array(toArrayBuffer(lease.attributes, 0, 36 * 4))
++      const id = getLinkId(attributes[0]!)
++      expect(id).not.toBe(0)
++      expect(lib.contextGetLinkUrl(context, id)).toBe("https://example.test/λ")
++      const bytes = new Uint8Array(lib.contextBufferLeaseGetRealCharSize(context, lease.handle, false))
++      lib.contextBufferLeaseWriteResolvedChars(context, lease.handle, bytes, false)
++      expect(new TextDecoder().decode(bytes).startsWith("L")).toBe(true)
++    } finally {
++      lib.contextReleaseBufferLease(context, lease.handle)
++    }
++  } finally {
++    lib.destroyContextBuffer(context, target)
++    lib.destroyContextEmbeddedTerminal(context, terminal)
++    lib.destroyContext(context)
++  }
++})
+diff --git a/packages/core/tsconfig.node-test.json b/packages/core/tsconfig.node-test.json
+index cef1cd9e..d2e1e24d 100644
+--- a/packages/core/tsconfig.node-test.json
++++ b/packages/core/tsconfig.node-test.json
+@@ -41,6 +41,8 @@
+     "src/renderables/Diff.test.ts",
+     "src/renderables/EditBufferRenderable.test.ts",
+     "src/renderables/EmbeddedTerminal.test.ts",
++    "src/renderables/EmbeddedTerminalInput.test.ts",
++    "src/tests/embedded-terminal-material.test.ts",
+     "src/renderables/Input.test.ts",
+     "src/renderables/Select.test.ts",
+     "src/renderables/Slider.test.ts",
+diff --git a/packages/native/package.json b/packages/native/package.json
+index 39953923..8834243e 100644
+--- a/packages/native/package.json
++++ b/packages/native/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@opentui/native",
+-  "version": "0.6.6",
++  "version": "0.6.6-workcraft.1",
+   "private": true,
+   "scripts": {
+     "prepare:zig": "sh scripts/prepare-zig-deps.sh",
+diff --git a/packages/native/src/buffer.zig b/packages/native/src/buffer.zig
+index 11993374..8abe1d7a 100644
+--- a/packages/native/src/buffer.zig
++++ b/packages/native/src/buffer.zig
+@@ -1913,6 +1913,39 @@ pub const OptimizedBuffer = struct {
+         attributes: u32,
+     ) error{ InvalidUnicode, InvalidOptions, OutOfMemory, TrackerLimit }!void {
+         if (attributes & ~ansi.TextAttributes.ATTRIBUTE_BASE_MASK != 0) return error.InvalidOptions;
++        return self.drawOwnedGraphemeChecked(grapheme_bytes, cell_width, x, y, fg, bg, attributes);
++    }
++
++    /// Native callers retain the live destination-pool ID through this call; public raw text still rejects IDs.
++    pub fn drawLinkedGraphemeChecked(
++        self: *OptimizedBuffer,
++        grapheme_bytes: []const u8,
++        cell_width: u8,
++        x: u32,
++        y: u32,
++        fg: RGBA,
++        bg: RGBA,
++        attributes: u32,
++        link_id: u32,
++    ) error{ InvalidUnicode, InvalidOptions, OutOfMemory, TrackerLimit }!void {
++        if (attributes & ~ansi.TextAttributes.ATTRIBUTE_BASE_MASK != 0) return error.InvalidOptions;
++        const refs = self.link_pool.getRefcount(link_id) catch return error.InvalidOptions;
++        if (refs == 0) return error.InvalidOptions;
++        if (refs >= math.maxInt(u32) - 1) return error.TrackerLimit;
++        try self.storage.ensureTrackerCapacity(self.grapheme_tracker.getGraphemeCount(), @as(u64, self.link_tracker.getLinkCount()) + 1);
++        return self.drawOwnedGraphemeChecked(grapheme_bytes, cell_width, x, y, fg, bg, ansi.TextAttributes.setLinkId(attributes, link_id));
++    }
++
++    fn drawOwnedGraphemeChecked(
++        self: *OptimizedBuffer,
++        grapheme_bytes: []const u8,
++        cell_width: u8,
++        x: u32,
++        y: u32,
++        fg: RGBA,
++        bg: RGBA,
++        attributes: u32,
++    ) error{ InvalidUnicode, InvalidOptions, OutOfMemory, TrackerLimit }!void {
+         try validateColor(fg);
+         try validateColor(bg);
+         if (grapheme_bytes.len == 0 or cell_width == 0 or x >= self.width or y >= self.height) return;
+diff --git a/packages/native/src/embedded-terminal/compositor.zig b/packages/native/src/embedded-terminal/compositor.zig
+index 3820defb..576c6d1e 100644
+--- a/packages/native/src/embedded-terminal/compositor.zig
++++ b/packages/native/src/embedded-terminal/compositor.zig
+@@ -41,6 +41,8 @@ pub fn compose(
+             try clearRow(target, origin_x, @intCast(dest_y), state.cols, state.colors.foreground, default_bg, checked);
+             try composeRow(
+                 allocator,
++                state,
++                y,
+                 row_cells[y].slice(),
+                 row_selection[y],
+                 target,
+@@ -79,6 +81,8 @@ fn clearRow(target: *buffer.OptimizedBuffer, origin_x: i32, y: u32, cols: u16, f
+ 
+ fn composeRow(
+     allocator: std.mem.Allocator,
++    state: *const ghostty.RenderState,
++    source_y: usize,
+     cells: anytype,
+     selection: ?[2]u16,
+     target: *buffer.OptimizedBuffer,
+@@ -107,6 +111,21 @@ fn composeRow(
+         const dest_x = @as(i64, origin_x) + @as(i64, @intCast(x));
+         if (dest_x < 0 or dest_x >= target.getWidth()) continue;
+         if (raw.wide == .spacer_tail or raw.wide == .spacer_head) continue;
++        if (raw.gridWidth() > target.getWidth() - @as(u32, @intCast(dest_x))) continue;
++        for (0..raw.gridWidth()) |offset| {
++            if (!target.isPointInScissor(@intCast(dest_x + @as(i64, @intCast(offset))), @intCast(dest_y))) continue :cell_loop;
++        }
++
++        const link_id: u32 = if (raw.hyperlink) acquire: {
++            const url = ghostty.cellHyperlink(state, x, source_y) orelse return error.UnsupportedResource;
++            if (!std.unicode.utf8ValidateSlice(url)) return error.UnsupportedResource;
++            break :acquire target.link_pool.acquire(url) catch |err| switch (err) {
++                error.OutOfMemory => return error.OutOfMemory,
++                error.RefcountOverflow => return error.TrackerLimit,
++                else => return error.UnsupportedResource,
++            };
++        } else 0;
++        defer if (link_id != 0) target.link_pool.decref(link_id) catch unreachable;
+ 
+         const grapheme: []const u21 = if (raw.hasGrapheme()) graphemes[x] else &.{};
+         const style = if (raw.hasStyling()) styles[x] else @TypeOf(styles[x]){};
+@@ -120,15 +139,15 @@ fn composeRow(
+         var stack: [128]u8 = undefined;
+         var writer: std.Io.Writer = .fixed(&stack);
+         encodeCodepoint(&writer, raw.codepoint()) catch {
+-            try drawAllocated(allocator, target, raw, grapheme, @intCast(dest_x), dest_y, fg, bg, style, checked);
++            try drawAllocated(allocator, target, raw, grapheme, @intCast(dest_x), dest_y, fg, bg, style, link_id, checked);
+             continue :cell_loop;
+         };
+         for (grapheme) |codepoint| encodeCodepoint(&writer, codepoint) catch {
+-            try drawAllocated(allocator, target, raw, grapheme, @intCast(dest_x), dest_y, fg, bg, style, checked);
++            try drawAllocated(allocator, target, raw, grapheme, @intCast(dest_x), dest_y, fg, bg, style, link_id, checked);
+             continue :cell_loop;
+         };
+ 
+-        try draw(target, writer.buffered(), raw.gridWidth(), @intCast(dest_x), dest_y, fg, bg, style, checked);
++        try draw(target, writer.buffered(), raw.gridWidth(), @intCast(dest_x), dest_y, fg, bg, style, link_id, checked);
+     }
+ }
+ 
+@@ -142,13 +161,14 @@ fn drawAllocated(
+     foreground: anytype,
+     background: anytype,
+     style: anytype,
++    link_id: u32,
+     comptime checked: bool,
+ ) Error!void {
+     var output: std.Io.Writer.Allocating = .init(allocator);
+     defer output.deinit();
+     encodeCodepoint(&output.writer, raw.codepoint()) catch return error.OutOfMemory;
+     for (grapheme) |codepoint| encodeCodepoint(&output.writer, codepoint) catch return error.OutOfMemory;
+-    try draw(target, output.written(), raw.gridWidth(), x, y, foreground, background, style, checked);
++    try draw(target, output.written(), raw.gridWidth(), x, y, foreground, background, style, link_id, checked);
+ }
+ 
+ fn encodeCodepoint(writer: *std.Io.Writer, codepoint: u21) std.Io.Writer.Error!void {
+@@ -158,13 +178,22 @@ fn encodeCodepoint(writer: *std.Io.Writer, codepoint: u21) std.Io.Writer.Error!v
+     try writer.writeAll(bytes[0..len]);
+ }
+ 
+-fn draw(target: *buffer.OptimizedBuffer, text: []const u8, cell_width: u8, x: u32, y: u32, foreground: anytype, background: anytype, style: anytype, comptime checked: bool) Error!void {
+-    const cell_attributes = attributes(style);
++fn draw(target: *buffer.OptimizedBuffer, text: []const u8, cell_width: u8, x: u32, y: u32, foreground: anytype, background: anytype, style: anytype, link_id: u32, comptime checked: bool) Error!void {
++    const cell_attributes = ansi.TextAttributes.setLinkId(attributes(style), link_id);
+     if (checked) {
+         const blank = text.len == 0 or style.flags.invisible;
+-        try target.drawGraphemeChecked(if (blank) " " else text, if (blank) 1 else cell_width, x, y, color(foreground), color(background), cell_attributes);
++        if (link_id != 0) {
++            try target.drawLinkedGraphemeChecked(if (blank) " " else text, if (blank) 1 else cell_width, x, y, color(foreground), color(background), attributes(style), link_id);
++        } else {
++            try target.drawGraphemeChecked(if (blank) " " else text, if (blank) 1 else cell_width, x, y, color(foreground), color(background), cell_attributes);
++        }
+         return;
+     }
++    if (link_id != 0) {
++        const refs = target.link_pool.getRefcount(link_id) catch return error.UnsupportedResource;
++        if (refs >= std.math.maxInt(u32) - 1) return error.TrackerLimit;
++        try target.storage.ensureTrackerCapacity(target.grapheme_tracker.getGraphemeCount(), @as(u64, target.link_tracker.getLinkCount()) + 1);
++    }
+     if (text.len == 0 or style.flags.invisible) {
+         target.set(x, y, .{
+             .char = buffer.DEFAULT_SPACE_CHAR,
+diff --git a/packages/native/src/embedded-terminal/ghostty.zig b/packages/native/src/embedded-terminal/ghostty.zig
+index 84e03ab4..a044215c 100644
+--- a/packages/native/src/embedded-terminal/ghostty.zig
++++ b/packages/native/src/embedded-terminal/ghostty.zig
+@@ -10,6 +10,17 @@ pub const Coordinate = vt.Coordinate;
+ pub const RenderState = vt.RenderState;
+ pub const Selection = vt.Selection;
+ 
++/// Borrow only immediately after update, while the terminal cannot change.
++pub fn cellHyperlink(state: *const RenderState, x: usize, y: usize) ?[]const u8 {
++    if (x >= state.cols or y >= state.rows) return null;
++    const pin = state.row_data.slice().items(.pin)[y];
++    const page = pin.node.page();
++    const cell = page.getRowAndCell(x, pin.y).cell;
++    if (!cell.hyperlink) return null;
++    const id = page.lookupHyperlink(cell) orelse return null;
++    return page.hyperlink_set.get(page.memory, id).uri.slice(page.memory);
++}
++
+ pub const Key = struct {
+     action: vt.input.KeyAction = .press,
+     key: vt.input.Key = .unidentified,
+diff --git a/packages/native/src/embedded-terminal/tests.zig b/packages/native/src/embedded-terminal/tests.zig
+index cfbb2174..4bade10e 100644
+--- a/packages/native/src/embedded-terminal/tests.zig
++++ b/packages/native/src/embedded-terminal/tests.zig
+@@ -7,6 +7,141 @@ const link = @import("../link.zig");
+ const EmbeddedTerminal = @import("main.zig").EmbeddedTerminal;
+ const ghostty = @import("ghostty.zig");
+ 
++fn expectCellLink(target: *buffer.OptimizedBuffer, x: u32, y: u32, expected: []const u8) !void {
++    const id = ansi.TextAttributes.getLinkId(target.get(x, y).?.attributes);
++    try std.testing.expect(id != 0);
++    try std.testing.expectEqualStrings(expected, try target.link_pool.get(id));
++}
++
++test "embedded terminal OSC8 preserves destination URL after parser destruction" {
++    inline for (.{ false, true }) |checked| {
++        var pools = TestPools.init(std.testing.allocator);
++        defer pools.deinit();
++        const target = try buffer.OptimizedBuffer.init(std.testing.allocator, 12, 3, .{ .link_pool = &pools.links, .pool = &pools.graphemes });
++        defer target.deinit();
++        {
++            const terminal = try EmbeddedTerminal.init(std.testing.io, std.testing.allocator, .{ .cols = 12, .rows = 3 });
++            defer terminal.deinit();
++            try terminal.write("\x1b]8;;https://example.test/λ\x1b\\L\x1b]8;;\x1b\\");
++            if (checked) try terminal.composeChecked(target, 0, 0, 36) else try terminal.compose(target, 0, 0);
++        }
++        try std.testing.expectEqual(@as(u32, 'L'), target.get(0, 0).?.char);
++        try expectCellLink(target, 0, 0, "https://example.test/λ");
++        try std.testing.expectEqual(@as(u64, 1), pools.links.getLiveSlotCount());
++        target.clear(ansi.rgbColor(0, 0, 0, 255), null);
++        try std.testing.expectEqual(@as(u64, 0), pools.links.getLiveSlotCount());
++    }
++}
++
++test "embedded terminal OSC8 preserves split BEL and ST styles wide cells and blanks" {
++    inline for (.{ "\x07", "\x1b\\" }) |end| {
++        const bytes = "\x1b]8;;https://example.test/λ" ++ end ++ "\x1b[1;3;4m e\u{301}🙂\x1b]8;;" ++ end ++ "N";
++        for (0..bytes.len + 1) |split| {
++            var pools = TestPools.init(std.testing.allocator);
++            defer pools.deinit();
++            const target = try buffer.OptimizedBuffer.init(std.testing.allocator, 12, 3, .{ .link_pool = &pools.links, .pool = &pools.graphemes });
++            defer target.deinit();
++            const terminal = try EmbeddedTerminal.init(std.testing.io, std.testing.allocator, .{ .cols = 12, .rows = 3 });
++            defer terminal.deinit();
++            try terminal.write(bytes[0..split]);
++            try terminal.write(bytes[split..]);
++            try terminal.composeChecked(target, 0, 0, 36);
++            for (0..4) |x| try expectCellLink(target, @intCast(x), 0, "https://example.test/λ");
++            try std.testing.expectEqual(@as(u32, 13), target.get(0, 0).?.attributes & 255);
++            try std.testing.expectEqual(@as(u32, ' '), target.get(0, 0).?.char);
++            try std.testing.expectEqualStrings("e\u{301}", try pools.graphemes.get(gp.graphemeIdFromChar(target.get(1, 0).?.char)));
++            try std.testing.expect(gp.isContinuationChar(target.get(3, 0).?.char));
++            try std.testing.expectEqual(@as(u32, 0), ansi.TextAttributes.getLinkId(target.get(4, 0).?.attributes));
++        }
++    }
++}
++
++test "embedded terminal OSC8 owns each drawing pool through repaint scroll resize and overwrite" {
++    var first = TestPools.init(std.testing.allocator);
++    defer first.deinit();
++    var second = TestPools.init(std.testing.allocator);
++    defer second.deinit();
++    const unrelated = try second.links.acquire("https://unrelated.test");
++    defer second.links.decref(unrelated) catch unreachable;
++    const a = try buffer.OptimizedBuffer.init(std.testing.allocator, 4, 2, .{ .link_pool = &first.links, .pool = &first.graphemes });
++    defer a.deinit();
++    const b = try buffer.OptimizedBuffer.init(std.testing.allocator, 4, 2, .{ .link_pool = &second.links, .pool = &second.graphemes });
++    defer b.deinit();
++    const terminal = try EmbeddedTerminal.init(std.testing.io, std.testing.allocator, .{ .cols = 4, .rows = 2 });
++    defer terminal.deinit();
++    try terminal.write("\x1b]8;;https://example.test/λ\x1b\\LL\x1b]8;;\x1b\\\r\n1\r\n2\r\n3");
++    terminal.scroll(-2);
++    for (0..20) |_| {
++        terminal.invalidate();
++        try terminal.composeChecked(a, 0, 0, 8);
++        terminal.invalidate();
++        try terminal.composeChecked(b, 0, 0, 8);
++        try expectCellLink(a, 0, 0, "https://example.test/λ");
++        try expectCellLink(b, 1, 0, "https://example.test/λ");
++        try std.testing.expectEqual(@as(u64, 1), first.links.getLiveSlotCount());
++        try std.testing.expectEqual(@as(u64, 2), second.links.getLiveSlotCount());
++    }
++    try terminal.resize(4, 3);
++    terminal.scroll(100);
++    try terminal.write("\x1b[2J\x1b[Hplain");
++    try terminal.composeChecked(a, 0, 0, 12);
++    a.clear(ansi.rgbColor(0, 0, 0, 255), null);
++    b.clear(ansi.rgbColor(0, 0, 0, 255), null);
++    try std.testing.expectEqual(@as(u64, 0), first.links.getLiveSlotCount());
++    try std.testing.expectEqual(@as(u64, 1), second.links.getLiveSlotCount());
++}
++
++test "embedded terminal OSC8 rejects unsupported URL material without truncation" {
++    inline for (.{ "x" ** 512, "x" ** 513, "bad\xffuri" }) |url| {
++        var pools = TestPools.init(std.testing.allocator);
++        defer pools.deinit();
++        const target = try buffer.OptimizedBuffer.init(std.testing.allocator, 4, 2, .{ .link_pool = &pools.links, .pool = &pools.graphemes });
++        defer target.deinit();
++        const terminal = try EmbeddedTerminal.init(std.testing.io, std.testing.allocator, .{ .cols = 4, .rows = 2 });
++        defer terminal.deinit();
++        try terminal.write("\x1b]8;;" ++ url ++ "\x1b\\L\x1b]8;;\x1b\\");
++        if (url.len == 512) {
++            try terminal.composeChecked(target, 0, 0, 8);
++            try expectCellLink(target, 0, 0, url);
++        } else {
++            try std.testing.expectError(error.UnsupportedResource, terminal.composeChecked(target, 0, 0, 8));
++            try std.testing.expect(terminal.force_redraw);
++            try std.testing.expectEqual(@as(u64, 0), pools.links.getLiveSlotCount());
++        }
++    }
++}
++
++test "embedded terminal OSC8 clipping skips unsupported offscreen URLs" {
++    var pools = TestPools.init(std.testing.allocator);
++    defer pools.deinit();
++    const target = try buffer.OptimizedBuffer.init(std.testing.allocator, 4, 2, .{ .link_pool = &pools.links, .pool = &pools.graphemes });
++    defer target.deinit();
++    const terminal = try EmbeddedTerminal.init(std.testing.io, std.testing.allocator, .{ .cols = 4, .rows = 2 });
++    defer terminal.deinit();
++    try terminal.write("\x1b]8;;" ++ ("x" ** 513) ++ "\x1b\\L\x1b]8;;\x1b\\N");
++    try target.pushScissorRect(1, 0, 3, 2);
++    try terminal.composeChecked(target, 0, 0, 8);
++    try std.testing.expectEqual(@as(u32, 'N'), target.get(1, 0).?.char);
++    try std.testing.expectEqual(@as(u64, 0), pools.links.getLiveSlotCount());
++}
++
++test "embedded terminal OSC8 keeps hidden cell links through selection and clipped origins" {
++    var pools = TestPools.init(std.testing.allocator);
++    defer pools.deinit();
++    const target = try buffer.OptimizedBuffer.init(std.testing.allocator, 4, 2, .{ .link_pool = &pools.links, .pool = &pools.graphemes });
++    defer target.deinit();
++    const terminal = try EmbeddedTerminal.init(std.testing.io, std.testing.allocator, .{ .cols = 4, .rows = 2 });
++    defer terminal.deinit();
++    try terminal.write("\x1b]8;;https://example.test/λ\x1b\\A\x1b[8mH\x1b[0mB\x1b]8;;\x1b\\N");
++    try terminal.setSelection(.{ .x = 0, .y = 0 }, .{ .x = 2, .y = 0 });
++    try terminal.composeChecked(target, -1, 1, 8);
++    try expectCellLink(target, 0, 1, "https://example.test/λ");
++    try std.testing.expectEqual(@as(u32, ' '), target.get(0, 1).?.char);
++    try std.testing.expect(target.get(0, 1).?.attributes & ansi.TextAttributes.HIDDEN != 0);
++    try expectCellLink(target, 1, 1, "https://example.test/λ");
++    try std.testing.expectEqual(@as(u32, 0), ansi.TextAttributes.getLinkId(target.get(2, 1).?.attributes));
++}
++
+ test "embedded terminal retries every row after composition allocation failure" {
+     var link_pool_storage = link.LinkPool.init(std.testing.allocator);
+     defer link_pool_storage.deinit();
+@@ -115,7 +250,7 @@ test "embedded terminal checked composition rejects cell bounds before changing
+     try std.testing.expect(!terminal.force_redraw);
+ }
+ 
+-test "embedded terminal checked composition owns cells and retries after every allocation failure" {
++test "embedded terminal OSC8 checked composition owns cells and retries after every allocation failure" {
+     var failures: usize = 0;
+     var succeeded = false;
+     for (0..128) |fail_after| {
+@@ -134,7 +269,7 @@ test "embedded terminal checked composition owns cells and retries after every a
+         const link_id = try links.acquire("https://old.example");
+         try target.drawGrapheme("\u{754c}", 2, 0, 0, ansi.rgbColor(255, 255, 255, 255), ansi.rgbColor(0, 0, 0, 255), ansi.TextAttributes.setLinkId(0, link_id));
+         try links.decref(link_id);
+-        try terminal.write("\x1b[1;1H\u{e9}\u{4e2d}\x1b[2;1He\u{301}\u{3b1}\u{3b2}\u{3b3}\u{3b4}\u{3b5}");
++        try terminal.write("\x1b]8;;https://example.test/λ\x1b\\\x1b[1;1H\u{e9}\u{4e2d}\x1b[2;1He\u{301}\u{3b1}\u{3b2}\u{3b3}\u{3b4}\u{3b5}\x1b]8;;\x1b\\");
+ 
+         failing.fail_index = failing.alloc_index + fail_after;
+         failing.resize_fail_index = failing.resize_index;
+@@ -159,6 +294,7 @@ test "embedded terminal checked composition owns cells and retries after every a
+         }
+         try std.testing.expectEqualStrings("\u{e9}", try pool.get(gp.graphemeIdFromChar(target.get(0, 0).?.char)));
+         try std.testing.expectEqualStrings("e\u{301}", try pool.get(gp.graphemeIdFromChar(target.get(0, 1).?.char)));
++        try expectCellLink(target, 0, 0, "https://example.test/λ");
+         try std.testing.expectEqual(@as(u32, 'o'), target.get(0, 2).?.char);
+         try std.testing.expect(!terminal.force_redraw);
+         target.clear(ansi.rgbColor(0, 0, 0, 255), null);
+diff --git a/packages/react/package.json b/packages/react/package.json
+index 4a478cfd..48446c16 100644
+--- a/packages/react/package.json
++++ b/packages/react/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@opentui/react",
+-  "version": "0.6.6",
++  "version": "0.6.6-workcraft.1",
+   "description": "React renderer for building terminal user interfaces using OpenTUI core",
+   "license": "MIT",
+   "repository": {
+@@ -43,7 +43,8 @@
+     "build:examples": "bun examples/build.ts",
+     "build:dev": "bun run scripts/build.ts --dev",
+     "publish": "bun ../../scripts/npm-publish.ts publish @opentui/react",
+-    "test": "bun test"
++    "test": "bun test",
++    "test:dist:contract": "bun scripts/dist-contract-test.ts"
+   },
+   "devDependencies": {
+     "@opentui/keymap": "workspace:*",
+diff --git a/packages/react/scripts/build.ts b/packages/react/scripts/build.ts
+index f5c3b15e..caeaf53c 100644
+--- a/packages/react/scripts/build.ts
++++ b/packages/react/scripts/build.ts
+@@ -235,7 +235,6 @@ writeFileSync(
+       bugs: packageJson.bugs,
+       exports,
+       dependencies: processedDependencies,
+-      devDependencies: packageJson.devDependencies,
+       peerDependencies: packageJson.peerDependencies,
+     },
+     null,
+diff --git a/packages/react/scripts/dist-contract-test.ts b/packages/react/scripts/dist-contract-test.ts
+new file mode 100644
+index 00000000..62125d6b
+--- /dev/null
++++ b/packages/react/scripts/dist-contract-test.ts
+@@ -0,0 +1,91 @@
++import assert from "node:assert/strict"
++import { execFileSync } from "node:child_process"
++import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
++import { tmpdir } from "node:os"
++import { dirname, join, resolve } from "node:path"
++import { fileURLToPath } from "node:url"
++
++const root = resolve(dirname(fileURLToPath(import.meta.url)), "..")
++const nativeName = `@opentui/core-${process.platform}-${process.arch}`
++const core = resolve(root, "../core")
++const version = "0.6.6-workcraft.1"
++const directory = mkdtempSync(join(tmpdir(), "opentui-react-contract-"))
++
++function pack(path: string): string {
++  const metadata = JSON.parse(readFileSync(join(path, "package.json"), "utf8"))
++  assert.equal(metadata.version, version, "Packed React contract versions must match")
++  execFileSync("bun", ["pm", "pack", "--destination", directory], { cwd: path, stdio: "pipe" })
++  return join(directory, `${metadata.name.slice(1).replace("/", "-")}-${version}.tgz`)
++}
++
++try {
++  const dependencies = {
++    "@opentui/core": pack(join(core, "dist")),
++    "@opentui/react": pack(join(root, "dist")),
++    [nativeName]: pack(join(core, "node_modules", nativeName)),
++    react: ">=19.2.0",
++  }
++  writeFileSync(
++    join(directory, "package.json"),
++    JSON.stringify({
++      name: "opentui-react-contract-consumer",
++      private: true,
++      type: "module",
++      dependencies,
++      overrides: { "@opentui/core": dependencies["@opentui/core"], [nativeName]: dependencies[nativeName] },
++      devDependencies: { typescript: "^5", "@types/react": "^19.2.0", "@types/bun": "1.4.1" },
++    }),
++  )
++  writeFileSync(
++    join(directory, "tsconfig.json"),
++    JSON.stringify({
++      compilerOptions: {
++        target: "ESNext",
++        module: "ESNext",
++        moduleResolution: "Bundler",
++        jsx: "react-jsx",
++        jsxImportSource: "@opentui/react",
++        strict: true,
++        skipLibCheck: true,
++        noEmit: true,
++      },
++      include: ["consumer.tsx"],
++    }),
++  )
++  writeFileSync(
++    join(directory, "consumer.tsx"),
++    String.raw`
++import { EmbeddedTerminalRenderable, KeyEvent, type EmbeddedTerminalInputRequest } from "@opentui/core"
++import { extend } from "@opentui/react"
++import { testRender } from "@opentui/react/test-utils"
++declare module "@opentui/react" {
++  interface OpenTUIComponents { terminal: typeof EmbeddedTerminalRenderable }
++}
++extend({ terminal: EmbeddedTerminalRenderable })
++const ref: { current: EmbeddedTerminalRenderable | null } = { current: null }
++const pending: EmbeddedTerminalInputRequest[] = []
++const setup = await testRender(<terminal cols={12} rows={3}
++  ref={(node) => { ref.current = node }} onInputAdmission={(request) => pending.push(request)} />,
++  { width: 12, height: 3 })
++try {
++  if (!(ref.current instanceof EmbeddedTerminalRenderable)) throw new Error("React loaded a different core instance")
++  ref.current.handleKeyPress(new KeyEvent({ name: "up", sequence: "\x1b[A", raw: "\x1b[A",
++    ctrl: false, meta: false, shift: false, option: false, number: false, eventType: "press", source: "raw" }))
++  if (pending.length !== 1) throw new Error("React lost admission prop")
++  ref.current.write("\x1b[?1h")
++  let encoded = ""
++  pending[0]!.resume((bytes) => { encoded = new TextDecoder().decode(bytes) })
++  if (encoded !== "\x1bOA") throw new Error("React encoded input before modes")
++} finally {
++  setup.renderer.destroy()
++  await setup.renderer.closed
++}
++console.log("Packed React terminal contract passed")
++`,
++  )
++  execFileSync("bun", ["install", "--ignore-scripts"], { cwd: directory, stdio: "inherit" })
++  execFileSync("bun", ["x", "tsc", "--noEmit"], { cwd: directory, stdio: "inherit" })
++  execFileSync("bun", ["consumer.tsx"], { cwd: directory, stdio: "inherit" })
++} finally {
++  rmSync(directory, { recursive: true, force: true })
++}
