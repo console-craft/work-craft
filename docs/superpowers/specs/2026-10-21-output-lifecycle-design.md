@@ -4,7 +4,10 @@
 
 Approved on 2026-10-21 for planning the measurement/feasibility gate, including
 the proposed acceptance budgets; the user then selected native execution of that
-plan. Production architecture remains unapproved. Continues on
+plan. On 2026-10-22 the user approved the measured architecture amendment below
+and requested its production implementation plan. Approval does not certify the
+native projection/input feasibility gate or authorize restarting the real daemon.
+Continues on
 `feat/shared-session-navigation` and its existing draft PR. Do not merge the
 stabilization checkpoint separately or create a new branch/worktree.
 
@@ -32,7 +35,7 @@ Workflow:
 - [x] Obtain user approval, including the proposed performance budgets.
 - [x] Write the measurement/feasibility implementation plan.
 - [x] Record measured findings and propose the concrete architecture amendment.
-- [ ] Obtain approval of the measured architecture amendment.
+- [x] Obtain approval of the measured architecture amendment (2026-10-22).
 - [ ] Plan and implement the approved production changes, review and verify.
 
 A fresh independent builder check found no consequential unanswered questions
@@ -375,14 +378,20 @@ The gate, not an unmeasured implementation, must settle:
 - Whether profiling justifies a different wire encoding, worker or transport;
   default to the current stack unless evidence says otherwise.
 
-These are intentional feasibility decisions, not permission for the implementer
-to choose a different correctness contract. Until the measured amendment below
-is approved, the production implementation plan remains blocked.
+These decisions were reserved during the measurement gate. The approved measured
+amendment below now governs production planning; its explicit native feasibility
+stop remains mandatory before cutover.
 
-## Measured Architecture Amendment — Proposed, Not Approved
+## Measured Architecture Amendment — Approved 2026-10-22
 
-This amendment is the result of the native measurement gate, not permission to
-implement it. The [measurement report](../handovers/2026-10-21-output-lifecycle-measurements.md)
+The user approved this amendment on 2026-10-22 after the native measurement gate
+and independent review. It authorizes production planning; implementation follows
+review of that plan, and native feasibility must pass before protocol cutover.
+The first [implementation plan](../plans/2026-10-22-output-control-and-projection-gate.md)
+covers output/control separation, stable presentation and the native feasibility
+gate. Detailed production projection/response-owner cutover planning follows its
+concrete API evidence; no cutover is authorized merely by a successful primitive.
+The [measurement report](../handovers/2026-10-21-output-lifecycle-measurements.md)
 records every failure, observer limitation, counterfactual and native capability.
 The ten-minute soak was attempted but aborted after 8 min 19 s; capacity acceptance
 remains unmet. This proposal does not relax any original acceptance budget.

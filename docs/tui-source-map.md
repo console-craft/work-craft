@@ -48,6 +48,11 @@ acknowledgement, and cannot hold unrelated output or command acknowledgements.
 Recovery results are bound to connection, attachment, navigation, epoch and runtime
 identities. Runtime/reset generations are distinct from history byte cursors;
 runtime generation is also captured in TUI-originated raw input.
+Every connection catches up retained panes even if the child emits no later bytes.
+Recovering panes retain their picture but cannot accept input until successful
+scoped completion and finite native consumption. Completion publishes even when
+no bytes changed; store-ingress pending messages independently enforce the 8-MiB
+ceiling before downstream retention/drain limits apply.
 `shell/presentation.ts` retains only a coherent same-session display through
 disconnect/pending reattachment. Requested destination, confirmed detach, deletion
 and real metadata invalidate that fallback. Commands, viewport reporting, entry
@@ -74,6 +79,20 @@ epoch, runtime and actual reset generation. The pane-local identity subscription
 does not render for ordinary bytes. Runtime/epoch replacement waits for its control
 commit; a reset replaces only the inner viewport. Transient presentation can retain
 native focus/notice geometry without granting input or response authority.
+`workbench/terminal-input.ts` queues supported native `onInputAdmission` requests
+before encoding against a finite received byte/grid frontier. The leaf-local queue
+preserves original authorization/activity/sender, shares the renderer drain and
+charges payload plus 128 bytes/event against the existing 8-MiB ceiling. Each
+quantum settles at most one request; later output cannot move its frontier, and
+stale scope/unmount cancels it. Native code owns key/paste/mouse/focus encoding,
+clicked cell coordinates, synchronous focus/selection and local scrolling; no
+native methods are replaced. Only automatic responses use the viewport's `onData`
+path. The local artifact manifest pins the reviewed native source and checksums.
+An already-focused authorized leaf retains physical focus during ordinary grid
+synchronization and queues input until its frontier is consumed; failed writes,
+recovery and revoked scope remain gated. Native amendment automated acceptance
+passes, with historical startup-timeout limits recorded separately; see the
+[blocked feasibility handover](superpowers/handovers/2026-10-22-output-projection-feasibility.md).
 Leaves do not directly resize daemon PTYs: the shell reports its available canvas/eligibility
 and physical activity, then the daemon elects the latest-active eligible viewer.
 Attachment is activity; idle resize and emulator replies are not. Owner resize

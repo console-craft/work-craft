@@ -2,6 +2,11 @@
 
 ## Status
 
+**Progression update (2026-10-22):** The user approved the measured architecture
+amendment and requested production planning. The original measurement/review
+record below preserves the gate's approval status at that checkpoint. No
+production fix or projection feasibility success is implied by this approval.
+
 Measurement gate recorded and independently reviewed. Both Important diagnostic
 safety findings were reproduced and fixed; product performance/capacity acceptance
 remains unmet. No production performance fix or recovery architecture approved.
@@ -357,8 +362,8 @@ bun "$PROFILE_DIR/headless-50-probe.ts" "$PWD" "$PROFILE_DIR/headless-50-repeat.
 
 The notification counterfactual requires the preserved temporary patch; do not
 treat it as the production solution or leave it applied for verification. The
-approved [spec's proposed measured amendment](../specs/2026-10-21-output-lifecycle-design.md#measured-architecture-amendment--proposed-not-approved)
-is the next user decision. No production cutover or merge is authorized by this
+approved [spec's then-proposed measured amendment](../specs/2026-10-21-output-lifecycle-design.md#measured-architecture-amendment--approved-2026-10-22)
+was the next user decision at this measurement checkpoint. No production cutover or merge is authorized by this
 diagnostic report.
 
 ## Final Verification Before Independent Review

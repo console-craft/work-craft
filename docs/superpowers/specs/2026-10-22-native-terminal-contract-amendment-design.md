@@ -2,11 +2,21 @@
 
 ## Status And Authorization
 
+**Implementation checkpoint (2026-10-22):** The separately approved plan's native
+contracts, coherent local artifacts, raw-leaf adoption and connected review repairs
+pass automated macOS acceptance: 1,797 tests, zero failures, build and relocated
+compiled smoke. See the [current handover](../handovers/2026-10-22-output-projection-feasibility.md)
+for the native review/fix proof, user-approved profiling window correction,
+serial workload checks and explicit remaining limits. Historical approval and
+failure evidence below is preserved; this checkpoint does not authorize old
+feasibility Tasks 6–7, capacity acceptance or production parser/query-owner cutover.
+
 On 2026-10-22 Ovi approved investigating and designing the two native contract
 extensions explained after the blocked output/projection gate: preserve OSC8
 hyperlink destinations in material frames, and admit input before native encoding
-without delaying UI focus lifecycles. This document is the proposed full design;
-approval of the direction is not implementation approval or a passing gate.
+without delaying UI focus lifecycles. Ovi subsequently approved this full design
+and writing its implementation plan on 2026-10-22. This does not approve execution
+of an unseen plan, production cutover, or certify a passing gate.
 
 The existing [output/lifecycle specification](2026-10-21-output-lifecycle-design.md)
 remains binding. The [blocked handover](../handovers/2026-10-22-output-projection-feasibility.md)
@@ -15,10 +25,11 @@ input/focus, a profiling byte-count assertion, and OSC8 material. The first two
 remain independent investigations; the proposed hook is not their proven repair.
 The current raw-path review-fix candidate is uncommitted and not merge-ready.
 
-Scope of this approval: read existing contracts, specify minimal extensions and
-acceptance, obtain a builder check, then present this design for approval before
-writing its implementation plan. Do not resume old Tasks 6–7 or production
-projection/response-owner cutover. Keep the same Work Craft branch/worktree.
+The initial directional approval covered contract investigation, this design and
+its builder check. Full-design approval now permits writing the separately
+reviewed implementation plan; implementation waits for that review. Do not resume
+old Tasks 6–7 or production projection/response-owner cutover. Keep the same Work
+Craft branch/worktree and the previously selected native execution method.
 
 Workflow:
 
@@ -26,8 +37,9 @@ Workflow:
 - [x] Inspect installed native APIs and exact release source provenance.
 - [x] Describe the two contracts, compatibility and hard acceptance gates.
 - [x] Fresh builder check; resolve consequential gaps.
-- [ ] User approves this full design.
-- [ ] Write the separately reviewed implementation plan.
+- [x] User approves this full design.
+- [x] Write the [implementation plan](../plans/2026-10-22-native-terminal-contract-amendment.md)
+      (awaiting its separate review before execution).
 - [ ] Implement, verify and review under that plan, not this document alone.
 
 ## Why These Two Changes
