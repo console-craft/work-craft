@@ -1,175 +1,214 @@
 import { expect, test } from "bun:test";
 
-import type { EmbeddedTerminalInputRequest } from "@opentui/core";
+import type { SemanticTerminalInput } from "@work-craft/server/client";
 
-import * as input from "@/workbench/terminal-input";
+import { createTerminalInput } from "@/workbench/terminal-input";
 
-function fixture() {
-  expect(typeof input.createTerminalInput).toBe("function");
-  let scope = 1;
-  let eligible = true;
-  let recoveries = 0;
-  let schedules = 0;
-  const frontier = { cursor: 5, gridSequence: 2 };
-  const first: string[] = [];
-  const second: string[] = [];
-  let sender = first;
-  const cancelled: string[] = [];
-  const queue = input.createTerminalInput({
+const key: SemanticTerminalInput = { kind: "key", key: { text: "x" } };
+
+test("input waits for its finite applied-frame readiness and retains its original sender", async () => {
+  const sent: string[] = [];
+  let ready = false;
+  let sender = "original";
+  const queue = createTerminalInput({
+    ready: () => ready,
     capture() {
-      if (!eligible) {
-        return null;
-      }
-      const generation = scope;
-      const destination = sender;
+      const captured = sender;
       return {
-        frontier,
-        valid: () => eligible && scope === generation,
-        send: (bytes) => destination.push(new TextDecoder().decode(bytes)),
+        valid: () => true,
+        send: async () => {
+          sent.push(captured);
+          return { forwarded: true };
+        },
       };
     },
-    request: () => {
-      schedules++;
-    },
-    overflow: () => {
-      recoveries++;
-      eligible = false;
+    onResult() {},
+    onError(error) {
+      throw error;
     },
   });
-  function request(id: string, bytes = 0, beforeSend?: () => void): EmbeddedTerminalInputRequest {
-    let settled = false;
-    return {
-      event: { kind: "paste", byteLength: bytes },
-      payloadBytes: bytes,
-      cancel() {
-        if (!settled) {
-          settled = true;
-          cancelled.push(id);
+  queue.admit(key);
+  sender = "replacement";
+  await queue.flush();
+  expect(sent).toEqual([]);
+  ready = true;
+  await queue.flush();
+  expect(sent).toEqual(["original"]);
+  expect(queue.bytes).toBe(0);
+  queue.close();
+});
+
+test("FIFO input charges the in-flight request until its acknowledgement", async () => {
+  const sent: string[] = [];
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const queue = createTerminalInput({
+    ready: () => true,
+    capture: () => ({
+      valid: () => true,
+      async send(input) {
+        sent.push(input.kind);
+        if (sent.length === 1) {
+          await held;
         }
+        return { forwarded: true };
       },
-      resume(send) {
-        if (!settled) {
-          settled = true;
-          beforeSend?.();
-          send(new TextEncoder().encode(id));
-        }
+    }),
+    onResult() {},
+    onError(error) {
+      throw error;
+    },
+  });
+  queue.admit(key);
+  queue.admit({ kind: "focus", focused: true });
+  await Promise.resolve();
+  expect(sent).toEqual(["key"]);
+  expect(queue.bytes).toBe(257);
+  release();
+  await queue.flush();
+  expect(sent).toEqual(["key", "focus"]);
+  expect(queue.bytes).toBe(0);
+  queue.close();
+});
+
+test("scope is rechecked before send and teardown aborts an admitted in-flight request", async () => {
+  let ready = false;
+  let valid = true;
+  let sent = 0;
+  let aborted = false;
+  const queue = createTerminalInput({
+    ready: () => ready,
+    capture: () => ({
+      valid: () => valid,
+      send: (_input, signal) => {
+        sent++;
+        return new Promise((_resolve, reject) =>
+          signal.addEventListener(
+            "abort",
+            () => {
+              aborted = true;
+              reject(signal.reason);
+            },
+            { once: true },
+          ),
+        );
       },
-    };
+    }),
+    onResult() {},
+    onError(error) {
+      throw error;
+    },
+  });
+  queue.admit(key);
+  valid = false;
+  ready = true;
+  await queue.flush();
+  expect(sent).toBe(0);
+  valid = true;
+  queue.admit(key);
+  await Promise.resolve();
+  queue.close();
+  await queue.flush();
+  expect(aborted).toBe(true);
+  expect(queue.bytes).toBe(0);
+});
+
+test("paste plus descriptor admits exactly eight MiB and rejects oversized or subsequent work", async () => {
+  let ready = false;
+  const errors: string[] = [];
+  const queue = createTerminalInput({
+    ready: () => ready,
+    capture: () => ({ valid: () => true, send: async () => ({ forwarded: true }) }),
+    onResult() {},
+    onError: (error) => errors.push(error.message),
+  });
+  expect(queue.admit({ kind: "paste", bytes: new Uint8Array(8388481) })).toBe(false);
+  expect(queue.bytes).toBe(0);
+  for (let round = 0; round < 2; round++) {
+    ready = false;
+    expect(queue.admit({ kind: "paste", bytes: new Uint8Array(8388480) })).toBe(true);
+    expect(queue.bytes).toBe(8388608);
+    expect(queue.admit(key)).toBe(false);
+    expect(queue.bytes).toBe(8388608);
+    ready = true;
+    await queue.flush();
+    expect(queue.bytes).toBe(0);
   }
-  return {
-    queue,
-    frontier,
-    first,
-    second,
-    cancelled,
-    request,
-    revoke: () => {
-      scope++;
-    },
-    changeSender: () => {
-      sender = second;
-    },
-    recoveries: () => recoveries,
-    schedules: () => schedules,
-  };
-}
-
-test("input holds its original finite byte and marker frontier and sender", () => {
-  const f = fixture();
-  f.queue.admit(f.request("original"));
-  f.changeSender();
-  f.frontier.cursor = 10;
-  f.frontier.gridSequence = 3;
-  expect(f.queue.frontier()).toEqual({ cursor: 5, gridSequence: 2 });
-  expect(f.queue.step({ cursor: 4, gridSequence: 2 })).toBe(false);
-  expect(f.queue.step({ cursor: 5, gridSequence: 1 })).toBe(false);
-  expect(f.first).toEqual([]);
-  expect(f.queue.step({ cursor: 5, gridSequence: 2 })).toBe(true);
-  expect(f.first).toEqual(["original"]);
-  expect(f.second).toEqual([]);
-  expect(f.queue.frontier()).toBeUndefined();
-  expect(f.queue.step({ cursor: 10, gridSequence: 3 })).toBe(false);
+  expect(errors).toHaveLength(3);
+  queue.close();
 });
 
-test("even ready input schedules and settles only one FIFO item per quantum", () => {
-  const f = fixture();
-  f.queue.admit(f.request("one"));
-  f.queue.admit(f.request("two"));
-  expect(f.first).toEqual([]);
-  expect(f.schedules()).toBe(2);
-  expect(f.queue.step(f.frontier)).toBe(true);
-  expect(f.first).toEqual(["one"]);
-  expect(f.queue.step(f.frontier)).toBe(true);
-  expect(f.first).toEqual(["one", "two"]);
-});
-
-test.each(["scope", "clear", "close"] as const)(
-  "%s cancels pending input without encoding or forwarding",
-  (action) => {
-    const f = fixture();
-    f.queue.admit(f.request("stale"));
-    if (action === "scope") {
-      f.revoke();
-      expect(f.queue.step(null)).toBe(true);
-    } else {
-      f.queue[action]();
-    }
-    expect(f.cancelled).toEqual(["stale"]);
-    expect(f.first).toEqual([]);
-    expect(f.queue.frontier()).toBeUndefined();
-    f.queue.close();
-    f.queue.admit(f.request("after-close"));
-    expect(f.cancelled).toEqual(["stale", "after-close"]);
-    expect(f.first).toEqual([]);
-  },
-);
-
-test("scope is rechecked immediately before sending encoded input", () => {
-  const f = fixture();
-  f.queue.admit(f.request("revoked-during-encode", 0, f.revoke));
-  f.queue.step(f.frontier);
-  expect(f.first).toEqual([]);
-});
-
-test("payload plus descriptor charge admits exactly eight MiB and rejects the next event", () => {
-  const f = fixture();
-  f.queue.admit(f.request("limit", 8 * 1024 * 1024 - 128));
-  expect(f.recoveries()).toBe(0);
-  f.queue.admit(f.request("overflow"));
-  expect(f.cancelled).toEqual(["overflow", "limit"]);
-  expect(f.recoveries()).toBe(1);
-  expect(f.queue.frontier()).toBeUndefined();
-  expect(f.first).toEqual([]);
-});
-
-test("an oversized single paste is cancelled without retaining a queue entry", () => {
-  const f = fixture();
-  f.queue.admit(f.request("oversized", 8 * 1024 * 1024));
-  expect(f.cancelled).toEqual(["oversized"]);
-  expect(f.recoveries()).toBe(1);
-  expect(f.queue.frontier()).toBeUndefined();
-});
-
-test("zero-payload input cannot grow beyond the descriptor accounting limit", () => {
-  const f = fixture();
+test("zero-payload events still consume bounded descriptor space", () => {
+  const queue = createTerminalInput({
+    ready: () => false,
+    capture: () => ({ valid: () => true, send: async () => ({ forwarded: false }) }),
+    onResult() {},
+    onError() {},
+  });
   for (let index = 0; index < 65536; index++) {
-    f.queue.admit(f.request(`${index}`));
+    queue.admit({ kind: "focus", focused: true });
   }
-  expect(f.recoveries()).toBe(0);
-  f.queue.admit(f.request("overflow"));
-  expect(f.recoveries()).toBe(1);
-  expect(f.cancelled).toHaveLength(65537);
-  expect(f.first).toEqual([]);
-  expect(f.queue.frontier()).toBeUndefined();
+  expect(queue.bytes).toBe(8388608);
+  expect(queue.admit({ kind: "focus", focused: false })).toBe(false);
+  queue.close();
+  expect(queue.bytes).toBe(0);
 });
 
-test("consuming repeated full queues releases accounting for subsequent input", () => {
-  const f = fixture();
-  for (let index = 0; index < 200; index++) {
-    f.queue.admit(f.request(`${index}`, 8 * 1024 * 1024 - 128));
-    expect(f.queue.step(f.frontier)).toBe(true);
-  }
-  expect(f.first).toHaveLength(200);
-  expect(f.recoveries()).toBe(0);
-  expect(f.queue.frontier()).toBeUndefined();
+test("ready input still yields before sending so synchronous scope revocation can cancel it", async () => {
+  let valid = true;
+  let sent = 0;
+  const queue = createTerminalInput({
+    ready: () => true,
+    capture: () => ({
+      valid: () => valid,
+      send: async () => {
+        sent++;
+        return { forwarded: true };
+      },
+    }),
+    onResult() {},
+    onError(error) {
+      throw error;
+    },
+  });
+  queue.admit(key);
+  valid = false;
+  await queue.flush();
+  expect(sent).toBe(0);
+  expect(queue.bytes).toBe(0);
+  queue.close();
+});
+
+test("each input retains a finite picture frontier without newer output extending its wait", async () => {
+  let received = 1;
+  let presented = 0;
+  let sent = 0;
+  const queue = createTerminalInput({
+    ready: () => true,
+    capture() {
+      const required = received;
+      return {
+        ready: () => presented >= required,
+        valid: () => true,
+        send: async () => {
+          sent++;
+          return { forwarded: true };
+        },
+      };
+    },
+    onResult() {},
+    onError(error) {
+      throw error;
+    },
+  });
+  queue.admit(key);
+  await queue.flush();
+  expect(sent).toBe(0);
+  received = 20;
+  presented = 1;
+  await queue.flush();
+  expect(sent).toBe(1);
+  queue.close();
 });

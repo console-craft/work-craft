@@ -2,8 +2,9 @@ import { expect, test } from "bun:test";
 
 import {
   BoxRenderable,
-  EmbeddedTerminalRenderable,
+  KeyEvent,
   parseColor,
+  parseKeypress,
   PasteEvent,
   type ScrollBoxRenderable,
   TextRenderable,
@@ -35,6 +36,7 @@ import { ThemeProvider } from "@/ui/theming/theme-provider.tsx";
 import { defaultTheme } from "@/ui/theming/themes/default.ts";
 import { draculaTheme } from "@/ui/theming/themes/dracula.ts";
 import { paneIds } from "@/workbench/layout.ts";
+import { TerminalMaterialRenderable } from "@/workbench/terminal-material";
 
 test("confirmed detach and a deliberate destination change cannot reuse stale presentation", () => {
   const snapshot = controlSnapshotFixture(surfaceSnapshot());
@@ -96,16 +98,17 @@ test("transient reattachment preserves the exact native frame and cursor without
   const setup = await liveInputFixture();
   const native = setup.renderer.root.findDescendantById(
     "terminal:pane-1",
-  ) as EmbeddedTerminalRenderable;
+  ) as TerminalMaterialRenderable;
   await act(async () => setup.output("\x1b[2J\x1b[2;3Hkept through reconnect"));
+  await act(async () => Bun.sleep(35));
   await setup.flush();
   const body = setup
     .captureCharFrame()
     .split("\n")
     .slice(0, setup.renderer.height - 1)
     .join("\n");
-  const cursor = native.screen().cursor;
-  const oldData = native.onData!;
+  const cursor = setup.renderer.getCursorState();
+  const oldData = native.handleKeyPress.bind(native);
   const pending = deferred<ReturnType<typeof streamFixture>>();
   const entered = deferred<void>();
   setup.client.stream = async () => {
@@ -116,12 +119,12 @@ test("transient reattachment preserves the exact native frame and cursor without
   try {
     await entered.promise;
     native.handlePaste(new PasteEvent(new Uint8Array([97])));
-    oldData(new Uint8Array([98]), "response");
+    oldData(new KeyEvent(parseKeypress("b")!));
     expect(setup.sent).toEqual([]);
     setup.renderCurrent();
     await setup.flush();
     expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBe(native);
-    expect(native.screen().cursor).toEqual(cursor);
+    expect(setup.renderer.getCursorState()).toEqual(cursor);
     expect(
       setup
         .captureCharFrame()
@@ -146,10 +149,10 @@ test("runtime replacement changes only its native viewport once and rejects old 
   const setup = await liveInputFixture();
   const first = setup.renderer.root.findDescendantById(
     "terminal:pane-1",
-  ) as EmbeddedTerminalRenderable;
+  ) as TerminalMaterialRenderable;
   const sibling = setup.renderer.root.findDescendantById("terminal:pane-2");
   const outer = first.parent!.parent;
-  const captured = first.onData!;
+  const captured = first.handleKeyPress.bind(first);
   const full = splitSurfaceSnapshot();
   setup.client.paneHistory = async (paneId) => ({
     epoch: full.epoch,
@@ -168,7 +171,7 @@ test("runtime replacement changes only its native viewport once and rejects old 
     };
     await setup.store.apply({ type: "control.snapshot", snapshot: next });
     first.handlePaste(new PasteEvent(new Uint8Array([97])));
-    captured(new Uint8Array([98]), "response");
+    captured(new KeyEvent(parseKeypress("b")!));
     expect(setup.sent).toEqual([]);
     setup.renderCurrent();
     await setup.flush();
@@ -489,8 +492,8 @@ test("theme changes preserve workbench identity, focus, hints and status geometr
     const root = setup.renderer.root;
     const terminal = root.findDescendantById("terminal:pane-1")!;
     const stoppedTerminal = root.findDescendantById("terminal:pane-2")!;
-    expect(terminal).toBeInstanceOf(EmbeddedTerminalRenderable);
-    expect(stoppedTerminal).toBeInstanceOf(EmbeddedTerminalRenderable);
+    expect(terminal).toBeInstanceOf(TerminalMaterialRenderable);
+    expect(stoppedTerminal).toBeInstanceOf(TerminalMaterialRenderable);
     const previousHints = statusText(setup);
     const commandCount = commands.length;
     function assertPalette(theme: Theme, modal = false): void {

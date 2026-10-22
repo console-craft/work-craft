@@ -51,5 +51,5 @@ export type SemanticTerminalInput =
         anyButtonPressed?: boolean;
       };
     }
-  | { kind: "paste"; bytes: number[] }
+  | { kind: "paste"; bytes: readonly number[] | Uint8Array }
   | { kind: "focus"; focused: boolean };

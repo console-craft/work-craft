@@ -45,17 +45,5 @@
     "oxlint": "^1.83.0",
     "typescript": "^7.0.2"
   },
-  "overrides": {
-    "@opentui/core": "file:./vendor/opentui/opentui-core-0.6.6-workcraft.1.tgz",
-    "@opentui/core-darwin-arm64": "file:./vendor/opentui/opentui-core-darwin-arm64-0.6.6-workcraft.1.tgz",
-    "@opentui/core-darwin-x64": "file:./vendor/opentui/opentui-core-darwin-x64-0.6.6-workcraft.1.tgz",
-    "@opentui/core-linux-arm64": "file:./vendor/opentui/opentui-core-linux-arm64-0.6.6-workcraft.1.tgz",
-    "@opentui/core-linux-arm64-musl": "file:./vendor/opentui/opentui-core-linux-arm64-musl-0.6.6-workcraft.1.tgz",
-    "@opentui/core-linux-x64": "file:./vendor/opentui/opentui-core-linux-x64-0.6.6-workcraft.1.tgz",
-    "@opentui/core-linux-x64-musl": "file:./vendor/opentui/opentui-core-linux-x64-musl-0.6.6-workcraft.1.tgz",
-    "@opentui/core-win32-arm64": "file:./vendor/opentui/opentui-core-win32-arm64-0.6.6-workcraft.1.tgz",
-    "@opentui/core-win32-x64": "file:./vendor/opentui/opentui-core-win32-x64-0.6.6-workcraft.1.tgz",
-    "@opentui/react": "file:./vendor/opentui/opentui-react-0.6.6-workcraft.1.tgz"
-  },
   "packageManager": "bun@1.4.3"
 }

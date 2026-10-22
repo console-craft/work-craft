@@ -1,3 +1,8 @@
+import type {
+  TerminalProjectionReply,
+  TerminalProjectionRequest,
+} from "./terminal-projection-protocol";
+
 export type CategoryKind =
   | "inbox"
   | "today"
@@ -66,6 +71,7 @@ export type TerminalInputContext = InputStamp & { runtimeGeneration?: number } &
     | { source: "input"; kind: "key" | "paste" | "mouse" | "focus"; activitySequence?: number }
   );
 export type InteractiveMessage =
+  | TerminalProjectionRequest
   | { type: "client.attach"; requestId: number; sessionId: string | null }
   | { type: "client.command"; requestId: number; attachmentGeneration: number; command: unknown }
   | { type: "client.viewport"; stamp: InputStamp; report: ViewerReport | null }
@@ -73,6 +79,7 @@ export type InteractiveMessage =
   | { type: "terminal.input"; paneId: string; data: string; context: TerminalInputContext };
 
 export type InteractiveServerMessage =
+  | TerminalProjectionReply
   | { type: "client.ready"; epoch: string; connectionId: string }
   | { type: "client.attached"; requestId: number | null; attachment: ClientAttachment }
   | { type: "command.result"; requestId: number; response: CommandResponse }

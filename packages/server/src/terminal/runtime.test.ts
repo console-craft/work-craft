@@ -537,6 +537,8 @@ test("preserving shutdown still publishes a natural exit", async () => {
     }
   ).runtimes;
   runtimes.set("pane-1", {
+    projection: { parser: null, sequence: 0 },
+    pendingBytes: 0,
     process: {
       exitCode: 0,
       kill() {

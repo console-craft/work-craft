@@ -418,12 +418,15 @@ export function createApp(options: {
     snapshot: () => readSnapshotState(options.db, epoch, revision, sizing.current()),
     execute,
     runtimeGeneration: (paneId) => runtime.generation(paneId),
+    onMaterial: (paneId, scrollOffset) => runtime.material(paneId, scrollOffset),
+    onSemantic: (paneId, input) => runtime.writeSemantic(paneId, input),
+    inputPending: (paneId) => runtime.inputPending(paneId),
     onViewer: (id, report) => applyGeometry(sizing.report(id, report)),
     onAttachActivity: (id) => applyGeometry(sizing.attachmentActivity(id)),
     onActivity: (id, sequence) => applyGeometry(sizing.activity(id, sequence)),
     onDisconnect: (id) => applyGeometry(sizing.remove(id)),
-    onInput: (paneId, bytes) => {
-      if (runtime.isLive(paneId)) {
+    onInput: (paneId, bytes, source) => {
+      if (source === "input" && runtime.isLive(paneId)) {
         runtime.write(paneId, bytes);
       }
     },

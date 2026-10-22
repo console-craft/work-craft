@@ -1,4 +1,4 @@
-import type { EmbeddedTerminalRenderable } from "@opentui/core";
+import type { Renderable } from "@opentui/core";
 import type { Snapshot, StreamConnection } from "@work-craft/server/client";
 import type { ReactNode } from "react";
 
@@ -10,10 +10,7 @@ import { SurfaceView, type SurfaceViewProps } from "@/workbench/surface-view.tsx
 import { TabBar } from "@/workbench/tab-bar.tsx";
 import type { TerminalPaneProps } from "@/workbench/terminal-pane";
 
-export type WorkbenchProps = Pick<
-  TerminalPaneProps,
-  "stamp" | "canRespond" | "inputEvent" | "onMouseInput" | "onResync"
-> & {
+export type WorkbenchProps = Pick<TerminalPaneProps, "stamp" | "inputEvent" | "onMouseInput"> & {
   connected: boolean;
   preservePresentation?: boolean;
   reactivatingPaneIds: ReadonlySet<string>;
@@ -34,13 +31,13 @@ export type WorkbenchProps = Pick<
   inputEnabled?: boolean;
   entryEnabled?: boolean;
   canReceiveInput?(paneId?: string): boolean;
-  onSourceFailure?(source: { paneId: string; message: string }): void;
+  onSourceFailure?: SurfaceViewProps["onSourceFailure"];
   onFocusTab(id: string): void;
   onActivateTab(id: string): void;
   onEnterTab(id: string): void;
   onTabScrollInteraction(): void;
   onFocusPane(id: string): void;
-  onTerminalReady(id: string, terminal: EmbeddedTerminalRenderable | null): void;
+  onTerminalReady(id: string, terminal: Renderable | null): void;
 };
 
 export function Workbench({
@@ -50,10 +47,8 @@ export function Workbench({
   canReactivate,
   onReactivatePane,
   stamp,
-  canRespond,
   inputEvent,
   onMouseInput,
-  onResync,
   inputEnabled,
   entryEnabled,
   canReceiveInput,
@@ -111,10 +106,8 @@ export function Workbench({
             canReceiveInput={canReceiveInput}
             activeTabId={activeTabId}
             stamp={stamp}
-            canRespond={canRespond}
             inputEvent={inputEvent}
             onMouseInput={onMouseInput}
-            onResync={onResync}
             snapshot={snapshot}
             stream={stream}
             surface={surface}

@@ -1,10 +1,6 @@
 import { expect, test } from "bun:test";
 
-import {
-  CliRenderEvents,
-  EmbeddedTerminalRenderable,
-  type ScrollBoxRenderable,
-} from "@opentui/core";
+import { CliRenderEvents, type ScrollBoxRenderable } from "@opentui/core";
 import { type Snapshot } from "@work-craft/server/client";
 import { act } from "react";
 
@@ -21,6 +17,7 @@ import {
   workCraftStateFixture,
 } from "@/shell/tests/fixtures";
 import { getControlHints } from "@/ui/interaction/control-hints";
+import type { TerminalMaterialRenderable } from "@/workbench/terminal-material";
 
 test("tab entry waits across a frame before the new terminal has native layout", async () => {
   const setup = await localTabFixture(false);
@@ -661,13 +658,14 @@ for (const stage of ["before response", "after response"] as const) {
     test(`terminal ${interaction} cancels pending tab entry ${stage} without changing bytes`, async () => {
       const setup = await localTabFixture();
       try {
-        const source = setup.renderer.currentFocusedRenderable as EmbeddedTerminalRenderable;
+        const source = setup.renderer.currentFocusedRenderable as TerminalMaterialRenderable;
         await setup.next();
         if (stage === "after response") {
           await setup.respond();
         }
         if (interaction === "paste") {
-          act(() => source.write(new TextEncoder().encode("\x1b[?2004h")));
+          setup.output("\x1b[?2004h");
+          await setup.flush();
           await act(async () => setup.mockInput.pasteBracketedText("source-only"));
           expect(setup.received).toEqual([
             {
@@ -695,7 +693,7 @@ for (const stage of ["before response", "after response"] as const) {
     });
   }
 
-  test(`terminal emulator reply preserves pending tab entry ${stage} and its response bytes`, async () => {
+  test(`child query preserves pending tab entry ${stage} without a client emulator reply`, async () => {
     const setup = await localTabFixture();
     try {
       await setup.next();
@@ -704,9 +702,7 @@ for (const stage of ["before response", "after response"] as const) {
       }
       setup.output("\x1b[5n");
       await setup.flush();
-      expect(setup.received).toEqual([
-        { paneId: "pane-1b", bytes: [...new TextEncoder().encode("\x1b[0n")] },
-      ]);
+      expect(setup.received).toEqual([]);
       if (stage === "before response") {
         await setup.respond();
       }

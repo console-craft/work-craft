@@ -1,4 +1,4 @@
-import { CliRenderEvents, type EmbeddedTerminalRenderable, type Renderable } from "@opentui/core";
+import { CliRenderEvents, type Renderable } from "@opentui/core";
 import { useRenderer } from "@opentui/react";
 import type { Command, SessionNavigation } from "@work-craft/server/client";
 import { useLayoutEffect, useRef, useState } from "react";
@@ -65,8 +65,8 @@ export type TerminalEntryCoordinator = {
   requestTabSelection(tabId: string): Promise<DurableCommandResult | undefined>;
   enterTab(tabId: string): Promise<void>;
   canEnterTab(): boolean;
-  terminal(paneId: string): EmbeddedTerminalRenderable | undefined;
-  registerTerminal(paneId: string, node: EmbeddedTerminalRenderable | null): void;
+  terminal(paneId: string): Renderable | undefined;
+  registerTerminal(paneId: string, node: Renderable | null): void;
   focusFor(model: ShellModel, requested: FocusTarget): FocusTarget;
   projectFocus(target: FocusTarget, perform: () => boolean): boolean;
   isClosingDrawer(): boolean;
@@ -107,7 +107,7 @@ export function useTerminalEntry({
   const formCloseOwner = useRef<{ entry: PendingTerminalEntry; target: Renderable | null } | null>(
     null,
   );
-  const terminals = useRef(new Map<string, EmbeddedTerminalRenderable>());
+  const terminals = useRef(new Map<string, Renderable>());
   const liveCanReceiveInput = useRef(canReceiveInput);
   liveCanReceiveInput.current = canReceiveInput;
 

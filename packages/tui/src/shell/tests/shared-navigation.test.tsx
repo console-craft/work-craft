@@ -1,11 +1,6 @@
 import { expect, spyOn, test } from "bun:test";
 
-import {
-  type EmbeddedTerminalRenderable,
-  type InputRenderable,
-  KeyEvent,
-  parseKeypress,
-} from "@opentui/core";
+import { type InputRenderable, KeyEvent, parseKeypress } from "@opentui/core";
 import type { StreamConnection } from "@work-craft/server/client";
 import { act } from "react";
 
@@ -16,6 +11,7 @@ import {
   splitSurfaceSnapshot,
   statusText,
 } from "@/shell/tests/fixtures";
+import type { TerminalMaterialRenderable } from "@/workbench/terminal-material";
 
 async function mirroredShells() {
   const initial = splitSurfaceSnapshot();
@@ -50,8 +46,8 @@ test("an admitted native key cannot borrow away-and-back navigation authority", 
   const setup = await liveInputFixture();
   const native = setup.renderer.root.findDescendantById(
     "terminal:pane-1",
-  ) as EmbeddedTerminalRenderable;
-  const encode = spyOn(native, "encodeKey");
+  ) as TerminalMaterialRenderable;
+  const send = spyOn(setup.store.getState().stream!, "sendSemantic");
   try {
     const output = setup.store.getState().outputs.pane("pane-1");
     const previous = output.read()!;
@@ -80,10 +76,10 @@ test("an admitted native key cannot borrow away-and-back navigation authority", 
     });
     setup.renderCurrent();
     await setup.flush();
-    expect(encode).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
     expect(setup.sent).toEqual([]);
   } finally {
-    encode.mockRestore();
+    send.mockRestore();
     setup.store.stop();
     act(() => setup.renderer.destroy());
   }

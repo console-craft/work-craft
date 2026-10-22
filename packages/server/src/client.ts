@@ -20,6 +20,15 @@ import type {
   ValidationField,
   ViewerReport,
 } from "./api/protocol.ts";
+import type { SemanticTerminalInput } from "./api/terminal-material";
+import { validateCompactFrame } from "./api/terminal-material-codec";
+import {
+  sameTerminalContext,
+  type TerminalMaterialResult,
+  type TerminalProjectionContext,
+  type TerminalProjectionPayload,
+  type TerminalSemanticContext,
+} from "./api/terminal-projection-protocol";
 import type { Health } from "./application/app.ts";
 import { resolvePaths } from "./daemon/paths.ts";
 import { observeOutput, outputProbeEnabled } from "./terminal/output-probe.ts";
@@ -36,6 +45,11 @@ export type {
   MaterialFrame,
   SemanticTerminalInput,
 } from "./api/terminal-material";
+export type {
+  TerminalMaterialResult,
+  TerminalProjectionContext,
+  TerminalSemanticContext,
+} from "./api/terminal-projection-protocol";
 export { projectPaneLayout } from "./application/layout.ts";
 export type { PaneRect, PaneGeometry } from "./application/layout.ts";
 export type {
@@ -105,6 +119,18 @@ export type StreamConnection = {
   reportViewport(report: ViewerReport | null, stamp: InputStamp): void;
   activity(stamp: InputStamp, sequence: number): void;
   sendInput(paneId: string, bytes: Uint8Array, context: TerminalInputContext): void;
+  requestMaterial(
+    paneId: string,
+    context: TerminalProjectionContext,
+    scrollOffset: number,
+    signal?: AbortSignal,
+  ): Promise<TerminalMaterialResult>;
+  sendSemantic(
+    paneId: string,
+    input: SemanticTerminalInput,
+    context: TerminalSemanticContext,
+    signal?: AbortSignal,
+  ): Promise<{ forwarded: boolean }>;
 };
 
 export type WorkCraftClient = {
@@ -290,9 +316,9 @@ export function createClient(options: { socketPath?: string } = {}): WorkCraftCl
       const pending = new Map<
         number,
         {
-          resolve(value: ClientAttachment | CommandResponse): void;
+          resolve(value: unknown): void;
           reject(error: Error): void;
-          timer: Timer;
+          cleanup(): void;
         }
       >();
 
@@ -300,35 +326,144 @@ export function createClient(options: { socketPath?: string } = {}): WorkCraftCl
         if (!alive || socket.readyState !== WebSocket.OPEN) {
           return false;
         }
-        socket.send(JSON.stringify(message));
+        const encoded = JSON.stringify(message);
+        if (Buffer.byteLength(encoded) > STREAM_BACKPRESSURE_LIMIT) {
+          throw new Error("Stream request byte limit");
+        }
+        socket.send(encoded);
         return true;
       }
 
       function request(
         message:
           | { type: "client.attach"; sessionId: string | null }
-          | { type: "client.command"; command: Command; attachmentGeneration: number },
-      ): Promise<ClientAttachment | CommandResponse> {
+          | { type: "client.command"; command: Command; attachmentGeneration: number }
+          | TerminalProjectionPayload,
+        signal?: AbortSignal,
+      ): Promise<unknown> {
+        signal?.throwIfAborted();
         if (pending.size >= 128) {
           return Promise.reject(new Error("Too many interactive requests in flight"));
         }
         const id = ++requestId;
         return new Promise((resolve, reject) => {
+          function cleanup(): void {
+            clearTimeout(timer);
+            signal?.removeEventListener("abort", cancel);
+          }
+          function cancel(): void {
+            pending.delete(id);
+            cleanup();
+            reject(signal?.reason ?? new Error("Request aborted"));
+          }
           const timer = setTimeout(() => {
             pending.delete(id);
+            cleanup();
             reject(new Error("Interactive request timed out"));
           }, 10_000);
-          pending.set(id, { resolve, reject, timer });
+          pending.set(id, { resolve, reject, cleanup });
+          signal?.addEventListener("abort", cancel, { once: true });
           try {
             if (!send({ ...message, requestId: id })) {
               throw new Error("Stream is disconnected");
             }
           } catch (error) {
-            clearTimeout(timer);
+            cleanup();
             pending.delete(id);
             reject(error);
           }
         });
+      }
+
+      async function requestMaterial(
+        paneId: string,
+        context: TerminalProjectionContext,
+        scrollOffset: number,
+        signal?: AbortSignal,
+      ): Promise<TerminalMaterialResult> {
+        const captured = { ...context };
+        const material = (await request(
+          { type: "terminal.material", paneId, context: captured, scrollOffset },
+          signal,
+        )) as TerminalMaterialResult;
+        if (
+          !material ||
+          material.paneId !== paneId ||
+          !material.context ||
+          !sameTerminalContext(material.context, captured) ||
+          !Number.isSafeInteger(material.sequence) ||
+          material.sequence < 0
+        ) {
+          throw new Error("Material response scope mismatch");
+        }
+        validateCompactFrame(material.frame);
+        return material;
+      }
+
+      async function sendSemantic(
+        paneId: string,
+        input: SemanticTerminalInput,
+        context: TerminalSemanticContext,
+        signal?: AbortSignal,
+      ): Promise<{ forwarded: boolean }> {
+        const captured = { ...context };
+        if (input.kind !== "paste") {
+          return (await request(
+            { type: "terminal.semantic", paneId, context: captured, input },
+            signal,
+          )) as { forwarded: boolean };
+        }
+        if (
+          input.bytes.length + 128 > STREAM_BACKPRESSURE_LIMIT ||
+          !input.bytes.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255)
+        ) {
+          throw new Error("Invalid paste byte limit or value");
+        }
+        const bytes = Uint8Array.from(input.bytes);
+        const id = crypto.randomUUID();
+        try {
+          await request(
+            {
+              type: "terminal.paste",
+              paneId,
+              context: captured,
+              transfer: { id, operation: "begin", total: bytes.length },
+            },
+            signal,
+          );
+          for (let offset = 0; offset < bytes.length; offset += 65536) {
+            const data = Buffer.from(bytes.subarray(offset, offset + 65536)).toString("base64");
+            await request(
+              {
+                type: "terminal.paste",
+                paneId,
+                context: captured,
+                transfer: { id, operation: "chunk", offset, data },
+              },
+              signal,
+            );
+          }
+          return (await request(
+            {
+              type: "terminal.paste",
+              paneId,
+              context: captured,
+              transfer: { id, operation: "commit" },
+            },
+            signal,
+          )) as { forwarded: boolean };
+        } catch (error) {
+          await request(
+            {
+              type: "terminal.paste",
+              paneId,
+              context: captured,
+              transfer: { id, operation: "cancel" },
+            },
+            AbortSignal.timeout(250),
+          ).catch(() => {});
+          throw error;
+        }
       }
 
       function applySnapshot(snapshot: Snapshot | ControlSnapshot): void {
@@ -371,7 +506,32 @@ export function createClient(options: { socketPath?: string } = {}): WorkCraftCl
       socket.on("message", (data) => {
         try {
           const received = outputProbeEnabled ? performance.now() : 0;
+          if (Buffer.byteLength(data.toString()) > STREAM_BACKPRESSURE_LIMIT) {
+            throw new Error("Stream response byte limit");
+          }
           const message = JSON.parse(data.toString()) as ServerMessage;
+          if (
+            message.type === "terminal.material.result" ||
+            message.type === "terminal.input.result" ||
+            message.type === "terminal.error"
+          ) {
+            const item = pending.get(message.requestId);
+            if (!item) {
+              return;
+            }
+            pending.delete(message.requestId);
+            item.cleanup();
+            if (message.type === "terminal.error") {
+              item.reject(new ApiError(message.message.slice(0, 256)));
+            } else if (message.type === "terminal.material.result") {
+              item.resolve(message.material);
+            } else if (typeof message.forwarded === "boolean") {
+              item.resolve({ forwarded: message.forwarded });
+            } else {
+              item.reject(new Error("Invalid semantic acknowledgement"));
+            }
+            return;
+          }
           if (
             (message.type === "client.attached" && message.requestId !== null) ||
             message.type === "command.result" ||
@@ -380,7 +540,7 @@ export function createClient(options: { socketPath?: string } = {}): WorkCraftCl
             const item = pending.get(message.requestId!);
             if (item) {
               pending.delete(message.requestId!);
-              clearTimeout(item.timer);
+              item.cleanup();
               if (message.type === "command.error") {
                 item.reject(new ApiError(message.message, message.field));
               } else {
@@ -477,6 +637,8 @@ export function createClient(options: { socketPath?: string } = {}): WorkCraftCl
           activity: (stamp, sequence) => send({ type: "client.activity", stamp, sequence }),
           sendInput: (paneId, bytes, context) =>
             send({ type: "terminal.input", paneId, data: encodeBytes(bytes), context }),
+          requestMaterial,
+          sendSemantic,
         });
       });
       socket.once("error", (error) => {
@@ -489,7 +651,7 @@ export function createClient(options: { socketPath?: string } = {}): WorkCraftCl
         alive = false;
         abort.abort();
         for (const item of pending.values()) {
-          clearTimeout(item.timer);
+          item.cleanup();
           item.reject(closeError ?? new Error("Stream closed during request"));
         }
         pending.clear();

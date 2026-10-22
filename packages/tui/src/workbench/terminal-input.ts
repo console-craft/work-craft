@@ -1,101 +1,139 @@
-import type { EmbeddedTerminalInputRequest } from "@opentui/core";
-import { STREAM_BACKPRESSURE_LIMIT } from "@work-craft/server/client";
+import { type SemanticTerminalInput, STREAM_BACKPRESSURE_LIMIT } from "@work-craft/server/client";
 
-import type { ReplayProgress } from "@/client/terminal-replay";
-
-/** Captured before encoding; replay never borrows a later event's authority or activity. */
+/** Captured before queueing; later frames and reconnects cannot lend a new sender. */
 export type TerminalInputAdmission = {
   valid(): boolean;
-  send(bytes: Uint8Array): void;
+  ready?(): boolean;
+  send(input: SemanticTerminalInput, signal: AbortSignal): Promise<{ forwarded: boolean }>;
 };
-
 export type TerminalInput = {
-  admit(request: EmbeddedTerminalInputRequest): void;
-  frontier(): ReplayProgress | undefined;
-  step(progress: ReplayProgress | null): boolean;
+  readonly bytes: number;
+  admit(input: SemanticTerminalInput): boolean;
+  flush(): Promise<void>;
   clear(): void;
   close(): void;
 };
 
-/** One native leaf's bounded pre-encoding queue, drained by its existing renderer scheduler. */
 export function createTerminalInput(options: {
-  capture(): (TerminalInputAdmission & { frontier: ReplayProgress }) | null;
-  request(): void;
-  overflow(): void;
+  capture(input: SemanticTerminalInput): TerminalInputAdmission | null;
+  ready(): boolean;
+  onResult(input: SemanticTerminalInput, forwarded: boolean): void;
+  onError(error: Error): void;
 }): TerminalInput {
   type Pending = {
+    input: SemanticTerminalInput;
     admission: TerminalInputAdmission;
-    frontier: ReplayProgress;
-    bytes: number;
-    request: EmbeddedTerminalInputRequest;
+    charge: number;
   };
   const queue: (Pending | undefined)[] = [];
   let head = 0;
-  let queuedBytes = 0;
+  let bytes = 0;
   let closed = false;
+  let running: Promise<void> | undefined;
+  let active: AbortController | undefined;
 
-  function reached(progress: ReplayProgress | null, frontier: ReplayProgress): boolean {
+  function canDrain(): boolean {
+    const entry = queue[head];
     return (
-      progress !== null &&
-      progress.cursor >= frontier.cursor &&
-      (progress.gridSequence ?? 0) >= (frontier.gridSequence ?? 0)
+      !closed &&
+      options.ready() &&
+      !!entry &&
+      (!entry.admission.valid() || entry.admission.ready?.() !== false)
     );
   }
 
   function clear(): void {
-    for (let index = head; index < queue.length; index++) {
-      queue[index]?.request.cancel();
+    for (const entry of queue.splice(0)) {
+      if (entry) {
+        bytes -= entry.charge;
+      }
     }
-    queue.length = 0;
     head = 0;
-    queuedBytes = 0;
+    active?.abort();
+  }
+
+  function flush(): Promise<void> {
+    if (running) {
+      return running;
+    }
+    if (!canDrain()) {
+      return Promise.resolve();
+    }
+    running = Promise.resolve()
+      .then(async () => {
+        while (canDrain()) {
+          const entry = queue[head]!;
+          queue[head++] = undefined;
+          if (head >= 64 && head * 2 >= queue.length) {
+            queue.splice(0, head);
+            head = 0;
+          }
+          const abort = new AbortController();
+          active = abort;
+          try {
+            if (entry.admission.valid()) {
+              const reply = await entry.admission.send(entry.input, abort.signal);
+              if (!closed && !abort.signal.aborted && entry.admission.valid()) {
+                options.onResult(entry.input, reply.forwarded);
+              }
+            }
+          } catch (error) {
+            if (!closed && !abort.signal.aborted && entry.admission.valid()) {
+              options.onError(error instanceof Error ? error : new Error(String(error)));
+            }
+          } finally {
+            bytes -= entry.charge;
+            active = undefined;
+          }
+        }
+      })
+      .finally(() => {
+        running = undefined;
+        if (canDrain()) {
+          void flush();
+        }
+      });
+    return running;
   }
 
   return {
-    clear,
-    frontier: () => queue[head]?.frontier,
-    admit(request) {
-      const admission = closed ? null : options.capture();
-      if (!admission) {
-        request.cancel();
-        return;
-      }
-      const bytes = request.payloadBytes + 128;
-      if (bytes > STREAM_BACKPRESSURE_LIMIT - queuedBytes) {
-        request.cancel();
-        clear();
-        options.overflow();
-        return;
-      }
-      queue.push({ admission, frontier: { ...admission.frontier }, bytes, request });
-      queuedBytes += bytes;
-      options.request();
+    get bytes() {
+      return bytes;
     },
-    step(progress) {
-      const job = queue[head];
-      if (!job || (job.admission.valid() && !reached(progress, job.frontier))) {
+    admit(input) {
+      if (closed) {
         return false;
       }
-      queue[head++] = undefined;
-      queuedBytes -= job.bytes;
-      if (job.admission.valid()) {
-        job.request.resume((bytes) => {
-          if (job.admission.valid()) {
-            job.admission.send(bytes);
-          }
-        });
-      } else {
-        job.request.cancel();
+      const admission = options.capture(input);
+      if (!admission) {
+        return false;
       }
-      if (head === queue.length) {
-        queue.length = 0;
-        head = 0;
-      } else if (head >= 64 && head * 2 >= queue.length) {
-        queue.splice(0, head);
-        head = 0;
+      const charge =
+        128 +
+        (input.kind === "paste"
+          ? input.bytes.length
+          : input.kind === "key"
+            ? Buffer.byteLength(input.key.text ?? "")
+            : 0);
+      if (bytes + charge > STREAM_BACKPRESSURE_LIMIT) {
+        options.onError(new Error("Terminal input queue byte limit"));
+        return false;
       }
+      const captured: SemanticTerminalInput =
+        input.kind === "paste"
+          ? { kind: "paste", bytes: Uint8Array.from(input.bytes) }
+          : input.kind === "key"
+            ? { kind: "key", key: { ...input.key } }
+            : input.kind === "mouse"
+              ? { kind: "mouse", mouse: { ...input.mouse } }
+              : { ...input };
+      bytes += charge;
+      queue.push({ input: captured, admission, charge });
+      void flush();
       return true;
     },
+    flush,
+    clear,
     close() {
       closed = true;
       clear();

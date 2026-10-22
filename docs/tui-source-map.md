@@ -61,38 +61,42 @@ cancellation and byte forwarding continue reading live state, never the cache.
 origin and original reply stamps; `client/terminal-replay.ts` orders grid changes
 between byte ranges without granting new response authority to delayed queries.
 
-`workbench/terminal-viewport.tsx` owns the concrete native emulator, canonical-grid
-replay, readiness and cursor-follow clipping into the locally measured parent.
-It subscribes directly to its pane output channel; byte arrival schedules a
-coalesced I/O-turn drain without republishing shell/control state. Unmount removes
-that subscription, releases unread consumer work and cancels its pending drain.
-`client/terminal-consumer.ts` advances acknowledged byte/marker offsets separately
-from retained history; empty drains do not plan that history again.
-`workbench/terminal-drain.ts` round-robins mounted panes on their renderer with
-8-KiB writes and a 2-ms aggregate I/O-turn budget. Readiness captures a finite
-entry/geometry frontier; ordinary output does not move it. Screen-change cursor
-inspection coalesces at 33 ms. Structural/geometry updates
-still use the root control subscription; output does not grant input authority.
-`terminal-pane.tsx` gates forwarding and displays recovery state. A history cursor
-advance does not replace its native viewport: its identity is pane,
-epoch, runtime and actual reset generation. The pane-local identity subscription
-does not render for ordinary bytes. Runtime/epoch replacement waits for its control
-commit; a reset replaces only the inner viewport. Transient presentation can retain
-native focus/notice geometry without granting input or response authority.
-`workbench/terminal-input.ts` queues supported native `onInputAdmission` requests
-before encoding against a finite received byte/grid frontier. The leaf-local queue
-preserves original authorization/activity/sender, shares the renderer drain and
-charges payload plus 128 bytes/event against the existing 8-MiB ceiling. Each
-quantum settles at most one request; later output cannot move its frontier, and
-stale scope/unmount cancels it. Native code owns key/paste/mouse/focus encoding,
-clicked cell coordinates, synchronous focus/selection and local scrolling; no
-native methods are replaced. Only automatic responses use the viewport's `onData`
-path. The local artifact manifest pins the reviewed native source and checksums.
-An already-focused authorized leaf retains physical focus during ordinary grid
-synchronization and queues input until its frontier is consumed; failed writes,
-recovery and revoked scope remain gated. Native amendment automated acceptance
-passes, with historical startup-timeout limits recorded separately; see the
-[blocked feasibility handover](superpowers/handovers/2026-10-22-output-projection-feasibility.md).
+### Stock-renderer preview amendment (2026-10-22)
+
+This branch uses the approved [runnable preview](superpowers/specs/2026-10-22-no-fork-runnable-preview-design.md)
+and its [visual waiver](superpowers/specs/2026-10-22-no-fork-preview-visual-waiver.md).
+These ownership descriptions supersede the native-terminal references in the table above.
+Registry OpenTUI core/React 0.6.6 are the only application path; vendor artifacts
+and dated fork checkpoints are history, not a fallback.
+
+The daemon's `packages/server/src/terminal/projection.ts` owns parsing, native
+semantic encoding and single child-query reply ownership. `runtime.ts` owns its
+lifetime, canonical resize order, frozen exit picture and PTY drain accounting.
+Portable material/validation and actual socket-scoped request/paste authority live
+in the server's `api/`; the TUI imports only `@work-craft/server/client`.
+
+`workbench/terminal-viewport.tsx` requests current material on mount/reconnect and
+coalesces pane-output notifications at 33 ms with one abortable request per pane.
+`terminal-material.ts` draws explicit cells, cursor, selection and local crop; it
+does not parse ANSI. Readiness follows an actually presented current-scope picture.
+`terminal-input.ts` retains each input's finite received-output picture frontier,
+original authority/activity/sender and payload plus 128-byte descriptor charge.
+Queued and in-flight input share the 8-MiB limit; FIFO acknowledgement means real
+PTY drain, not child-program processing. New output cannot extend admitted work's
+frontier. Scope replacement/unmount cancels retained work. An authorized focused
+leaf keeps physical focus during synchronization without forwarding early.
+
+`terminal-pane.tsx` retains pane/epoch/runtime/reset keys, live eligibility and
+stopped-pane actions. Recovery/output publication remains client-owned and bounded,
+but `terminal-consumer.ts`/`terminal-drain.ts` are no longer on the live material
+path. Structural updates use the root control subscription; ordinary material
+refreshes do not. Only the daemon sends emulator replies, including the retained
+unsupported-mode-2048 response workaround. Transient pictures grant no authority.
+
+Cold durable history is retained but is not restored into a new live parser;
+exited panes retain one picture, not browsable exited scrollback. These are preview
+limitations, not restoration parity. Regional indicators retain the waived narrow
+glyph defect. Hyperlink destinations/invisible-wide fidelity remain research-only.
 Leaves do not directly resize daemon PTYs: the shell reports its available canvas/eligibility
 and physical activity, then the daemon elects the latest-active eligible viewer.
 Attachment is activity; idle resize and emulator replies are not. Owner resize
@@ -143,6 +147,19 @@ Package-wide acceptance is `tests/entrypoint.test.ts` and `tests/shared-session.
 genuinely shared rendering and snapshot support live in `tests/support/`. The latter
 acceptance launches two normal TUIs plus a deterministic terminal program and,
 when installed, one Neovim editor session; its process/program fixtures are test-only.
+
+Connected shell/surface fixtures use `tests/support/material-stream.ts`, which
+constructs and destroys a real daemon parser per fixture request. Old `.screen()`
+checks observe renderer text/cursor instead; captured `.onData` injections become
+captured semantic key/paste calls. Client-query tests now assert no client replies;
+`server/src/terminal/tests/projection-runtime.test.ts` checks exact single daemon
+replies. Queue/viewport tests cover finite picture readiness and cancellation.
+The Buffer-paste snapshot regression moved from fork admission to material admission.
+Original hidden-wide/link diagnostics remain opt-in with
+`WORK_CRAFT_FORK_LINK_DIAGNOSTICS=1` in native-contract and projection-feasibility
+tests; stock failures are expected evidence, not an accepted fidelity repair.
+The original native-admission implementation is preserved in Git at `583a70e`.
+Explicit-position regional-indicator fidelity probes also remain red opt-in evidence.
 
 The shell suites separate item entry, tab entry, pane operations, dialogs,
 presentation and composition. Keep their response, snapshot, React commit, native

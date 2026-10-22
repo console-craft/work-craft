@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 
-import type { EmbeddedTerminalRenderable, MouseEvent } from "@opentui/core";
+import type { MouseEvent, Renderable } from "@opentui/core";
 import { useKeyboard, usePaste, useRenderer, useTerminalDimensions } from "@opentui/react";
 import {
   type CategoryKind,
@@ -576,7 +576,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
         !keyFocus.control &&
         canReceiveWorkbenchInput(keyFocus.paneId)
       ) {
-        entry.terminal(keyFocus.paneId)?.handleKeyPress(key);
+        entry.terminal(keyFocus.paneId)?.handleKeyPress?.(key);
       }
     } else if (routed.command !== undefined) {
       void execute(routed.command, {
@@ -748,16 +748,9 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     inputEnabled: !resizeBlocked && navigatorMode !== "drawer" && state.dialog === null,
     canReceiveInput: canReceiveWorkbenchInput,
     stamp,
-    canRespond: (paneId: string, responseStamp: InputStamp) =>
-      canReceiveWorkbenchInput() &&
-      !readEnvironment().layout.undersized &&
-      workCraft.canRespond(paneId, responseStamp),
     inputEvent: () => physicalInput.current,
     onMouseInput: (event: MouseEvent) =>
       captureInput("mouse", event.type === "down" && event.button === 0),
-    onResync: (paneId: string) => {
-      void workCraft.resyncPane(paneId);
-    },
     activeTabId: activeTab?.id ?? null,
     focusedPaneId,
     snapshot: displaySnapshot,
@@ -765,8 +758,16 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     surface,
     tabCursorId: state.tabCursorId,
     failed: workbenchFailed,
-    onSourceFailure: ({ paneId, message }: { paneId: string; message: string }) => {
-      errors.reportMissingPane(paneId, message, model.navigationKey);
+    onSourceFailure: ({
+      paneId,
+      message,
+      operation,
+    }: {
+      paneId: string;
+      message: string;
+      operation?: "Layout" | "Terminal";
+    }) => {
+      errors.reportPaneFailure(paneId, message, model.navigationKey, operation);
     },
     tabs,
     tabsFocused: state.dialog === null && focus.region === "tabs",
@@ -806,7 +807,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
       entry.cancel();
       setFocus({ region: "workbench", paneId });
     },
-    onTerminalReady: (paneId: string, terminal: EmbeddedTerminalRenderable | null) => {
+    onTerminalReady: (paneId: string, terminal: Renderable | null) => {
       entry.registerTerminal(paneId, terminal);
     },
   };

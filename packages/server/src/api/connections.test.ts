@@ -87,6 +87,9 @@ function fixture() {
   const inputs: { paneId: string; data: string; source: string; owner: string | null }[] = [];
   const reports: unknown[] = [];
   const disconnected: string[] = [];
+  const materialReads: string[] = [];
+  const semanticInputs: string[] = [];
+  const semanticEvents: unknown[] = [];
   let runtimeGeneration = 1;
   let execute = async (_value: unknown, _origin: CommandOrigin): Promise<CommandResponse> => ({
     ok: true,
@@ -120,6 +123,23 @@ function fixture() {
         source,
         owner: sizing.current().tabs[0]?.ownerConnectionId ?? null,
       });
+    },
+    onMaterial(paneId) {
+      materialReads.push(paneId);
+      return {
+        sequence: 1,
+        frame: {
+          size: { cols: 1, rows: 1 },
+          cursor: { x: 0, y: 0, visible: true, style: "bar", blinking: false },
+          styles: [{ fg: [1, 1, 1, 1], bg: [0, 0, 0, 1], attributes: 0 }],
+          rows: [[[1, "x", 1, 0]]],
+        },
+      };
+    },
+    async onSemantic(paneId, input) {
+      semanticInputs.push(paneId);
+      semanticEvents.push(input);
+      return true;
     },
   });
   function stamp(socket: Bun.ServerWebSocket): InputStamp {
@@ -168,6 +188,9 @@ function fixture() {
     inputs,
     reports,
     disconnected,
+    materialReads,
+    semanticInputs,
+    semanticEvents,
     snapshot,
     stamp,
     attach,
@@ -181,6 +204,115 @@ function fixture() {
     },
   };
 }
+
+test("projection requests authorize the actual socket and reject every stale generation", async () => {
+  const f = fixture();
+  const a = socketFixture();
+  f.registry.open(a.socket);
+  await f.attach(a.socket);
+  await f.report(a.socket);
+  const context = { ...f.stamp(a.socket), runtimeGeneration: 1 };
+  let requestId = 1;
+  async function material(captured = context, paneId = "pane-1"): Promise<void> {
+    await f.registry.receive(a.socket, {
+      type: "terminal.material",
+      requestId: ++requestId,
+      paneId,
+      context: captured,
+      scrollOffset: 0,
+    });
+  }
+  await material();
+  expect(f.materialReads).toEqual(["pane-1"]);
+  expect(a.messages.at(-1)).toMatchObject({
+    type: "terminal.material.result",
+    material: { context, paneId: "pane-1", sequence: 1 },
+  });
+  await material(context, "pane-2");
+  for (const field of [
+    "attachmentGeneration",
+    "navigationGeneration",
+    "geometrySequence",
+    "runtimeGeneration",
+  ] as const) {
+    await material({ ...context, [field]: context[field] + 1 });
+    expect(a.messages.at(-1)).toMatchObject({ type: "terminal.error" });
+  }
+  expect(f.materialReads).toEqual(["pane-1"]);
+  const b = socketFixture();
+  f.registry.open(b.socket);
+  await f.registry.receive(b.socket, {
+    type: "terminal.material",
+    requestId: 1,
+    paneId: "pane-1",
+    context,
+    scrollOffset: 0,
+  });
+  expect(b.messages.at(-1)).toMatchObject({ type: "terminal.error" });
+  expect(f.materialReads).toEqual(["pane-1"]);
+  await f.registry.receive(a.socket, {
+    type: "terminal.semantic",
+    requestId: ++requestId,
+    paneId: "pane-1",
+    context: { ...context, source: "input", kind: "key" },
+    input: { kind: "key", key: { key: "key_x", text: "x" } },
+  });
+  expect(f.semanticInputs).toEqual(["pane-1"]);
+  f.data.navigation[0]!.generation += 2;
+  await f.registry.receive(a.socket, {
+    type: "terminal.semantic",
+    requestId: ++requestId,
+    paneId: "pane-1",
+    context: { ...context, source: "input", kind: "key" },
+    input: { kind: "key", key: { key: "key_x", text: "x" } },
+  });
+  expect(f.semanticInputs).toEqual(["pane-1"]);
+  expect(a.messages.at(-1)).toMatchObject({ type: "terminal.error" });
+  expect(a.closed).toEqual([]);
+});
+
+test("socket-owned paste cannot be overtaken or cancelled by an unrelated late request", async () => {
+  const f = fixture();
+  const a = socketFixture();
+  f.registry.open(a.socket);
+  await f.attach(a.socket);
+  await f.report(a.socket);
+  const context = { ...f.stamp(a.socket), runtimeGeneration: 1, source: "input", kind: "paste" };
+  let requestId = 1;
+  async function paste(transfer: unknown): Promise<void> {
+    await f.registry.receive(a.socket, {
+      type: "terminal.paste",
+      requestId: ++requestId,
+      paneId: "pane-1",
+      context,
+      transfer,
+    });
+  }
+  await paste({ id: "a", operation: "begin", total: 3 });
+  expect(a.messages.at(-1)).toMatchObject({ type: "terminal.input.result", forwarded: false });
+  await f.registry.receive(a.socket, {
+    type: "terminal.semantic",
+    requestId: ++requestId,
+    paneId: "pane-1",
+    context: { ...context, kind: "key" },
+    input: { kind: "key", key: { text: "x" } },
+  });
+  expect(a.messages.at(-1)).toMatchObject({
+    type: "terminal.error",
+    message: expect.stringContaining("pending"),
+  });
+  await paste({ id: "unrelated", operation: "cancel" });
+  await paste({ id: "a", operation: "chunk", offset: 0, data: "YWJj" });
+  await paste({ id: "a", operation: "commit" });
+  expect(f.semanticEvents).toEqual([Buffer.from("abc")]);
+  await paste({ id: "b", operation: "begin", total: 1 });
+  f.data.navigation[0]!.generation++;
+  f.registry.reconcile();
+  await paste({ id: "b", operation: "commit" });
+  expect(a.messages.at(-1)).toMatchObject({ type: "terminal.error" });
+  expect(f.semanticEvents).toHaveLength(1);
+  expect(a.closed).toEqual([]);
+});
 
 test("a supplied stale runtime generation is rejected while legacy raw input remains valid", async () => {
   const f = fixture();

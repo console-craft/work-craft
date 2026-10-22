@@ -1,8 +1,9 @@
-import { expect, spyOn, test } from "bun:test";
+import { expect, test } from "bun:test";
 
 import {
   CliRenderEvents,
-  EmbeddedTerminalRenderable,
+  KeyEvent,
+  parseKeypress,
   PasteEvent,
   type Renderable,
   type ScrollBoxRenderable,
@@ -25,6 +26,7 @@ import {
 } from "@/shell/tests/fixtures";
 import { controlSnapshotFixture } from "@/tests/support/fixtures";
 import { isEligibleFocusTarget } from "@/ui/interaction/focus-utils";
+import { TerminalMaterialRenderable } from "@/workbench/terminal-material";
 
 function restartResponse(revision: number, paneId = "pane-2", generation = 2) {
   const navigation = selectedPaneSnapshot(splitSurfaceSnapshot(), paneId, generation)
@@ -110,30 +112,23 @@ test("Reactivate activates its exact pane in one restart command without a compe
 });
 
 for (const coverage of ["dialog", "guard"] as const) {
-  test(`an acknowledged sizing owner cannot answer terminal queries after same-batch ${coverage} coverage`, async () => {
+  test(`the TUI never answers child queries before or after same-batch ${coverage} coverage`, async () => {
     const initial = splitSurfaceSnapshot();
     initial.geometry.tabs[0]!.ownerConnectionId = "test-connection";
     const setup = await liveInputFixture(initial);
     try {
-      const terminal = setup.renderer.currentFocusedRenderable as EmbeddedTerminalRenderable;
       await act(async () => setup.output("\x1b[5n"));
       await setup.flush();
-      expect(setup.sent).toEqual([
-        { paneId: "pane-1", bytes: [...new TextEncoder().encode("\x1b[0n")] },
-      ]);
-      setup.sent.length = 0;
-      const write = terminal.write.bind(terminal);
-      const intercepted = spyOn(terminal, "write").mockImplementationOnce((bytes) => {
+      expect(setup.sent).toEqual([]);
+      await act(async () => {
         if (coverage === "dialog") {
           setup.mockInput.pressKey("s", { hyper: true });
         } else {
           setup.resize(79, 40);
         }
-        write(bytes);
+        await setup.output("\x1b[5n");
       });
-      await act(async () => setup.output("\x1b[5n"));
       await setup.flush();
-      intercepted.mockRestore();
       expect(setup.sent).toEqual([]);
     } finally {
       act(() => setup.renderer.destroy());
@@ -232,9 +227,8 @@ for (const change of [
       await setup.flush();
       const terminal = setup.renderer.root.findDescendantById(
         "terminal:pane-2",
-      ) as EmbeddedTerminalRenderable;
-      const captured = terminal.onData!;
-      const capturedResize = terminal.onTerminalResize!;
+      ) as TerminalMaterialRenderable;
+      const captured = terminal.handleKeyPress.bind(terminal);
       const next = structuredClone(initial);
       next.revision = 5;
       if (change === "disconnect") {
@@ -269,12 +263,11 @@ for (const change of [
       }
       setup.resized.length = 0;
       terminal.handlePaste(new PasteEvent(Uint8Array.of(65)));
-      captured(Uint8Array.of(66), "response");
-      capturedResize(80, 20);
+      captured(new KeyEvent(parseKeypress("B")!));
       await act(async () => {
         setup.mockInput.pressEnter();
         setup.mockInput.pasteBracketedText("not PTY input");
-        terminal.write(new TextEncoder().encode("\x1b[5n"));
+        await setup.output("\x1b[5n", "pane-2");
         await setup.mockMouse.click(button.screenX + 1, button.screenY);
       });
       expect(setup.commands.filter((command) => command.type === "process.restart")).toEqual([]);
@@ -730,18 +723,18 @@ for (const status of ["exited", "failed", "interrupted"] as const) {
       try {
         const terminal = setup.renderer.root.findDescendantById(
           "terminal:pane-1",
-        ) as EmbeddedTerminalRenderable;
+        ) as TerminalMaterialRenderable;
         const stoppedId = focused ? "pane-1" : "pane-2";
         const stoppedTerminal = setup.renderer.root.findDescendantById(
           `terminal:${stoppedId}`,
-        ) as EmbeddedTerminalRenderable;
-        const captured = stoppedTerminal.onData!;
+        ) as TerminalMaterialRenderable;
+        const captured = stoppedTerminal.handleKeyPress.bind(stoppedTerminal);
         const stopped = splitSurfaceSnapshot();
         stopped.revision = 5;
         stopped.panes.find((pane) => pane.id === stoppedId)!.processStatus = status;
         await setup.publish(stopped, false);
         stoppedTerminal.handlePaste(new PasteEvent(Uint8Array.of(65)));
-        captured(new TextEncoder().encode("\x1b[0n"), "response");
+        captured(new KeyEvent(parseKeypress("B")!));
         expect(setup.sent).toEqual([]);
         await setup.publish(stopped);
         expect(setup.renderer.root.findDescendantById(`pane-alert:${stoppedId}`)).toBeDefined();
@@ -779,7 +772,7 @@ for (const interaction of ["pointer", "spatial"] as const) {
         await setup.publish(stopped);
         const terminal = setup.renderer.root.findDescendantById(
           "terminal:pane-2",
-        ) as EmbeddedTerminalRenderable;
+        ) as TerminalMaterialRenderable;
         if (interaction === "pointer") {
           await act(async () => setup.mockMouse.click(terminal.screenX + 1, terminal.screenY + 1));
         } else {
@@ -795,7 +788,7 @@ for (const interaction of ["pointer", "spatial"] as const) {
         );
         expect(terminal.focusable).toBe(false);
         terminal.handlePaste(new PasteEvent(Uint8Array.of(65)));
-        terminal.onData!(Uint8Array.of(66), "response");
+        terminal.handleKeyPress(new KeyEvent(parseKeypress("B")!));
         expect(setup.sent).toEqual([]);
         expect(setup.commands.filter((command) => command.type === "process.restart")).toEqual([]);
         await act(async () => setup.mockInput.pressKeys(["\x00r"]));
@@ -872,10 +865,10 @@ for (const orientation of ["stacked", "side-by-side"] as const) {
         for (const id of ["pane-1", "pane-2"]) {
           const terminal = setup.renderer.root.findDescendantById(
             `terminal:${id}`,
-          ) as EmbeddedTerminalRenderable;
+          ) as TerminalMaterialRenderable;
           expect(terminal.focusable).toBe(false);
           terminal.handlePaste(new PasteEvent(Uint8Array.of(65)));
-          terminal.onData!(Uint8Array.of(66), "response");
+          terminal.handleKeyPress(new KeyEvent(parseKeypress("B")!));
         }
         expect(setup.sent).toEqual([]);
       } finally {
@@ -1074,12 +1067,9 @@ for (const change of [
   test(`native keyboard paste mouse focus-report and emulator response reject precommit ${change}`, async () => {
     const setup = await liveInputFixture();
     try {
-      const terminal = setup.renderer.currentFocusedRenderable as EmbeddedTerminalRenderable;
-      const captured = terminal.onData!;
-      const capturedResize = terminal.onTerminalResize!;
-      act(() =>
-        terminal.write(new TextEncoder().encode("\x1b[?1004h\x1b[?1000h\x1b[?1006h\x1b[?2004h")),
-      );
+      const terminal = setup.renderer.currentFocusedRenderable as TerminalMaterialRenderable;
+      const captured = terminal.handleKeyPress.bind(terminal);
+      await act(async () => setup.output("\x1b[?1004h\x1b[?1000h\x1b[?1006h\x1b[?2004h"));
       const next = splitSurfaceSnapshot();
       next.revision = 5;
       if (change === "epoch") {
@@ -1106,14 +1096,13 @@ for (const change of [
       expect(setup.renderer.currentFocusedRenderable).toBe(terminal);
       setup.resized.length = 0;
       terminal.handlePaste(new PasteEvent(Uint8Array.of(65)));
-      captured(Uint8Array.of(66), "response");
-      capturedResize(80, 20);
+      captured(new KeyEvent(parseKeypress("B")!));
       await act(async () => {
         setup.mockInput.pressKey("x");
         setup.mockInput.pasteBracketedText("ignored-paste");
         terminal.blur();
         terminal.focus();
-        terminal.write(new TextEncoder().encode("\x1b[5n"));
+        await setup.output("\x1b[5n", "pane-1");
         await setup.mockMouse.click(terminal.screenX + 1, terminal.screenY + 1);
       });
       expect(setup.sent).toEqual([]);
@@ -1122,7 +1111,7 @@ for (const change of [
       if (change === "item archived" || change === "parent archived") {
         await setup.publish(next);
         terminal.handlePaste(new PasteEvent(Uint8Array.of(67)));
-        captured(Uint8Array.of(68), "response");
+        captured(new KeyEvent(parseKeypress("D")!));
         expect(setup.sent).toEqual([]);
         expect(setup.store.snapshot()!.panes[0]!.processStatus).toBe("running");
         await setup.store.apply({
@@ -1131,14 +1120,14 @@ for (const change of [
           geometrySequence: next.geometry.sequence,
           epoch: next.epoch,
           paneId: "pane-1",
-          cursor: 4,
+          cursor: setup.store.getState().outputs.pane("pane-1").read()!.chunks.at(-1)!.cursor + 4,
           data: Buffer.from("kept").toString("base64"),
         });
         expect(
           new TextDecoder().decode(
-            setup.store.getState().outputs.pane("pane-1").read()!.chunks[0]!.data,
+            setup.store.getState().outputs.pane("pane-1").read()!.chunks.at(-1)!.data,
           ),
-        ).toBe("kept");
+        ).toEndWith("kept");
       }
     } finally {
       act(() => setup.renderer.destroy());
@@ -1151,8 +1140,8 @@ for (const coverage of ["dialog", "drawer", "guard", "height", "item"] as const)
   test(`captured callbacks cannot reach the old pane after same-batch ${coverage} change`, async () => {
     const setup = await liveInputFixture(twoSurfaceSnapshot());
     try {
-      const terminal = setup.renderer.currentFocusedRenderable as EmbeddedTerminalRenderable;
-      const captured = terminal.onData!;
+      const terminal = setup.renderer.currentFocusedRenderable as TerminalMaterialRenderable;
+      const captured = terminal.handleKeyPress.bind(terminal);
       if (coverage === "drawer") {
         act(() => setup.resize(100, 40));
         await setup.flush();
@@ -1169,7 +1158,7 @@ for (const coverage of ["dialog", "drawer", "guard", "height", "item"] as const)
           await setup.mockInput.pressKey("j", { hyper: true });
         }
         terminal.handlePaste(new PasteEvent(Uint8Array.of(65)));
-        captured(Uint8Array.of(66), "response");
+        captured(new KeyEvent(parseKeypress("B")!));
       });
       expect(setup.sent).toEqual([]);
     } finally {
@@ -1193,19 +1182,19 @@ for (const entry of ["origin", "remembered"] as const) {
       await act(async () => setup.mockInput.pressKeys(["\x00b"]));
       await setup.flush();
       const root = setup.renderer.root;
-      const a = root.findDescendantById("terminal:pane-1") as EmbeddedTerminalRenderable;
-      const b = root.findDescendantById("terminal:pane-2") as EmbeddedTerminalRenderable;
+      const a = root.findDescendantById("terminal:pane-1") as TerminalMaterialRenderable;
+      const b = root.findDescendantById("terminal:pane-2") as TerminalMaterialRenderable;
       act(() => a.focus());
       await setup.flush();
       expect(setup.renderer.currentFocusedRenderable).toBe(a);
       expect([a.parent!.width, b.parent!.width]).toEqual([38, 114]);
       expect([a.width, b.width]).toEqual([80, 80]);
-      const capturedInput = a.onData!;
+      const capturedInput = a.handleKeyPress.bind(a);
       setup.sent.length = 0;
       act(() => {
         setup.resize(80, 40);
         a.handlePaste(new PasteEvent(Uint8Array.of(65)));
-        capturedInput(Uint8Array.of(66), "response");
+        capturedInput(new KeyEvent(parseKeypress("B")!));
       });
       expect(setup.sent).toEqual([]);
       await setup.flush();
@@ -1213,8 +1202,7 @@ for (const entry of ["origin", "remembered"] as const) {
       expect(a.focusable).toBe(false);
       expect(b.focusable).toBe(false);
       a.handlePaste(new PasteEvent(Uint8Array.of(67)));
-      a.onData!(Uint8Array.of(68), "response");
-      a.onTerminalResize!(80, 20);
+      a.handleKeyPress(new KeyEvent(parseKeypress("D")!));
       expect(setup.sent).toEqual([]);
       if (entry === "remembered") {
         act(() => root.findDescendantById("region:tabs")!.focus());
@@ -1250,20 +1238,18 @@ test("same-batch split resize checks the bordered interior rather than stale nat
   }
   const setup = await liveInputFixture(snapshot);
   try {
-    const terminal = setup.renderer.currentFocusedRenderable as EmbeddedTerminalRenderable;
-    const captured = terminal.onData!;
-    const capturedResize = terminal.onTerminalResize!;
+    const terminal = setup.renderer.currentFocusedRenderable as TerminalMaterialRenderable;
+    const captured = terminal.handleKeyPress.bind(terminal);
     expect(terminal.height).toBeGreaterThanOrEqual(5);
-    terminal.write(new TextEncoder().encode("\x1b[?1004h\x1b[?1000h\x1b[?1006h\x1b[?2004h"));
+    await act(async () => setup.output("\x1b[?1004h\x1b[?1000h\x1b[?1006h\x1b[?2004h"));
     setup.resized.length = 0;
     await act(async () => {
       setup.resize(120, 14);
       terminal.handlePaste(new PasteEvent(Uint8Array.of(65)));
-      captured(Uint8Array.of(66), "response");
-      capturedResize(80, 20);
+      captured(new KeyEvent(parseKeypress("B")!));
       setup.mockInput.pressKey("x");
       setup.mockInput.pasteBracketedText("ignored-paste");
-      terminal.write(new TextEncoder().encode("\x1b[5n"));
+      await setup.output("\x1b[5n");
       await setup.mockMouse.click(terminal.screenX + 1, terminal.screenY + 1);
     });
     expect(setup.sent).toEqual([]);
@@ -1280,7 +1266,7 @@ for (const coverage of ["none", "dialog", "drawer"] as const) {
     initial.tabs[0]!.layout = { type: "pane", paneId: "pane-1" };
     const setup = await liveInputFixture(initial);
     try {
-      const terminal = setup.renderer.currentFocusedRenderable as EmbeddedTerminalRenderable;
+      const terminal = setup.renderer.currentFocusedRenderable as TerminalMaterialRenderable;
       const capturedInput = terminal.handlePaste.bind(terminal);
       if (coverage === "dialog") {
         await act(async () => setup.mockInput.pressKey("s", { hyper: true }));

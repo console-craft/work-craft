@@ -1,4 +1,4 @@
-import type { EmbeddedTerminalRenderable } from "@opentui/core";
+import type { Renderable } from "@opentui/core";
 import type { MouseEvent } from "@opentui/core";
 import type {
   InputStamp,
@@ -38,18 +38,17 @@ export type TerminalPaneProps = {
   pane: Snapshot["panes"][number];
   size: TerminalSize;
   stamp: InputStamp | null;
-  canRespond(paneId: string, stamp: InputStamp): boolean;
   inputEvent(): Pick<
     Extract<TerminalInputContext, { source: "input" }>,
     "kind" | "activitySequence"
   >;
   onMouseInput(event: MouseEvent): void;
-  onResync(paneId: string): void;
+  onError?(message: string): void;
   stream: StreamConnection | null;
   inputEnabled?: boolean;
   canReceiveInput?(paneId?: string): boolean;
   onFocus(): void;
-  onTerminalReady(paneId: string, terminal: EmbeddedTerminalRenderable | null): void;
+  onTerminalReady(paneId: string, terminal: Renderable | null): void;
 };
 
 export function TerminalPane({
@@ -65,10 +64,9 @@ export function TerminalPane({
   pane,
   size,
   stamp,
-  canRespond,
   inputEvent,
   onMouseInput,
-  onResync,
+  onError,
   stream,
   onFocus,
   onTerminalReady,
@@ -90,11 +88,12 @@ export function TerminalPane({
     return terminalPaneKey(pane.id, buffer);
   });
   renderedIdentity.current = identity;
-  const runtimeGeneration = output.read()?.runtimeGeneration;
+  const runtimeGeneration =
+    runtimeIdentity?.runtimeGeneration ?? output.read()?.runtimeGeneration ?? 0;
   const notice = paneNotice(pane.processStatus, connected || preservePresentation);
   const viewport = terminalRect(bounds, notice !== null);
   const reportReady = useCallback(
-    (node: EmbeddedTerminalRenderable | null) => onTerminalReady(pane.id, node),
+    (node: Renderable | null) => onTerminalReady(pane.id, node),
     [pane.id, onTerminalReady],
   );
   const running = pane.processStatus === "running";
@@ -136,53 +135,39 @@ export function TerminalPane({
           paneId={pane.id}
           output={output}
           size={size}
+          stream={stream}
+          context={stamp ? { ...stamp, runtimeGeneration } : null}
           focused={focused}
           preservePresentation={preservePresentation}
           inputEnabled={inputEnabled}
           canInput={acceptsInput}
-          captureInput={() => {
+          captureInput={(input) => {
             if (!stamp || !stream || !acceptsInput()) {
               return null;
             }
             const event = { ...inputEvent() };
             return {
               valid: acceptsInput,
-              send: (bytes) =>
-                stream.sendInput(pane.id, bytes, {
-                  ...stamp,
-                  source: "input",
-                  ...event,
-                  runtimeGeneration,
-                }),
+              send: (eventInput, signal) =>
+                stream.sendSemantic(
+                  pane.id,
+                  eventInput,
+                  {
+                    ...stamp,
+                    source: "input",
+                    ...event,
+                    kind: input.kind,
+                    runtimeGeneration,
+                  },
+                  signal,
+                ),
             };
           }}
           canConsume={() => terminalPaneKey(pane.id, output.read()) === identity}
-          canRespond={(stamp) => connected && running && canRespond(pane.id, stamp)}
           onReady={reportReady}
           onFocus={onFocus}
           onMouseInput={onMouseInput}
-          onResync={() => onResync(pane.id)}
-          onData={(bytes, source, responseStamp) => {
-            if (!stamp || !stream) {
-              return;
-            }
-            if (source === "response") {
-              if (
-                responseStamp &&
-                terminalPaneKey(pane.id, output.read()) === identity &&
-                canRespond(pane.id, responseStamp)
-              ) {
-                stream.sendInput(pane.id, bytes, { ...responseStamp, source, runtimeGeneration });
-              }
-            } else if (acceptsInput()) {
-              stream.sendInput(pane.id, bytes, {
-                ...stamp,
-                source,
-                ...inputEvent(),
-                runtimeGeneration,
-              });
-            }
-          }}
+          onError={(message) => onError?.(message)}
         />
       </Box>
       {notice !== null ? (
