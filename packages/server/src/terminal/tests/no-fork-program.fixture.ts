@@ -5,9 +5,11 @@ const log = process.argv[2]!;
 writeFileSync(log, "");
 process.stdin.setRawMode(true);
 process.stdin.on("data", (bytes: Buffer) => {
-  const input = [...bytes];
-  appendFileSync(log, JSON.stringify(input) + "\n");
-  process.send?.({ input });
+  for (let offset = 0; offset < bytes.length; offset += 65536) {
+    const input = bytes.subarray(offset, offset + 65536).toString("base64");
+    appendFileSync(log, JSON.stringify({ input }) + "\n");
+    process.send?.({ input });
+  }
 });
 let written = 0;
 process.on("message", (value: unknown) => {

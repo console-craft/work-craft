@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { closeSync, openSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -10,9 +11,12 @@ import { createTestRenderer } from "@opentui/core/testing";
 import { projectionInputQueue } from "@/workbench/tests/no-fork-input-queue";
 import { NoForkMaterialView } from "@/workbench/tests/no-fork-material-view";
 
+// oxlint-disable-next-line no-restricted-imports -- Test-only wire sender.
+import { sendProjectionInput } from "../../../../../scripts/test-support/terminal-projection-paste";
 // oxlint-disable-next-line no-restricted-imports -- Test-only plain material DTO.
 import type {
   MaterialFrame,
+  PasteMessage,
   ProjectionInput,
   ProjectionStamp,
   SemanticInput,
@@ -25,6 +29,8 @@ type RuntimeState = {
   pid: number;
   bytes: number;
   input: number[];
+  inputBytes: number;
+  inputHash: string;
   frame: MaterialFrame;
 };
 
@@ -98,11 +104,23 @@ async function runtime() {
         request<void>("/output", { bytes: [...new TextEncoder().encode(text)] }),
       outputBytes: (bytes: Uint8Array) => request<void>("/output", { bytes: [...bytes] }),
       exitProgram: () => request<void>("/exit", {}),
-      input: (input: SemanticInput) => request<void>("/input", { stamp: initial!.stamp, input }),
+      input: (input: SemanticInput) =>
+        sendProjectionInput({ stamp: initial!.stamp, input }, (message, signal) =>
+          request<{ stale?: boolean }>("/input", message, signal),
+        ),
       sendInput: (input: SemanticInput) =>
         request<{ forwarded: boolean }>("/input", { stamp: initial!.stamp, input }),
       rawInput: (event: ProjectionInput, signal?: AbortSignal) =>
-        request<void>("/input", event, signal),
+        event.input.kind === "paste"
+          ? sendProjectionInput(
+              event,
+              (message, currentSignal) =>
+                request<{ stale?: boolean }>("/input", message, currentSignal),
+              signal,
+            )
+          : request<void>("/input", event, signal),
+      wireInput: (message: ProjectionInput | PasteMessage) =>
+        request<{ forwarded?: boolean }>("/input", message),
       revoke: (field: keyof ProjectionStamp) => request<void>("/revoke", { field }),
       resize: (cols: number, rows: number) => request<void>("/resize", { cols, rows }),
     };
@@ -627,7 +645,7 @@ test("queued input cannot borrow a later sender or survive any authority generat
       const current = await live.state();
       allowed = false;
       await queue.flush(() => current.stamp);
-      await live.rawInput({ stamp: state.stamp, input });
+      await expect(live.rawInput({ stamp: state.stamp, input })).rejects.toThrow();
       expect(queue.bytes).toBe(0);
       expect(replacement).toBe(0);
       expect((await live.state()).input).toEqual(before);
@@ -668,7 +686,9 @@ test("late pictures and same-cursor ordered resizes cannot restore old input aut
       view.setEnvelope({ ...current, stamp: replacementStamp, sequence: 1 }, replacementStamp),
     ).toBe(true);
     expect(view.setEnvelope({ ...current, sequence: 101 }, replacementStamp)).toBe(false);
-    await live.rawInput({ stamp: first.stamp, input: { kind: "paste", bytes: [120] } });
+    await expect(
+      live.rawInput({ stamp: first.stamp, input: { kind: "paste", bytes: [120] } }),
+    ).rejects.toThrow();
     expect((await live.state()).input).toEqual([]);
     view.destroy();
     expect(view.setEnvelope({ ...current, sequence: 1000 }, current.stamp)).toBe(false);
@@ -797,10 +817,11 @@ test("oversized material fails explicitly before copying and a later small frame
   }
 });
 
-test("logical paste budget does not disguise an oversized JSON transfer as delivered input", async () => {
+test("bounded paste reaches the real child once with one bracketed envelope", async () => {
   const live = await runtime();
   try {
     const state = await live.state();
+    await live.output("\x1b[?2004h");
     const input: SemanticInput = {
       kind: "paste",
       bytes: Array.from({ length: 3 * 1024 * 1024 }, () => 120),
@@ -808,23 +829,99 @@ test("logical paste budget does not disguise an oversized JSON transfer as deliv
     const queue = projectionInputQueue();
     queue.enqueue(input, state.stamp, (event, signal) => live.rawInput(event, signal));
     const charged = queue.bytes;
-    const serialized = Buffer.byteLength(JSON.stringify({ stamp: state.stamp, input }));
-    let failure: string | null = null;
-    try {
-      await queue.flush(() => state.stamp);
-    } catch (error) {
-      failure = String(error);
-    }
+    await queue.flush(() => state.stamp);
+    const received = await live.state();
+    const expected = createHash("sha256")
+      .update("\x1b[200~")
+      .update(Buffer.alloc(3145728, 120))
+      .update("\x1b[201~")
+      .digest("hex");
     await Bun.write(
       join(live.directory, "paste-transfer-observation.json"),
-      JSON.stringify({ charged, serialized, failure }, null, 2),
+      JSON.stringify(
+        { charged, inputBytes: received.inputBytes, inputHash: received.inputHash, expected },
+        null,
+        2,
+      ),
     );
     expect(charged).toBe(3 * 1024 * 1024 + 128);
-    expect(serialized).toBeGreaterThan(8 * 1024 * 1024);
-    expect(failure).toContain("413");
+    expect(received.inputBytes).toBe(3145740);
+    expect(received.inputHash).toBe(expected);
+    expect(Buffer.byteLength(JSON.stringify(received))).toBeLessThan(65536);
     expect(queue.bytes).toBe(0);
+  } finally {
+    await live.close();
+  }
+});
+
+test("a chunked 1-MiB paste reaches the child with exact bracketed bytes", async () => {
+  const live = await runtime();
+  try {
+    await live.output("\x1b[?2004h");
+    await live.input({ kind: "paste", bytes: Array.from({ length: 1048576 }, () => 120) });
+    const received = await live.state();
+    expect(received.inputBytes).toBe(1048588);
+    expect(received.inputHash).toBe(
+      createHash("sha256")
+        .update("\x1b[200~")
+        .update(Buffer.alloc(1048576, 120))
+        .update("\x1b[201~")
+        .digest("hex"),
+    );
+  } finally {
+    await live.close();
+  }
+});
+
+test("stock native paste input ceiling is separate from bounded transport admission", async () => {
+  const setup = await createTestRenderer({ width: 12, height: 3 });
+  const reference = new EmbeddedTerminalRenderable(setup.renderer, { width: 12, height: 3 });
+  try {
+    expect(reference.encodePaste(Buffer.alloc(1048576, 120))).toHaveLength(1048576);
+    expect(() => reference.encodePaste(Buffer.alloc(1048577, 120))).toThrow("InvalidArgument");
+  } finally {
+    reference.destroy();
+    await setup.dispose();
+  }
+});
+
+test("pending wire paste blocks ordinary input and revocation drops every uncommitted byte", async () => {
+  const live = await runtime();
+  try {
+    const { stamp } = await live.state();
+    const identity = { stamp, id: "held-paste" };
+    await live.wireInput({ ...identity, type: "paste.begin", total: 3 });
+    await live.wireInput({ ...identity, type: "paste.chunk", offset: 0, data: "YWJj" });
+    await expect(
+      live.wireInput({ stamp, input: { kind: "key", key: { key: "key_x", text: "x" } } }),
+    ).rejects.toThrow("pending");
+    expect((await live.state()).input).toEqual([]);
+    await live.revoke("navigation");
+    await live.revoke("navigation");
+    await expect(live.wireInput({ ...identity, type: "paste.commit" })).rejects.toThrow();
     expect((await live.state()).input).toEqual([]);
   } finally {
+    await live.close();
+  }
+});
+
+test("paste chunk boundaries preserve native sanitization and UTF8 bytes", async () => {
+  const live = await runtime();
+  const setup = await createTestRenderer({ width: 12, height: 3 });
+  const reference = new EmbeddedTerminalRenderable(setup.renderer, { width: 12, height: 3 });
+  try {
+    const prefix = Buffer.alloc(65535, 120);
+    const bytes = Buffer.concat([prefix, Buffer.from("🙂\u0000\x1b[<0;3;2M\x1b[201~")]);
+    await live.output("\x1b[?2004h");
+    reference.write("\x1b[?2004h");
+    const expected = reference.encodePaste(bytes);
+    await live.input({ kind: "paste", bytes: [...bytes] });
+    const received = await live.state();
+    expect(received.inputBytes).toBe(expected.length);
+    expect(received.inputHash).toBe(createHash("sha256").update(expected).digest("hex"));
+  } finally {
+    reference.destroy();
+    await setup.dispose();
     await live.close();
   }
 });

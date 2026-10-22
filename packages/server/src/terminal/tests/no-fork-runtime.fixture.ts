@@ -1,7 +1,10 @@
+import { createHash } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 
+import { createPasteReceiver } from "../../../../../scripts/test-support/terminal-projection-paste";
 import type {
+  PasteMessage,
   ProjectionInput,
   ProjectionStamp,
   SemanticInput,
@@ -12,6 +15,9 @@ async function serve(socket: string, log: string): Promise<void> {
   const parser = createProjectionFixture({ cols: 12, rows: 3 }, 2 * 1_048_576);
   let canonicalSize = { cols: 12, rows: 3 };
   const input: number[] = [];
+  let inputBytes = 0;
+  const inputHash = createHash("sha256");
+  const paste = createPasteReceiver();
   const stamp: ProjectionStamp = {
     epoch: crypto.randomUUID(),
     runtime: crypto.randomUUID(),
@@ -66,7 +72,7 @@ async function serve(socket: string, log: string): Promise<void> {
     ipc(value: unknown) {
       const message = value as {
         ready?: boolean;
-        input?: number[];
+        input?: string;
         token?: number;
         written?: number;
       };
@@ -74,11 +80,18 @@ async function serve(socket: string, log: string): Promise<void> {
         ready = true;
       }
       if (message.input) {
-        if (input.length + message.input.length > 8 * 1024 * 1024) {
+        if (message.input.length > 4 * Math.ceil(65536 / 3)) {
+          failure = "Input receipt limit";
+          return;
+        }
+        const received = Buffer.from(message.input, "base64");
+        if (inputBytes + received.length > 8 * 1024 * 1024) {
           failure = "Input observation limit";
           return;
         }
-        input.push(...message.input);
+        input.push(...received.subarray(0, Math.max(0, 4096 - input.length)));
+        inputBytes += received.length;
+        inputHash.update(received);
       }
       if (pending && message.token === pending.token) {
         pending.written = message.written;
@@ -96,6 +109,7 @@ async function serve(socket: string, log: string): Promise<void> {
         }
         const url = new URL(request.url);
         if (url.pathname === "/revoke" && request.method === "POST") {
+          paste.clear();
           const { field } = (await request.json()) as { field: keyof ProjectionStamp };
           if (field === "epoch" || field === "runtime") {
             stamp[field] = crypto.randomUUID();
@@ -118,6 +132,7 @@ async function serve(socket: string, log: string): Promise<void> {
             throw new Error("Invalid fixture dimensions");
           }
           parser.resize(size);
+          paste.clear();
           terminal.resize(size.cols, size.rows);
           canonicalSize = { ...size };
           stamp.geometry++;
@@ -153,6 +168,8 @@ async function serve(socket: string, log: string): Promise<void> {
             pid: child.pid,
             bytes,
             input,
+            inputBytes,
+            inputHash: inputHash.copy().digest("hex"),
             stamp,
             sequence: ++sequence,
             frame,
@@ -188,87 +205,94 @@ async function serve(socket: string, log: string): Promise<void> {
         }
         if (url.pathname === "/input" && request.method === "POST") {
           let encoded: Uint8Array;
-          const envelope = (await request.json()) as ProjectionInput;
-          if (
-            !envelope.stamp ||
-            !Object.keys(stamp).every(
-              (field) =>
-                envelope.stamp[field as keyof ProjectionStamp] ===
-                stamp[field as keyof ProjectionStamp],
-            )
-          ) {
-            return Response.json({ forwarded: false, stale: true });
-          }
-          const body = envelope.input as {
-            kind: string;
-            key?: Extract<SemanticInput, { kind: "key" }>["key"];
-            bytes?: number[];
-            mouse?: Extract<SemanticInput, { kind: "mouse" }>["mouse"];
-            focused?: boolean;
-          };
-          if (body.kind === "key" && body.key && typeof body.key === "object") {
-            const key = body.key;
-            for (const name of ["key", "text"] as const) {
-              if (
-                key[name] !== undefined &&
-                (typeof key[name] !== "string" || Buffer.byteLength(key[name]) > 8 * 1024 * 1024)
-              ) {
-                throw new Error("Invalid key text");
-              }
+          const message = (await request.json()) as ProjectionInput | PasteMessage;
+          if (message && "type" in message) {
+            const completed = paste.accept(message, stamp);
+            if (!completed) {
+              return Response.json({ forwarded: false });
             }
-            for (const name of ["mods", "consumedMods", "unshiftedCodepoint"] as const) {
-              const number = key[name];
-              if (
-                number !== undefined &&
-                (!Number.isSafeInteger(number) ||
-                  number < 0 ||
-                  number > (name === "unshiftedCodepoint" ? 0x10ffff : 255))
-              ) {
-                throw new Error("Invalid key metadata");
-              }
-            }
-            if (
-              (key.action !== undefined && !["press", "repeat", "release"].includes(key.action)) ||
-              (key.composing !== undefined && typeof key.composing !== "boolean")
-            ) {
-              throw new Error("Invalid key action");
-            }
-            encoded = parser.encode({ kind: "key", key });
-          } else if (
-            body.kind === "paste" &&
-            Array.isArray(body.bytes) &&
-            body.bytes.length <= 8 * 1024 * 1024 &&
-            body.bytes.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255)
-          ) {
-            encoded = parser.encode({ kind: "paste", bytes: body.bytes });
-          } else if (body.kind === "focus" && typeof body.focused === "boolean") {
-            encoded = parser.encode({ kind: "focus", focused: body.focused });
-          } else if (body.kind === "mouse" && body.mouse && typeof body.mouse === "object") {
-            const mouse = body.mouse;
-            if (
-              !["press", "release", "motion"].includes(mouse.action) ||
-              (mouse.button !== undefined &&
-                !["unknown", "left", "middle", "right", "four", "five", "six", "seven"].includes(
-                  mouse.button,
-                )) ||
-              !Number.isFinite(mouse.x) ||
-              !Number.isFinite(mouse.y) ||
-              (mouse.mods !== undefined &&
-                (!Number.isSafeInteger(mouse.mods) || mouse.mods < 0 || mouse.mods > 63)) ||
-              (mouse.anyButtonPressed !== undefined && typeof mouse.anyButtonPressed !== "boolean")
-            ) {
-              throw new Error("Invalid mouse metadata");
-            }
-            encoded = parser.encode({ kind: "mouse", mouse });
+            encoded = parser.encodePaste(completed);
           } else {
-            throw new Error("Unsupported fixture input");
+            if (paste.bytes) {
+              throw new Error("Paste pending; ordinary input cannot overtake it");
+            }
+            const envelope = message as ProjectionInput;
+            if (
+              !envelope.stamp ||
+              !Object.keys(stamp).every(
+                (field) =>
+                  envelope.stamp[field as keyof ProjectionStamp] ===
+                  stamp[field as keyof ProjectionStamp],
+              )
+            ) {
+              return Response.json({ forwarded: false, stale: true });
+            }
+            const body = envelope.input as {
+              kind: string;
+              key?: Extract<SemanticInput, { kind: "key" }>["key"];
+              bytes?: number[];
+              mouse?: Extract<SemanticInput, { kind: "mouse" }>["mouse"];
+              focused?: boolean;
+            };
+            if (body.kind === "key" && body.key && typeof body.key === "object") {
+              const key = body.key;
+              for (const name of ["key", "text"] as const) {
+                if (
+                  key[name] !== undefined &&
+                  (typeof key[name] !== "string" || Buffer.byteLength(key[name]) > 8 * 1024 * 1024)
+                ) {
+                  throw new Error("Invalid key text");
+                }
+              }
+              for (const name of ["mods", "consumedMods", "unshiftedCodepoint"] as const) {
+                const number = key[name];
+                if (
+                  number !== undefined &&
+                  (!Number.isSafeInteger(number) ||
+                    number < 0 ||
+                    number > (name === "unshiftedCodepoint" ? 0x10ffff : 255))
+                ) {
+                  throw new Error("Invalid key metadata");
+                }
+              }
+              if (
+                (key.action !== undefined &&
+                  !["press", "repeat", "release"].includes(key.action)) ||
+                (key.composing !== undefined && typeof key.composing !== "boolean")
+              ) {
+                throw new Error("Invalid key action");
+              }
+              encoded = parser.encode({ kind: "key", key });
+            } else if (body.kind === "focus" && typeof body.focused === "boolean") {
+              encoded = parser.encode({ kind: "focus", focused: body.focused });
+            } else if (body.kind === "mouse" && body.mouse && typeof body.mouse === "object") {
+              const mouse = body.mouse;
+              if (
+                !["press", "release", "motion"].includes(mouse.action) ||
+                (mouse.button !== undefined &&
+                  !["unknown", "left", "middle", "right", "four", "five", "six", "seven"].includes(
+                    mouse.button,
+                  )) ||
+                !Number.isFinite(mouse.x) ||
+                !Number.isFinite(mouse.y) ||
+                (mouse.mods !== undefined &&
+                  (!Number.isSafeInteger(mouse.mods) || mouse.mods < 0 || mouse.mods > 63)) ||
+                (mouse.anyButtonPressed !== undefined &&
+                  typeof mouse.anyButtonPressed !== "boolean")
+              ) {
+                throw new Error("Invalid mouse metadata");
+              }
+              encoded = parser.encode({ kind: "mouse", mouse });
+            } else {
+              throw new Error("Unsupported fixture input");
+            }
           }
           const required = writeInput(encoded);
           const deadline = Date.now() + 4000;
-          while (input.length < required && Date.now() < deadline && !failure) {
+          while (inputBytes < required && Date.now() < deadline && !failure) {
             await Bun.sleep(1);
           }
-          if (failure || input.length < required) {
+          if (failure || inputBytes < required) {
             throw new Error(failure ?? "Child input acknowledgement timed out");
           }
           return Response.json({ forwarded: encoded.length > 0 });
@@ -285,6 +309,7 @@ async function serve(socket: string, log: string): Promise<void> {
       return;
     }
     stopping = true;
+    paste.clear();
     pending?.reject(new Error("Runtime stopped"));
     server.stop(true);
     if (child.exitCode === null) {
@@ -302,6 +327,7 @@ async function serve(socket: string, log: string): Promise<void> {
     void close().then(() => process.exit(0));
   });
   void child.exited.then((code) => {
+    paste.clear();
     if (!stopping) {
       failure = `Owned program exited ${code}`;
       pending?.reject(new Error(failure));

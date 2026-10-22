@@ -58,3 +58,10 @@ export type ProjectionStamp = {
 
 export type ProjectionEnvelope = { stamp: ProjectionStamp; sequence: number; frame: MaterialFrame };
 export type ProjectionInput = { stamp: ProjectionStamp; input: SemanticInput };
+
+export type PasteMessage = { id: string; stamp: ProjectionStamp } & (
+  | { type: "paste.begin"; total: number }
+  | { type: "paste.chunk"; offset: number; data: string }
+  | { type: "paste.commit" }
+  | { type: "paste.cancel" }
+);

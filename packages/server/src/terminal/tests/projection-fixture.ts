@@ -13,6 +13,7 @@ type ProjectionFixture = {
   resize(size: MaterialFrame["size"]): void;
   frame(scrollOffset: number): MaterialFrame;
   encode(event: SemanticInput): Uint8Array;
+  encodePaste(bytes: Uint8Array): Uint8Array;
   replies(): Uint8Array;
   destroy(): void;
 };
@@ -139,6 +140,7 @@ export function createProjectionFixture(
       size = { ...next };
     },
     replies: () => lib.contextEmbeddedTerminalDrainResponses(context, terminal!),
+    encodePaste: (bytes) => lib.contextEmbeddedTerminalEncodePaste(context, terminal!, bytes),
     encode(event) {
       switch (event.kind) {
         case "key":
