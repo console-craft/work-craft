@@ -22,6 +22,30 @@ type ProgramState = {
   size: { cols: number; rows: number };
 };
 
+test("terminal focus readiness cannot reuse a cursor shown before the entry gesture", async () => {
+  const fixture = await startSharedSessionFixture();
+  const [a] = fixture.tuis;
+  let stopped = false;
+  try {
+    await focusSharedTerminal(a);
+    process.kill(-a.child.pid, "SIGSTOP");
+    stopped = true;
+    let ready = false;
+    const entry = focusSharedTerminal(a).then(() => {
+      ready = true;
+    });
+    await Bun.sleep(30);
+    expect(ready).toBe(false);
+    process.kill(-a.child.pid, "SIGCONT");
+    stopped = false;
+    await entry;
+    expect(ready).toBe(true);
+  } finally {
+    if (stopped) process.kill(-a.child.pid, "SIGCONT");
+    await fixture.close();
+  }
+});
+
 test("normal reconnect keeps the coherent body through held recovery without respawning its shell", async () => {
   const fixture = await startSharedSessionFixture();
   const [a] = fixture.tuis;
@@ -264,6 +288,11 @@ test("two normal TUIs display one program and one logical cursor", async () => {
     await sharedWait(
       () => fixture.tuis.every((tui) => tui.frame().includes("typed=z")),
       "unchanged printable input",
+      () =>
+        JSON.stringify({
+          frames: fixture.tuis.map((tui) => tui.frame()),
+          cursors: fixture.tuis.map((tui) => tui.cursor()),
+        }),
     );
     const last = await programState(log);
     expect(last.pid).toBe(first.pid);

@@ -150,6 +150,9 @@ export async function runOutputProfile(
   let view: (() => { text: string; cursor: boolean }) | null = null;
   let stats = () => ({ rawBytes, parseMs });
   let readRawBytes = async () => rawBytes;
+  let byteWindow:
+    | { rawStart: number; rawEnd: number; outerStart: number; outerEnd: number }
+    | undefined;
   try {
     if (mode === "application") {
       const fixture = await startSharedSessionFixture({
@@ -165,10 +168,20 @@ export async function runOutputProfile(
       const baselineCursor = initialSnapshot.terminalHistories.find(
         (history) => history.paneId === fixture.paneId,
       )!.cursor;
-      readRawBytes = async () =>
-        (await fixture.client.snapshot()).terminalHistories.find(
+      const outerStart = a.outputStats().rawBytes;
+      byteWindow = {
+        rawStart: baselineCursor,
+        rawEnd: baselineCursor,
+        outerStart,
+        outerEnd: outerStart,
+      };
+      const window = byteWindow;
+      readRawBytes = async () => {
+        window.rawEnd = (await fixture.client.snapshot()).terminalHistories.find(
           (history) => history.paneId === fixture.paneId,
-        )!.cursor - baselineCursor;
+        )!.cursor;
+        return window.rawEnd - window.rawStart;
+      };
       const initial = initialSnapshot.geometry.panes.find(
         (entry) => entry.paneId === fixture.paneId,
       )!.size;
@@ -232,7 +245,11 @@ export async function runOutputProfile(
       }
       send = (text) => sharedWrite(a, text);
       view = () => ({ text: a.frame(), cursor: a.cursor().visible });
-      stats = a.outputStats;
+      stats = () => {
+        const observed = a.outputStats();
+        window.outerEnd = observed.rawBytes;
+        return { ...observed, rawBytes: window.outerEnd - window.outerStart };
+      };
       daemonPid = (await fixture.client.health()).pid;
       clientPids = [a.child.pid];
     } else {
@@ -295,14 +312,15 @@ export async function runOutputProfile(
     const before = profileResidentKiB(daemonPid, clientPids, [childPid]);
     const probes = await profileProbes(send, view, directory, "0", options.probes);
     const after = profileResidentKiB(daemonPid, clientPids, [childPid]);
-    const observed = stats();
     if (options.diagnostics && mode === "application") {
       await flushDiagnostics();
     }
+    const measuredRawBytes = await readRawBytes();
+    const observed = stats();
     const result: ProfileResult = {
       mode,
       probes,
-      rawBytes: await readRawBytes(),
+      rawBytes: measuredRawBytes,
       outerBytes: mode === "application" ? observed.rawBytes : null,
       timedOut: probes.some(
         (probe) => probe.childMs === null || (view !== null && probe.visibleMs === null),
@@ -316,6 +334,7 @@ export async function runOutputProfile(
       JSON.stringify(
         {
           ...result,
+          byteWindow,
           outerParseMs: observed.parseMs,
           clockAssumption:
             "same-host performance.timeOrigin wall mapping; raw latency is not skew-corrected",

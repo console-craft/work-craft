@@ -78,7 +78,15 @@ export function sharedWrite(tui: SharedTuiProcess, text: string): void {
 }
 
 export async function focusSharedTerminal(tui: SharedTuiProcess, tabColumn = 70): Promise<void> {
-  const ready = () => tui.output().lastIndexOf("\x1b[?25h") > tui.output().lastIndexOf("\x1b[?25l");
+  const start = tui.outputStats().rawBytes;
+  const ready = () => {
+    const added = tui.outputStats().rawBytes - start;
+    if (added <= 0) {
+      return false;
+    }
+    const output = Buffer.from(tui.output()).subarray(-added).toString();
+    return output.lastIndexOf("\x1b[?25h") > output.lastIndexOf("\x1b[?25l");
+  };
   sharedWrite(tui, `\x1b[<0;${tabColumn};4M\x1b[<0;${tabColumn};4m\r`);
   await sharedWait(ready, "native workbench input", tui.frame);
 }

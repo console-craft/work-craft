@@ -143,6 +143,11 @@ test("application comparison matches the native grid and flushes enabled child t
     });
     expect(result.probes).toHaveLength(3);
     expect(result.rawBytes).toBeGreaterThan(result.outerBytes!);
+    const { byteWindow } = JSON.parse(await readFile(join(directory, "result.json"), "utf8"));
+    expect(byteWindow).toBeDefined();
+    expect(byteWindow.outerStart).toBeGreaterThan(0);
+    expect(result.rawBytes).toBe(byteWindow.rawEnd - byteWindow.rawStart);
+    expect(result.outerBytes).toBe(byteWindow.outerEnd - byteWindow.outerStart);
     const traces = (await readdir(directory)).filter(
       (name) => name.endsWith(".jsonl") && name.startsWith("tui-"),
     );
