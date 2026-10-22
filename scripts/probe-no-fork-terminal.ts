@@ -9,10 +9,33 @@ const dependencies = {
   react: "19.3.0",
 };
 const routes = {
-  contracts: "packages/tui/src/workbench/tests/no-fork-contracts.fixture.ts",
-  client: "packages/tui/src/workbench/tests/no-fork-client.fixture.tsx",
-  daemon: "packages/server/src/terminal/tests/no-fork-daemon.fixture.ts",
+  contracts: { "probe.test.js": "packages/tui/src/workbench/tests/no-fork-contracts.fixture.ts" },
+  client: { "probe.test.js": "packages/tui/src/workbench/tests/no-fork-client.fixture.tsx" },
+  daemon: { "probe.test.js": "packages/server/src/terminal/tests/no-fork-daemon.fixture.ts" },
+  projection: {
+    "probe.test.js": "packages/tui/src/workbench/tests/no-fork-projection.fixture.tsx",
+    "runtime.js": "packages/server/src/terminal/tests/no-fork-runtime.fixture.ts",
+    "program.js": "packages/server/src/terminal/tests/no-fork-program.fixture.ts",
+  },
 };
+type ProbeRoute = keyof typeof routes;
+
+export async function resolveProbeSources(
+  rootDirectory: string,
+  route: ProbeRoute,
+): Promise<Record<string, string>> {
+  if (!Object.hasOwn(routes, route)) {
+    throw new Error(`Unknown probe route: ${route}`);
+  }
+  const sources: Record<string, string> = {};
+  for (const [name, path] of Object.entries(routes[route])) {
+    sources[name] = join(rootDirectory, path);
+    if (!(await Bun.file(sources[name]).exists())) {
+      throw new Error(`Missing probe route fixture ${name}: ${path}`);
+    }
+  }
+  return sources;
+}
 
 /** Reject all workspace ancestors, even when their current globs would not match. */
 export async function assertIndependentDirectory(directory: string): Promise<void> {
@@ -150,17 +173,8 @@ console.log(JSON.stringify(packages, null, 2));
 `;
 
 /** Opt-in only: root application dependencies and installed sources are never modified. */
-export async function runProbe(
-  route: "contracts" | "client" | "daemon",
-  artifactDirectory: string,
-): Promise<void> {
-  if (!Object.hasOwn(routes, route)) {
-    throw new Error(`Unknown probe route: ${route}`);
-  }
-  const entrypoint = join(root, routes[route]);
-  if (!(await Bun.file(entrypoint).exists())) {
-    throw new Error(`Missing probe route fixture: ${route}`);
-  }
+export async function runProbe(route: ProbeRoute, artifactDirectory: string): Promise<void> {
+  const sources = await resolveProbeSources(root, route);
   await mkdir(artifactDirectory, { recursive: true });
   await assertIndependentDirectory(artifactDirectory);
   const consumer = await mkdtemp(join(resolve(artifactDirectory), `${route}-`));
@@ -180,26 +194,28 @@ export async function runProbe(
       join(consumer, "install.log"),
       120000,
     );
-    const build = await Bun.build({
-      entrypoints: [entrypoint],
-      target: "bun",
-      format: "esm",
-      outdir: consumer,
-      naming: "probe.test.js",
-      tsconfig: join(root, "tsconfig.json"),
-      external: [
-        "@opentui/core",
-        "@opentui/core/*",
-        "@opentui/react",
-        "@opentui/react/*",
-        "react",
-        "react/*",
-        "bun:test",
-        "bun:ffi",
-      ],
-    });
-    if (!build.success) {
-      throw new AggregateError(build.logs, "Probe fixture build failed");
+    for (const [name, entrypoint] of Object.entries(sources)) {
+      const build = await Bun.build({
+        entrypoints: [entrypoint],
+        target: "bun",
+        format: "esm",
+        outdir: consumer,
+        naming: name,
+        tsconfig: join(root, "tsconfig.json"),
+        external: [
+          "@opentui/core",
+          "@opentui/core/*",
+          "@opentui/react",
+          "@opentui/react/*",
+          "react",
+          "react/*",
+          "bun:test",
+          "bun:ffi",
+        ],
+      });
+      if (!build.success) {
+        throw new AggregateError(build.logs, "Probe fixture build failed");
+      }
     }
     await writeFile(join(consumer, "provenance.ts"), provenance);
     await runProbeCommand(
@@ -234,7 +250,7 @@ if (import.meta.main) {
   const [route, directory] = process.argv.slice(2);
   if (!route || !directory) {
     throw new Error(
-      "Usage: bun scripts/probe-no-fork-terminal.ts <contracts|client|daemon> <artifact-directory>",
+      "Usage: bun scripts/probe-no-fork-terminal.ts <contracts|client|daemon|projection> <artifact-directory>",
     );
   }
   await runProbe(route as keyof typeof routes, directory);

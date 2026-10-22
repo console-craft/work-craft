@@ -46,3 +46,15 @@ export type SemanticInput =
     }
   | { kind: "paste"; bytes: number[] }
   | { kind: "focus"; focused: boolean };
+
+/** Test-only identities; a later frame never grants authority to older input. */
+export type ProjectionStamp = {
+  epoch: string;
+  runtime: string;
+  attachment: number;
+  navigation: number;
+  geometry: number;
+};
+
+export type ProjectionEnvelope = { stamp: ProjectionStamp; sequence: number; frame: MaterialFrame };
+export type ProjectionInput = { stamp: ProjectionStamp; input: SemanticInput };

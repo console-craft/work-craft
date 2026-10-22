@@ -18,11 +18,14 @@ type ProjectionFixture = {
 };
 
 /** Test-owned parser and material extraction using only checked public native APIs. */
-export function createProjectionFixture(initialSize: MaterialFrame["size"]): ProjectionFixture {
+export function createProjectionFixture(
+  initialSize: MaterialFrame["size"],
+  renderCellsMax = Math.max(2000, initialSize.cols * initialSize.rows * 2),
+): ProjectionFixture {
   const lib = resolveRenderLib();
   const context = lib.createContext({
     objectCapacity: 32,
-    renderCellsMax: Math.max(2000, initialSize.cols * initialSize.rows * 2),
+    renderCellsMax,
   });
   let terminal: ReturnType<typeof lib.createContextEmbeddedTerminal> | undefined;
   let target: ReturnType<typeof lib.createContextBuffer> | undefined;

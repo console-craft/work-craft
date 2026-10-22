@@ -227,3 +227,23 @@ feasibility result selects the route for a subsequent production plan; it is not
 permission for an unreviewed architecture change. Publish the separate draft PR
 with the baseline, remaining blockers and current scope stated clearly. No merge
 or installed-user cutover is implied.
+
+## Research Continuation Approval
+
+After the first feasibility handover, the user explicitly approved continuing
+daemon-route research with one additional known visual limitation: stock OpenTUI
+0.6.6 loses the second cell's styling/background when a two-column character is
+invisible. This supplements the hyperlink-destination exception **for research
+only**; it is not approval to ship the limitation or adopt a production design.
+
+The original failed assertion remains diagnostic evidence, not an upstream fix.
+Further experiments may characterize that exact loss without letting it block
+the remaining daemon-route correctness tests. No other text, width, style,
+keyboard/paste/Kitty, mouse/focus, selection/copy, authority or lifecycle loss is
+waived. Matching #41's performance remains sufficient; no major regression is
+accepted. Production source/dependencies and #41 remain unchanged.
+
+Resume the deferred real-PTY/two-viewer and public-interaction feasibility gates
+before performance comparisons. Report additional concessions explicitly. The
+[continuation plan](../plans/2026-10-22-no-fork-daemon-continuation.md) bounds this
+next correctness-only slice; measurement remains a later gate, not a claim.

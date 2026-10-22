@@ -1,13 +1,14 @@
 import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import {
   assertIndependentDirectory,
   assertRegistryManifest,
   assertRegistryResolution,
   assertSameCore,
+  resolveProbeSources,
   runProbe,
   runProbeCommand,
 } from "./probe-no-fork-terminal";
@@ -15,6 +16,30 @@ import {
 const manifest = {
   dependencies: { "@opentui/core": "0.6.6", "@opentui/react": "0.6.6", react: "19.3.0" },
 };
+
+test("projection source validation rejects a missing companion before any installation", async () => {
+  const root = await mkdtemp(join(tmpdir(), "no-fork-sources-"));
+  const paths = {
+    "probe.test.js": "packages/tui/src/workbench/tests/no-fork-projection.fixture.tsx",
+    "runtime.js": "packages/server/src/terminal/tests/no-fork-runtime.fixture.ts",
+    "program.js": "packages/server/src/terminal/tests/no-fork-program.fixture.ts",
+  };
+  try {
+    for (const path of Object.values(paths).slice(0, 2)) {
+      const absolute = join(root, path);
+      await mkdir(dirname(absolute), { recursive: true });
+      await writeFile(absolute, "export {};");
+    }
+    await expect(resolveProbeSources(root, "projection")).rejects.toThrow("program.js");
+    await writeFile(join(root, paths["program.js"]), "export {};");
+    expect(await resolveProbeSources(root, "projection")).toEqual(
+      Object.fromEntries(Object.entries(paths).map(([name, path]) => [name, join(root, path)])),
+    );
+    expect(await Bun.file(join(root, "bun.lock")).exists()).toBe(false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("probe refuses local overrides and private or floating dependency versions", () => {
   expect(() => assertRegistryManifest(manifest)).not.toThrow();
