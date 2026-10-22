@@ -53,10 +53,43 @@ Initial registry run `contracts-WbqzhM` records the paste-expectation mismatch;
 `contracts-vQrcmV` records the passing seven cases. Portable source is committed;
 these local paths are evidence locations, never dependency paths.
 
+## Client Candidate A — Rejected
+
+`workbench/tests/no-fork-client.fixture.tsx` is an intentionally rejected test-only
+prototype, not production code. Run the launcher with route `client`; it must
+currently exit nonzero. Its preserved correctness assertion is not skipped or
+converted to an expected failure in the default suite.
+
+The initial no-op parsing control failed both tests. Immediate pane-local parsing
+in <=8-KiB writes makes ordinary key/paste/mouse/focus ordering pass. During a
+canonical resize, parsing correctly waits for the native grid callback. Global
+listeners defer keys/paste without replacing methods, and physical blur remains
+synchronous. However, the stock mouse/focus encoders run while their new modes
+are still unparsed. After resize, observations are:
+
+```json
+{
+  "beforeCommit": [],
+  "afterCommit": ["\u001bOA", "\u001b[200~paste\u001b[201~"],
+  "physicallyBlurred": true
+}
+```
+
+The missing required bytes are `ESC[<0;3;2M` and `ESC[O`. Local evidence
+`client-pvkKhP` is the initial red control; `client-s5U1su` has one pass/one fail
+and `client-observation.json`. The latter rejects **this immediate-parser/global-
+capture candidate**, not every possible client-side design. A more invasive
+app-owned terminal/input implementation remains a different design, not something
+proven impossible here.
+
+Per the stop rule, full input invalidation/overflow/fairness/selection/load cases
+were not implemented on this already rejected prototype. Its held callbacks are
+only diagnostic scaffolding, not a reusable bounded input queue or a production
+candidate. No performance equivalence is inferred from its ordinary-input pass.
+
 ## Remaining Work
 
-- Falsify the smaller client-parser route, including mouse/focus during resize.
-- Investigate daemon-owned public parsing only if the smaller route fails.
+- Investigate daemon-owned public parsing after the smaller candidate's failure.
 - Compare performance only after a route preserves the required behavior.
 - Run full checks and one independent connected review; record all limitations.
 - No production cutover, push, merge, real-daemon restart or installed-app change.
