@@ -5,8 +5,10 @@ import type {
   PaneHistoryResponse,
   WorkCraftClient,
 } from "@work-craft/server/client";
+import type { ServerMessage } from "@work-craft/server/client";
 
 import { createWorkCraftStore } from "@/client/store";
+import { terminalReplaySteps } from "@/client/terminal-replay";
 import { snapshotFixture, streamFixture, terminalSnapshotFixture } from "@/tests/support/fixtures";
 
 function fixture(count = 2) {
@@ -228,6 +230,222 @@ test("pane recovery starts at native acknowledgement rather than the newest rece
     await f.store.getState().resyncPane("0");
     expect(afterCursors).toEqual([0]);
   } finally {
+    f.store.stop();
+  }
+});
+
+test("reconnect catches up an idle retained runtime and gates it until scoped history completes", async () => {
+  const f = fixture();
+  await f.store.start();
+  await Promise.all(
+    f.control.terminalStates.map(({ paneId }) => f.store.getState().resyncPane(paneId)),
+  );
+  let entered = false;
+  let release!: (response: PaneHistoryResponse) => void;
+  const held = new Promise<PaneHistoryResponse>((resolve) => {
+    release = resolve;
+  });
+  f.setRead(async (paneId) => {
+    if (paneId === "0") {
+      entered = true;
+      return held;
+    }
+    return {
+      epoch: f.full.epoch,
+      paneId,
+      runtimeGeneration: 1,
+      history: f.full.terminalHistories[1]!,
+    };
+  });
+  try {
+    await f.store.reload();
+    await Bun.sleep(0);
+    expect(entered).toBe(true);
+    expect(f.store.getState().outputs.pane("0").read()?.recovering).toBe(true);
+    const completed = f.store.getState().resyncPane("0");
+    release({
+      epoch: f.full.epoch,
+      paneId: "0",
+      runtimeGeneration: 1,
+      history: { ...f.full.terminalHistories[0]!, cursor: 3, data: "YWJj" },
+    });
+    await completed;
+    const buffer = f.store.getState().outputs.pane("0").read()!;
+    expect(buffer.recovering).toBe(false);
+    expect(
+      terminalReplaySteps(buffer, null).steps.flatMap((step) =>
+        step.type === "bytes" ? [...step.data] : [],
+      ),
+    ).toEqual([97, 98, 99]);
+  } finally {
+    release({
+      epoch: f.full.epoch,
+      paneId: "0",
+      runtimeGeneration: 1,
+      history: f.full.terminalHistories[0]!,
+    });
+    f.store.stop();
+  }
+});
+
+test("successful no-change history recovery publishes an explicit completion", async () => {
+  const f = fixture();
+  await f.store.start();
+  await Promise.all(
+    f.control.terminalStates.map(({ paneId }) => f.store.getState().resyncPane(paneId)),
+  );
+  const output = f.store.getState().outputs.pane("0");
+  const before = output.read();
+  let completed = false;
+  const unsubscribe = output.subscribe(() => {
+    completed ||= output.read()?.recovering === false;
+  });
+  try {
+    await f.store.getState().resyncPane("0");
+    expect(completed).toBe(true);
+    expect(output.read()).not.toBe(before);
+    expect(output.read()?.resetGeneration).toBe(before?.resetGeneration);
+  } finally {
+    unsubscribe();
+    f.store.stop();
+  }
+});
+
+test("held control refresh cannot retain more than eight MiB of pending store messages", async () => {
+  const f = fixture();
+  await f.store.start();
+  await Promise.all(
+    f.control.terminalStates.map(({ paneId }) => f.store.getState().resyncPane(paneId)),
+  );
+  let release!: (snapshot: ControlSnapshot) => void;
+  let entered!: () => void;
+  const held = new Promise<ControlSnapshot>((resolve) => {
+    release = resolve;
+  });
+  const fetching = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  f.client.controlSnapshot = async () => {
+    entered();
+    return held;
+  };
+  const gapMessage: ServerMessage = {
+    type: "control.snapshot",
+    snapshot: { ...f.control, revision: f.control.revision + 2 },
+  };
+  const gap = f.store.apply(gapMessage);
+  await fetching;
+  const data = Buffer.alloc(16384, 120).toString("base64");
+  const messages: ServerMessage[] = Array.from({ length: 600 }, (_, index) => ({
+    type: "terminal.output",
+    epoch: f.full.epoch,
+    paneId: "0",
+    runtimeGeneration: 1,
+    cursor: (index + 1) * 16384,
+    data,
+    geometrySequence: f.control.geometry.sequence,
+  }));
+  let rejected = 0;
+  const errors: string[] = [];
+  const jobs = messages.map((message) =>
+    f.store.apply(message).catch((error) => {
+      rejected++;
+      errors.push(String(error));
+    }),
+  );
+  try {
+    await Bun.sleep(0);
+    expect(rejected).toBeGreaterThan(0);
+    expect(errors.every((error) => error.includes("pending"))).toBe(true);
+    const accepted = messages.slice(0, messages.length - rejected);
+    expect(
+      accepted.reduce(
+        (bytes, message) => bytes + Buffer.byteLength(JSON.stringify(message)),
+        Buffer.byteLength(JSON.stringify(gapMessage)),
+      ),
+    ).toBeLessThanOrEqual(8 * 1024 * 1024);
+    expect(f.store.getState().status).not.toBe("connected");
+  } finally {
+    release(f.control);
+    await Promise.allSettled([gap, ...jobs]);
+    f.store.stop();
+  }
+});
+
+test("gap recovery remains input-gated when the overtaking chunk is published", async () => {
+  const f = fixture();
+  await f.store.start();
+  await Promise.all(
+    f.control.terminalStates.map(({ paneId }) => f.store.getState().resyncPane(paneId)),
+  );
+  let release!: (response: PaneHistoryResponse) => void;
+  const held = new Promise<PaneHistoryResponse>((resolve) => {
+    release = resolve;
+  });
+  f.setRead(async () => held);
+  try {
+    await f.store.apply({
+      type: "terminal.output",
+      epoch: f.full.epoch,
+      paneId: "0",
+      runtimeGeneration: 1,
+      cursor: 3,
+      data: "eA==",
+      geometrySequence: f.control.geometry.sequence,
+    });
+    expect(f.store.getState().outputs.pane("0").read()?.recovering).toBe(true);
+    const recovery = f.store.getState().resyncPane("0");
+    release({
+      epoch: f.full.epoch,
+      paneId: "0",
+      runtimeGeneration: 1,
+      history: { ...f.full.terminalHistories[0]!, cursor: 3, data: "YWJ4" },
+    });
+    await recovery;
+    expect(f.store.getState().outputs.pane("0").read()?.recovering).toBe(false);
+  } finally {
+    release({
+      epoch: f.full.epoch,
+      paneId: "0",
+      runtimeGeneration: 1,
+      history: f.full.terminalHistories[0]!,
+    });
+    f.store.stop();
+  }
+});
+
+test("a marker gap cannot lose recovery gating when earlier markers in that message publish", async () => {
+  const f = fixture();
+  await f.store.start();
+  await Promise.all(
+    f.control.terminalStates.map(({ paneId }) => f.store.getState().resyncPane(paneId)),
+  );
+  let release!: (response: PaneHistoryResponse) => void;
+  const held = new Promise<PaneHistoryResponse>((resolve) => {
+    release = resolve;
+  });
+  f.setRead(async () => held);
+  try {
+    await f.store.apply({
+      type: "terminal.geometry",
+      epoch: f.full.epoch,
+      geometry: { ...f.control.geometry, sequence: f.control.geometry.sequence + 1 },
+      resizes: [1, 3].map((sequence) => ({
+        paneId: "0",
+        runtimeGeneration: 1,
+        marker: { cursor: 0, sequence, cols: 80, rows: 24 },
+      })),
+    });
+    const buffer = f.store.getState().outputs.pane("0").read()!;
+    expect(buffer.recovering).toBe(true);
+    expect(buffer.resizes.map(({ sequence }) => sequence)).toEqual([1]);
+  } finally {
+    release({
+      epoch: f.full.epoch,
+      paneId: "0",
+      runtimeGeneration: 1,
+      history: f.full.terminalHistories[0]!,
+    });
     f.store.stop();
   }
 });

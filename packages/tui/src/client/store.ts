@@ -9,6 +9,7 @@ import {
   type PaneHistoryResponse,
   type ServerMessage,
   type Snapshot,
+  STREAM_BACKPRESSURE_LIMIT,
   type StreamConnection,
   type TerminalGeometry,
   type WorkCraftClient,
@@ -88,6 +89,8 @@ export function createWorkCraftStore(
   let connectionGeneration = 0;
   let applying = Promise.resolve();
   let queuedMessages = 0;
+  let queuedBytes = 0;
+  let overflowRecovery: Promise<void> | undefined;
   let desiredSession: string | null = null;
   let initialChoice = true;
   let attachmentRequest = 0;
@@ -193,10 +196,10 @@ export function createWorkCraftStore(
           ) {
             return;
           }
-          outputs.set(
-            paneId,
-            mergePaneHistory(response, outputs.buffers().get(paneId), state.geometry.sequence),
-          );
+          outputs.set(paneId, {
+            ...mergePaneHistory(response, outputs.buffers().get(paneId), state.geometry.sequence),
+            recovering: false,
+          });
         })
         .then(job.resolve, job.reject)
         .finally(() => {
@@ -233,6 +236,10 @@ export function createWorkCraftStore(
       started: false,
       controller: new AbortController(),
     });
+    const buffer = outputs.buffers().get(paneId);
+    if (buffer && !buffer.recovering) {
+      outputs.set(paneId, { ...buffer, recovering: true });
+    }
     pumpRecoveries();
     return promise;
   }
@@ -248,7 +255,7 @@ export function createWorkCraftStore(
   function recoverMissingHistories(): void {
     discardObsoleteRecoveries();
     for (const [paneId, buffer] of outputs.buffers()) {
-      if (buffer.needsHistory) {
+      if (buffer.needsHistory || buffer.recovering) {
         requestPaneHistory(paneId);
       }
     }
@@ -288,6 +295,7 @@ export function createWorkCraftStore(
       !snapshot ||
       !attachment ||
       !navigation ||
+      (!response && status === "running" && outputs.buffers().get(paneId)?.recovering === true) ||
       snapshot.epoch !== stamp.epoch ||
       attachment.generation !== stamp.attachmentGeneration ||
       navigation.generation !== stamp.navigationGeneration ||
@@ -491,7 +499,7 @@ export function createWorkCraftStore(
         snapshot: { ...state.snapshot, geometry: message.geometry },
       });
       for (const [paneId, buffer] of replacements) {
-        outputs.set(paneId, buffer);
+        outputs.set(paneId, { ...buffer, recovering: outputs.buffers().get(paneId)?.recovering });
       }
       return;
     }
@@ -533,7 +541,7 @@ export function createWorkCraftStore(
       outputs.set(
         message.paneId,
         appendTerminalChunk(
-          current,
+          outputs.buffers().get(message.paneId)!,
           message.cursor,
           data,
           message.geometrySequence,
@@ -586,6 +594,9 @@ export function createWorkCraftStore(
     if (run !== activeRun || connection !== connectionGeneration) {
       stream.close();
       return;
+    }
+    for (const [paneId, buffer] of outputs.buffers()) {
+      outputs.set(paneId, { ...buffer, recovering: true });
     }
     update({ status: "connected", stream, connectionError: null });
     if (initialChoice) {
@@ -683,6 +694,23 @@ export function createWorkCraftStore(
   }
 
   function apply(message: ServerMessage, activeRun?: number, connection?: number): Promise<void> {
+    const taskRun = activeRun ?? run;
+    const taskConnection = connection ?? connectionGeneration;
+    if (taskRun !== run || taskConnection !== connectionGeneration) {
+      return Promise.resolve();
+    }
+    const bytes = Buffer.byteLength(JSON.stringify(message));
+    if (queuedBytes + bytes > STREAM_BACKPRESSURE_LIMIT) {
+      const error = new Error("Terminal stream pending work exceeded its 8 MiB limit");
+      if (!overflowRecovery) {
+        overflowRecovery = reload().finally(() => {
+          overflowRecovery = undefined;
+        });
+        update({ connectionError: error.message });
+      }
+      return Promise.reject(error);
+    }
+    queuedBytes += bytes;
     const enqueued = outputProbeEnabled ? performance.now() : 0;
     const metadata =
       outputProbeEnabled && message.type === "terminal.output"
@@ -701,45 +729,46 @@ export function createWorkCraftStore(
         pending: queuedMessages,
       });
     }
-    const result = applying.then(() => {
-      if (
-        (activeRun !== undefined && run !== activeRun) ||
-        (connection !== undefined && connection !== connectionGeneration)
-      ) {
-        if (outputProbeEnabled) {
-          queuedMessages--;
+    const result = applying
+      .then(() => {
+        if (run !== taskRun || connectionGeneration !== taskConnection) {
+          if (outputProbeEnabled) {
+            queuedMessages--;
+          }
+          return;
         }
-        return;
-      }
-      if (outputProbeEnabled) {
-        const started = performance.now();
-        observeOutput({
-          stage: "store.apply.start",
-          ...metadata,
-          generation: connection,
-          pending: queuedMessages,
-          durationMs: started - enqueued,
-        });
-        const applied = applyMessage(message, activeRun, connection);
-        observeOutput({
-          stage: "store.apply.return",
-          ...metadata,
-          aggregateOnly: true,
-          durationMs: performance.now() - started,
-        });
-        return applied.finally(() => {
-          queuedMessages--;
+        if (outputProbeEnabled) {
+          const started = performance.now();
           observeOutput({
-            stage: "store.apply.end",
+            stage: "store.apply.start",
             ...metadata,
             generation: connection,
             pending: queuedMessages,
+            durationMs: started - enqueued,
+          });
+          const applied = applyMessage(message, taskRun, taskConnection);
+          observeOutput({
+            stage: "store.apply.return",
+            ...metadata,
+            aggregateOnly: true,
             durationMs: performance.now() - started,
           });
-        });
-      }
-      return applyMessage(message, activeRun, connection);
-    });
+          return applied.finally(() => {
+            queuedMessages--;
+            observeOutput({
+              stage: "store.apply.end",
+              ...metadata,
+              generation: connection,
+              pending: queuedMessages,
+              durationMs: performance.now() - started,
+            });
+          });
+        }
+        return applyMessage(message, taskRun, taskConnection);
+      })
+      .finally(() => {
+        queuedBytes -= bytes;
+      });
     applying = result.catch(() => {});
     return result;
   }

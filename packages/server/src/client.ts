@@ -24,7 +24,7 @@ import type { Health } from "./application/app.ts";
 import { resolvePaths } from "./daemon/paths.ts";
 import { observeOutput, outputProbeEnabled } from "./terminal/output-probe.ts";
 
-export { decodeBytes } from "./api/protocol.ts";
+export { decodeBytes, STREAM_BACKPRESSURE_LIMIT } from "./api/protocol.ts";
 export { projectPaneLayout } from "./application/layout.ts";
 export type { PaneRect, PaneGeometry } from "./application/layout.ts";
 export type {

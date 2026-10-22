@@ -14,6 +14,7 @@ export type TerminalBuffer = {
   runtimeGeneration: number;
   resetGeneration: number;
   needsHistory?: boolean;
+  recovering?: boolean;
   history: Uint8Array;
   historyCursor: number;
   historyStartCursor: number;

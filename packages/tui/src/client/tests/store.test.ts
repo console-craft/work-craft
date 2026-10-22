@@ -9,6 +9,7 @@ import {
   inputStampFixture,
   snapshotFixture,
   streamFixture,
+  terminalSnapshotFixture,
 } from "@/tests/support/fixtures.ts";
 
 const historyMetadata = {
@@ -134,7 +135,9 @@ function fakeClient(replacement: Snapshot): WorkCraftClient & { refreshCount(): 
       epoch: replacement.epoch,
       paneId,
       runtimeGeneration: 0,
-      history: replacement.terminalHistories.find((history) => history.paneId === paneId)!,
+      history: terminalSnapshotFixture(replacement).terminalHistories.find(
+        (history) => history.paneId === paneId,
+      )!,
     }),
     command: async () => ({ ok: true, revision: replacement.revision, result: { id: "id" } }),
     stream: async () => {
@@ -374,6 +377,7 @@ for (const change of [
     const store = createWorkCraftStore(client);
     await store.start();
     await store.getState().attach("session-work");
+    await store.getState().resyncPane("pane-1");
     const stamp = inputStampFixture(snapshot);
     const capturedState = store.getState();
     expect(typeof capturedState.canSendInput).toBe("function");
