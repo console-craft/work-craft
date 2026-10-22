@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  assertIndependentDirectory,
   assertRegistryManifest,
   assertRegistryResolution,
   assertSameCore,
@@ -25,6 +26,154 @@ test("probe refuses local overrides and private or floating dependency versions"
     ).toThrow();
   }
   expect(() => assertRegistryManifest({ ...manifest, overrides: {} })).toThrow();
+});
+
+test("native asset overrides cannot reach a probe child", async () => {
+  const root = await mkdtemp(join(tmpdir(), "no-fork-native-override-"));
+  const marker = join(root, "executed");
+  try {
+    const launcher = Bun.spawn(
+      [
+        process.execPath,
+        "-e",
+        `
+      import { runProbeCommand } from ${JSON.stringify(join(import.meta.dir, "probe-no-fork-terminal.ts"))};
+      await runProbeCommand([process.execPath, "-e", ${JSON.stringify(`await Bun.write(${JSON.stringify(marker)}, "executed")`)}],
+        ${JSON.stringify(root)}, ${JSON.stringify(join(root, "probe.log"))}, 5000);
+    `,
+      ],
+      {
+        env: { ...process.env, OTUI_ASSET_ROOT: root },
+        stdout: "ignore",
+        stderr: "pipe",
+      },
+    );
+    const error = new Response(launcher.stderr).text();
+    expect(await launcher.exited).not.toBe(0);
+    expect(await error).toContain("OTUI_ASSET_ROOT");
+    expect(await Bun.file(marker).exists()).toBe(false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("workspace ancestors are rejected through symlinks before installation can change their lock", async () => {
+  const root = await mkdtemp(join(tmpdir(), "no-fork-workspace-"));
+  try {
+    const workspace = join(root, "workspace");
+    const artifacts = join(workspace, "packages");
+    await mkdir(artifacts, { recursive: true });
+    await writeFile(
+      join(workspace, "package.json"),
+      JSON.stringify({ workspaces: ["packages/*"] }),
+    );
+    const lock = join(workspace, "bun.lock");
+    await writeFile(lock, "must remain untouched");
+    const linked = join(root, "linked");
+    await symlink(artifacts, linked);
+    await expect(assertIndependentDirectory(linked)).rejects.toThrow("workspace");
+    await expect(runProbe("contracts", linked)).rejects.toThrow("workspace");
+    expect(await readFile(lock, "utf8")).toBe("must remain untouched");
+    await expect(assertIndependentDirectory(root)).resolves.toBeUndefined();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+async function expectProcessGone(pid: number): Promise<void> {
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return;
+    }
+    await Bun.sleep(10);
+  }
+  expect(() => process.kill(pid, 0)).toThrow();
+}
+
+for (const code of [0, 7]) {
+  test(`an early leader exit ${code} cannot leave its owned descendant running`, async () => {
+    const root = await mkdtemp(join(tmpdir(), "no-fork-early-exit-"));
+    const pidFile = join(root, "pids.json");
+    let pids: number[] = [];
+    try {
+      const script = `
+        const child = Bun.spawn([process.execPath, "-e", "setInterval(() => {}, 1000)"], {
+          stdin: "ignore", stdout: "ignore", stderr: "ignore"
+        });
+        await Bun.write(${JSON.stringify(pidFile)}, JSON.stringify([process.pid, child.pid]));
+        process.exit(${code});
+      `;
+      const run = runProbeCommand(
+        [process.execPath, "-e", script],
+        root,
+        join(root, "probe.log"),
+        1000,
+      );
+      if (code === 0) {
+        await run;
+      } else {
+        await expect(run).rejects.toThrow("7");
+      }
+      pids = JSON.parse(await readFile(pidFile, "utf8"));
+      await expectProcessGone(pids[1]!);
+    } finally {
+      if (pids[0]) {
+        try {
+          process.kill(-pids[0], "SIGKILL");
+        } catch {}
+      }
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+}
+
+test("cancelling the launcher stops its active owned probe group", async () => {
+  const root = await mkdtemp(join(tmpdir(), "no-fork-cancel-"));
+  const pidFile = join(root, "pids.json");
+  const script = `
+    const child = Bun.spawn([process.execPath, "-e", "setInterval(() => {}, 1000)"], {
+      stdin: "ignore", stdout: "ignore", stderr: "ignore"
+    });
+    await Bun.write(${JSON.stringify(pidFile)}, JSON.stringify([process.pid, child.pid]));
+    setInterval(() => {}, 1000);
+  `;
+  const launcher = Bun.spawn(
+    [
+      process.execPath,
+      "-e",
+      `
+    import { runProbeCommand } from ${JSON.stringify(join(import.meta.dir, "probe-no-fork-terminal.ts"))};
+    await runProbeCommand([process.execPath, "-e", ${JSON.stringify(script)}],
+      ${JSON.stringify(root)}, ${JSON.stringify(join(root, "probe.log"))}, 10000);
+  `,
+    ],
+    { stdin: "ignore", stdout: "ignore", stderr: "ignore" },
+  );
+  let pids: number[] = [];
+  try {
+    const deadline = Date.now() + 5000;
+    while (!(await Bun.file(pidFile).exists()) && Date.now() < deadline) {
+      await Bun.sleep(10);
+    }
+    pids = JSON.parse(await readFile(pidFile, "utf8"));
+    launcher.kill("SIGTERM");
+    expect(await launcher.exited).not.toBe(0);
+    for (const pid of pids) {
+      await expectProcessGone(pid);
+    }
+  } finally {
+    launcher.kill("SIGKILL");
+    await launcher.exited;
+    if (pids[0]) {
+      try {
+        process.kill(-pids[0], "SIGKILL");
+      } catch {}
+    }
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("rejects a consumer resolving core outside its owned directory, including symlinks", async () => {

@@ -1,6 +1,6 @@
 import { closeSync, openSync, realpathSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 
 const root = resolve(import.meta.dir, "..");
 const dependencies = {
@@ -13,6 +13,24 @@ const routes = {
   client: "packages/tui/src/workbench/tests/no-fork-client.fixture.tsx",
   daemon: "packages/server/src/terminal/tests/no-fork-daemon.fixture.ts",
 };
+
+/** Reject all workspace ancestors, even when their current globs would not match. */
+export async function assertIndependentDirectory(directory: string): Promise<void> {
+  let ancestor = realpathSync(directory);
+  while (true) {
+    const manifest = Bun.file(join(ancestor, "package.json"));
+    if (await manifest.exists()) {
+      if ((await manifest.json()).workspaces !== undefined) {
+        throw new Error(`Probe artifact directory must not be inside a Bun workspace: ${ancestor}`);
+      }
+    }
+    const parent = dirname(ancestor);
+    if (parent === ancestor) {
+      return;
+    }
+    ancestor = parent;
+  }
+}
 
 /** Experiments must not accidentally test the parent workspace's local overrides. */
 export function assertRegistryManifest(value: unknown): void {
@@ -54,6 +72,9 @@ export async function runProbeCommand(
   log: string,
   timeoutMs: number,
 ): Promise<void> {
+  if (process.env.OTUI_ASSET_ROOT) {
+    throw new Error("Registry probes require OTUI_ASSET_ROOT to be unset");
+  }
   const fd = openSync(log, "wx");
   let child: Bun.Subprocess;
   try {
@@ -62,24 +83,42 @@ export async function runProbeCommand(
     closeSync(fd);
   }
   let timedOut = false;
-  const timer = setTimeout(() => {
-    if (child.exitCode === null) {
-      timedOut = true;
-      try {
-        process.kill(-child.pid, "SIGKILL");
-      } catch {
-        /* Group already exited. */
+  let cancelled = false;
+  function stopGroup(): void {
+    try {
+      process.kill(-child.pid, "SIGKILL");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") {
+        throw error;
       }
     }
+  }
+  function cancel(): void {
+    cancelled = true;
+    stopGroup();
+  }
+  process.once("SIGINT", cancel);
+  process.once("SIGTERM", cancel);
+  const timer = setTimeout(() => {
+    timedOut = true;
+    stopGroup();
   }, timeoutMs);
-  const code = await child.exited.finally(() => clearTimeout(timer));
-  if (timedOut || code !== 0) {
-    throw new Error(`${command[0]} ${timedOut ? "timed out" : `exited ${code}`}; evidence: ${log}`);
+  const code = await child.exited.finally(() => {
+    clearTimeout(timer);
+    process.off("SIGINT", cancel);
+    process.off("SIGTERM", cancel);
+    // The leader can exit while descendants still own its process group.
+    stopGroup();
+  });
+  if (cancelled || timedOut || code !== 0) {
+    const reason = cancelled ? "cancelled" : timedOut ? "timed out" : `exited ${code}`;
+    throw new Error(`${command[0]} ${reason}; evidence: ${log}`);
   }
 }
 
 const provenance = String.raw`
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, relative, sep } from "node:path";
@@ -94,6 +133,16 @@ const packages = Object.fromEntries(["@opentui/core", "@opentui/react"].map(name
   assert.equal(metadata.version, "0.6.6");
   return [name, { path, version: metadata.version }];
 }));
+assert(!process.env.OTUI_ASSET_ROOT);
+const nativeName = "@opentui/core-" + process.platform + "-" + process.arch +
+  (process.platform === "linux" && process.env.OPENTUI_LIBC === "musl" ? "-musl" : "");
+const nativePath = realpathSync((await import(nativeName)).default);
+const nativeVersion = JSON.parse(readFileSync(dirname(require.resolve(nativeName)) + "/package.json", "utf8")).version;
+assert.equal(nativeVersion, "0.6.6");
+const nativeWithin = relative(realpathSync(consumer + "/node_modules"), nativePath);
+assert(nativeWithin !== ".." && !nativeWithin.startsWith(".." + sep) && !nativeWithin.startsWith(sep));
+packages[nativeName] = { path: nativePath, version: nativeVersion,
+  sha256: createHash("sha256").update(readFileSync(nativePath)).digest("hex") };
 const reactRequire = createRequire(packages["@opentui/react"].path);
 assert.equal(realpathSync(reactRequire.resolve("@opentui/core")), packages["@opentui/core"].path);
 assert(!("onInputAdmission" in EmbeddedTerminalRenderable.prototype));
@@ -113,6 +162,7 @@ export async function runProbe(
     throw new Error(`Missing probe route fixture: ${route}`);
   }
   await mkdir(artifactDirectory, { recursive: true });
+  await assertIndependentDirectory(artifactDirectory);
   const consumer = await mkdtemp(join(resolve(artifactDirectory), `${route}-`));
   const manifest = {
     name: "work-craft-no-fork-probe",
