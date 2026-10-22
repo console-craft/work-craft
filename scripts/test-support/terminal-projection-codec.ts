@@ -122,7 +122,9 @@ export function validateCompactFrame(value: unknown): CompactMaterialFrame {
       if (width !== 0) {
         const segments = graphemes.segment(text)[Symbol.iterator]();
         segments.next();
-        if (!segments.next().done || Bun.stringWidth(text) !== width) {
+        // The terminal gives a single regional indicator two slots, unlike row segmentation.
+        const columns = /^\p{Regional_Indicator}$/u.test(text) ? 2 : Bun.stringWidth(text);
+        if (!segments.next().done || columns !== width) {
           throw new Error("Projection cell text/width mismatch");
         }
       }

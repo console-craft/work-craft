@@ -232,3 +232,43 @@ test("unknown frame fields reject before serializing unbounded values", () => {
   }
   expect(serialized).toBe(0);
 });
+
+test("native regional-indicator slots require a wide head and an empty tail", () => {
+  const frame: CompactMaterialFrame = {
+    size: { cols: 2, rows: 1 },
+    cursor: { ...cursor, x: 0 },
+    styles: [{ fg, bg, attributes: 0 }],
+    rows: [
+      [
+        [1, "🇦", 2, 0],
+        [1, "", 0, 0],
+      ],
+    ],
+  };
+  expect(validateCompactFrame(frame).rows[0]).toEqual([
+    [1, "🇦", 2, 0],
+    [1, "", 0, 0],
+  ]);
+  expect(() =>
+    validateCompactFrame({
+      ...frame,
+      rows: [
+        [
+          [1, "🇦", 1, 0],
+          [1, " ", 1, 0],
+        ],
+      ],
+    }),
+  ).toThrow("width");
+  expect(() =>
+    validateCompactFrame({
+      ...frame,
+      rows: [
+        [
+          [1, "🇦🇧", 2, 0],
+          [1, "", 0, 0],
+        ],
+      ],
+    }),
+  ).not.toThrow();
+});

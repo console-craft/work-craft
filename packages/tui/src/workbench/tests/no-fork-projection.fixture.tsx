@@ -10,6 +10,7 @@ import { createTestRenderer } from "@opentui/core/testing";
 
 import { projectionInputQueue } from "@/workbench/tests/no-fork-input-queue";
 import { NoForkMaterialView } from "@/workbench/tests/no-fork-material-view";
+import "@/workbench/tests/no-fork-positioned-material.fixture";
 
 // oxlint-disable-next-line no-restricted-imports -- Test-only plain reference expansion.
 import { compactFrame } from "../../../../../scripts/test-support/terminal-projection-codec";
@@ -198,6 +199,7 @@ test("two independent views render one live PTY", async () => {
     for (const setup of [a, b]) {
       const view = new NoForkMaterialView(setup.renderer, JSON.parse(JSON.stringify(state.frame)));
       setup.renderer.root.add(view);
+      view.focus();
       await setup.flush();
       expect(setup.captureCharFrame()).toContain("λ🙂e\u0301");
       expect(setup.renderer.getCursorState()).toMatchObject({
@@ -807,7 +809,9 @@ test("a valid large canonical grid must remain displayable without exceeding the
       expect(serialized).toBeLessThanOrEqual(8 * 1024 * 1024);
       expect(state.frame.styles.length).toBeGreaterThan(1);
       for (const setup of [a, b]) {
-        setup.renderer.root.add(new NoForkMaterialView(setup.renderer, state.frame));
+        const view = new NoForkMaterialView(setup.renderer, state.frame);
+        setup.renderer.root.add(view);
+        view.focus();
         await setup.flush();
         expect(setup.captureCharFrame()).toContain("λ🙂e\u0301");
         expect(setup.renderer.getCursorState()).toMatchObject({ visible: true, style: "line" });
@@ -1095,6 +1099,8 @@ test("regional-indicator material preserves native following-text columns", asyn
   let failure: string | null = null;
   let nativeColumns = -1;
   let materialColumns = -1;
+  let nativeText = "";
+  let materialText = "";
   try {
     const output = "🇦🇧\x1b[31mX";
     reference.write(output);
@@ -1102,6 +1108,7 @@ test("regional-indicator material preserves native following-text columns", asyn
     await setup.flush();
     const spans = setup.captureSpans().lines[0]!.spans;
     nativeColumns = spans[0]!.width;
+    nativeText = spans[0]!.text;
     reference.destroy();
     await live.output(output);
     try {
@@ -1109,15 +1116,21 @@ test("regional-indicator material preserves native following-text columns", asyn
       setup.renderer.root.add(new NoForkMaterialView(setup.renderer, state.frame));
       await setup.flush();
       materialColumns = setup.captureSpans().lines[0]!.spans[0]!.width;
+      materialText = setup.captureSpans().lines[0]!.spans[0]!.text;
     } catch (error) {
       failure = String(error);
     }
     await Bun.write(
       join(live.directory, "regional-indicator-observation.json"),
-      JSON.stringify({ nativeColumns, materialColumns, failure }, null, 2),
+      JSON.stringify(
+        { nativeColumns, materialColumns, nativeText, materialText, failure },
+        null,
+        2,
+      ),
     );
     expect(failure).toBeNull();
     expect(materialColumns).toBe(nativeColumns);
+    expect(materialText).toBe(nativeText);
   } finally {
     reference.destroy();
     await setup.dispose();
