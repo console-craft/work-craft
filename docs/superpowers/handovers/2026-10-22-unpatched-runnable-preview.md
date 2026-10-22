@@ -78,6 +78,16 @@ lint, formatting, types, compile and compiled smoke. The standard test script is
 unchanged, and no diagnostic preload, worker setting or spawning-API patch remains.
 Normal commit/push hooks and subsequent Linux CI must still confirm integration;
 this is a deterministic fixture fix, not a claimed upstream Bun/macOS repair.
+
+After pushing `2cecd17`, Linux CI run `39864374938` passed the portability,
+mode-isolation and raw-key split tests, leaving two readiness failures
+(**1,822 passes / 23 existing platform skips / two failures**). The follow-up
+keeps reconnect automatic: after restoring the coherent body/status, the test
+also waits for a fresh visible terminal cursor before sending new shell input.
+The shared focus gesture now observes mouse-down blur before release activates
+the tab, without a redundant Return that can cancel pending entry. Three local
+repetitions of the shared-session/burst suites passed (21 tests); Linux CI must
+verify this follow-up too. No timeout, skip or application changes are introduced.
 The subsequent readiness diagnosis captured zero new output on the second entry
 while the old cursor remained visible. The regression now establishes actual
 shell input with a computed-output round trip before freezing the TUI; it still

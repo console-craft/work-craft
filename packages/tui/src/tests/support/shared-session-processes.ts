@@ -77,18 +77,28 @@ export function sharedWrite(tui: SharedTuiProcess, text: string): void {
   tui.terminal.write(new TextEncoder().encode(text));
 }
 
-export async function focusSharedTerminal(tui: SharedTuiProcess, tabColumn = 70): Promise<void> {
-  const start = tui.outputStats().rawBytes;
+export async function waitForSharedTerminalInput(
+  tui: SharedTuiProcess,
+  afterBytes: number,
+): Promise<void> {
   const ready = () => {
-    const added = tui.outputStats().rawBytes - start;
+    const added = tui.outputStats().rawBytes - afterBytes;
     if (added <= 0) {
       return false;
     }
     const output = Buffer.from(tui.output()).subarray(-added).toString();
     return output.lastIndexOf("\x1b[?25h") > output.lastIndexOf("\x1b[?25l");
   };
-  sharedWrite(tui, `\x1b[<0;${tabColumn};4M\x1b[<0;${tabColumn};4m\r`);
   await sharedWait(ready, "native workbench input", tui.frame);
+}
+
+export async function focusSharedTerminal(tui: SharedTuiProcess, tabColumn = 70): Promise<void> {
+  const start = tui.outputStats().rawBytes;
+  sharedWrite(tui, `\x1b[<0;${tabColumn};4M`);
+  await sharedWait(() => !tui.cursor().visible, "tab press to withdraw terminal focus", tui.frame);
+  // Release already enters the tab; Return can cancel that still-pending handoff.
+  sharedWrite(tui, `\x1b[<0;${tabColumn};4m`);
+  await waitForSharedTerminalInput(tui, start);
 }
 
 export async function startSharedSessionFixture(

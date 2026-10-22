@@ -10,6 +10,7 @@ import {
   sharedWait,
   sharedWrite,
   startSharedSessionFixture,
+  waitForSharedTerminalInput,
 } from "@/tests/support/shared-session-processes";
 import { terminalRect } from "@/workbench/layout";
 
@@ -73,6 +74,7 @@ test("normal reconnect keeps the coherent body through held recovery without res
     );
     expect(a.frame().split("\n").slice(0, 44)).toEqual(before.slice(0, 44));
     expect(a.frame()).not.toContain("Select session...");
+    const resumedOutput = a.outputStats().rawBytes;
     resume();
     await sharedWait(
       () => a.frame().split("\n")[44] === before[44],
@@ -80,6 +82,7 @@ test("normal reconnect keeps the coherent body through held recovery without res
       a.frame,
     );
     expect(a.frame().split("\n").slice(0, 44)).toEqual(before.slice(0, 44));
+    await waitForSharedTerminalInput(a, resumedOutput);
     sharedWrite(a, "printf '\\nRECONNECTED-%s-%s\\n' PID \"$$\"\r");
     await sharedWait(
       () => a.frame().includes(`RECONNECTED-PID-${pid}`),
