@@ -1,22 +1,24 @@
-import type { EmbeddedTerminalRenderable } from "@opentui/core";
+import type { Renderable } from "@opentui/core";
 import type { Snapshot, StreamConnection } from "@work-craft/server/client";
 import type { ReactNode } from "react";
 
-import type { TerminalBuffer } from "@/client/terminal-buffer.ts";
+import type { TerminalOutputs } from "@/client/terminal-output";
 import { EmptyState, EmptyStateDescription, EmptyStateTitle } from "@/ui/components/empty-state";
 import { Box } from "@/ui/primitives/box.tsx";
 import { WORKBENCH_PADDING_X } from "@/workbench/layout.ts";
-import { SurfaceView } from "@/workbench/surface-view.tsx";
+import { SurfaceView, type SurfaceViewProps } from "@/workbench/surface-view.tsx";
 import { TabBar } from "@/workbench/tab-bar.tsx";
+import type { TerminalPaneProps } from "@/workbench/terminal-pane";
 
-export type WorkbenchProps = {
+export type WorkbenchProps = Pick<TerminalPaneProps, "stamp" | "inputEvent" | "onMouseInput"> & {
   connected: boolean;
+  preservePresentation?: boolean;
   reactivatingPaneIds: ReadonlySet<string>;
   canReactivate(paneId: string): boolean;
   onReactivatePane(paneId: string): void;
-  snapshot: Snapshot | null;
+  snapshot: SurfaceViewProps["snapshot"] | null;
   stream: StreamConnection | null;
-  terminals: ReadonlyMap<string, TerminalBuffer>;
+  outputs: TerminalOutputs;
   surface: Snapshot["surfaces"][number] | undefined;
   tabs: Snapshot["tabs"];
   activeTabId: string | null;
@@ -29,25 +31,29 @@ export type WorkbenchProps = {
   inputEnabled?: boolean;
   entryEnabled?: boolean;
   canReceiveInput?(paneId?: string): boolean;
-  canResize?(): boolean;
-  onSourceFailure?(source: { paneId: string; message: string }): void;
+  canBrowse?(paneId: string): boolean;
+  onSourceFailure?: SurfaceViewProps["onSourceFailure"];
   onFocusTab(id: string): void;
   onActivateTab(id: string): void;
   onEnterTab(id: string): void;
   onTabScrollInteraction(): void;
   onFocusPane(id: string): void;
-  onTerminalReady(id: string, terminal: EmbeddedTerminalRenderable | null): void;
+  onTerminalReady(id: string, terminal: Renderable | null): void;
 };
 
 export function Workbench({
   connected,
+  preservePresentation,
   reactivatingPaneIds,
   canReactivate,
   onReactivatePane,
-  canResize,
+  stamp,
+  inputEvent,
+  onMouseInput,
   inputEnabled,
   entryEnabled,
   canReceiveInput,
+  canBrowse,
   activeTabId,
   focusedPaneId,
   snapshot,
@@ -56,7 +62,7 @@ export function Workbench({
   tabCursorId,
   tabs,
   tabsFocused,
-  terminals,
+  outputs,
   undersized,
   failed,
   onSourceFailure,
@@ -93,17 +99,22 @@ export function Workbench({
         ) : (
           <SurfaceView
             connected={connected}
+            preservePresentation={preservePresentation}
             reactivatingPaneIds={reactivatingPaneIds}
             canReactivate={canReactivate}
             onReactivatePane={onReactivatePane}
             focusedPaneId={focusedPaneId}
             inputEnabled={inputEnabled}
             canReceiveInput={canReceiveInput}
-            canResize={canResize}
+            canBrowse={canBrowse}
+            activeTabId={activeTabId}
+            stamp={stamp}
+            inputEvent={inputEvent}
+            onMouseInput={onMouseInput}
             snapshot={snapshot}
             stream={stream}
             surface={surface}
-            terminals={terminals}
+            outputs={outputs}
             undersized={undersized}
             workbenchFocused={workbenchFocused}
             onFocusPane={onFocusPane}

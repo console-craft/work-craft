@@ -5,6 +5,13 @@ import type { Command, CommandResult, LayoutNode } from "../api/protocol.ts";
 import type { DirectoryScan } from "./directories.ts";
 import { createGenericItem, itemTargetCwd, registerDirectory, setItemArchived } from "./items.ts";
 import { splitLayout } from "./layout.ts";
+import {
+  normalizeSessionNavigations,
+  readNavigationCatalog,
+  readSessionNavigation,
+  writeSessionNavigation,
+} from "./navigation-store.ts";
+import { type NavigationState, selectNavigation, stepNavigation } from "./navigation.ts";
 
 export type DomainEffect =
   | { type: "spawn-pane"; paneId: string }
@@ -53,15 +60,11 @@ function ensureSurface(db: Database, itemId: string, cwd?: string): CommandOutco
 
   const surfaceId = crypto.randomUUID();
   const tabId = crypto.randomUUID();
-  db.query("INSERT INTO surfaces (id, item_id, active_tab_id) VALUES (?, ?, NULL)").run(
-    surfaceId,
-    itemId,
-  );
+  db.query("INSERT INTO surfaces (id, item_id) VALUES (?, ?)").run(surfaceId, itemId);
   const paneId = createShellPane(db, surfaceId, targetCwd);
   db.query(
     "INSERT INTO tabs (id, surface_id, title, position, layout_json) VALUES (?, ?, 'Main', 0, ?)",
   ).run(tabId, surfaceId, JSON.stringify({ type: "pane", paneId }));
-  db.query("UPDATE surfaces SET active_tab_id = ? WHERE id = ?").run(tabId, surfaceId);
   return {
     changed: true,
     result: { id: surfaceId, itemId, surfaceId, tabId, paneId },
@@ -80,7 +83,106 @@ export function applyCommand(
   command: Command,
   registration?: DirectoryScan,
 ): CommandOutcome {
+  return db.transaction(() => {
+    const before = readNavigationCatalog(db);
+    if (
+      "navigationGeneration" in command &&
+      command.navigationGeneration !== undefined &&
+      readSessionNavigation(db, command.sessionId).cursor.generation !==
+        command.navigationGeneration
+    ) {
+      throw new ProtocolError("Navigation changed during command preparation");
+    }
+    if ("activation" in command && command.activation !== undefined) {
+      if (
+        readSessionNavigation(db, command.activation.sessionId).cursor.generation !==
+        command.activation.generation
+      ) {
+        throw new ProtocolError("Navigation changed during command preparation");
+      }
+    }
+    const outcome = mutateCommand(db, command, registration);
+    outcome.changed = normalizeSessionNavigations(db, before) || outcome.changed;
+    if ("activation" in command && command.activation !== undefined) {
+      const state = readSessionNavigation(db, command.activation.sessionId);
+      const paneId = outcome.result.paneId;
+      if (paneId === undefined) {
+        throw new ProtocolError("Activation requires an exact pane");
+      }
+      const selected = selectNavigation(readNavigationCatalog(db), state, { kind: "pane", paneId });
+      outcome.changed = writeSessionNavigation(db, selected) || outcome.changed;
+      outcome.result.navigation = selected.cursor;
+    }
+    return outcome;
+  })();
+}
+
+function navigationOutcome(
+  db: Database,
+  state: NavigationState,
+  effects: DomainEffect[] = [],
+  changed = false,
+): CommandOutcome {
+  const cursor = state.cursor;
+  const surfaceId = readNavigationCatalog(db).surfaces.find(
+    ({ itemId }) => itemId === cursor.itemId,
+  )?.id;
+  return {
+    changed: writeSessionNavigation(db, state) || changed,
+    effects,
+    result: {
+      id: cursor.paneId ?? cursor.tabId ?? cursor.itemId ?? cursor.workspaceId ?? cursor.sessionId,
+      sessionId: cursor.sessionId,
+      navigation: cursor,
+      ...(cursor.itemId === null ? {} : { itemId: cursor.itemId }),
+      ...(surfaceId === undefined ? {} : { surfaceId }),
+      ...(cursor.tabId === null ? {} : { tabId: cursor.tabId }),
+      ...(cursor.paneId === null ? {} : { paneId: cursor.paneId }),
+    },
+  };
+}
+
+function mutateCommand(
+  db: Database,
+  command: Command,
+  registration?: DirectoryScan,
+): CommandOutcome {
   switch (command.type) {
+    case "session.navigate": {
+      const state = readSessionNavigation(db, command.sessionId);
+      return navigationOutcome(
+        db,
+        selectNavigation(readNavigationCatalog(db), state, command.target),
+      );
+    }
+    case "session.step": {
+      const catalog = readNavigationCatalog(db);
+      const state = readSessionNavigation(db, command.sessionId);
+      const selected = stepNavigation(catalog, state, command.level, command.direction);
+      if (command.level !== "item" || selected === state || selected.cursor.itemId === null) {
+        return navigationOutcome(db, selected);
+      }
+      const outcome = ensureSurface(db, selected.cursor.itemId);
+      const opened = selectNavigation(readNavigationCatalog(db), state, {
+        kind: "item",
+        itemId: selected.cursor.itemId,
+      });
+      return navigationOutcome(db, opened, outcome.effects, outcome.changed);
+    }
+    case "session.openItem": {
+      const state = readSessionNavigation(db, command.sessionId);
+      selectNavigation(readNavigationCatalog(db), state, { kind: "item", itemId: command.itemId });
+      const outcome = ensureSurface(db, command.itemId, command.cwd);
+      return navigationOutcome(
+        db,
+        selectNavigation(readNavigationCatalog(db), state, {
+          kind: "item",
+          itemId: command.itemId,
+        }),
+        outcome.effects,
+        outcome.changed,
+      );
+    }
     case "session.create":
       return db.transaction(() => {
         const id = crypto.randomUUID();
@@ -258,38 +360,10 @@ export function applyCommand(
           command.surfaceId,
           JSON.stringify({ type: "pane", paneId }),
         );
-        db.query("UPDATE surfaces SET active_tab_id = ? WHERE id = ?").run(
-          tabId,
-          command.surfaceId,
-        );
         return {
           changed: true,
           result: { id: tabId, surfaceId: command.surfaceId, tabId, paneId },
           effects: [{ type: "spawn-pane" as const, paneId }],
-        };
-      })();
-    case "surface.selectTab":
-      return db.transaction(() => {
-        if (
-          db
-            .query("SELECT 1 FROM tabs WHERE id = ? AND surface_id = ?")
-            .get(command.tabId, command.surfaceId) === null
-        ) {
-          throw new ProtocolError("tab not found for surface");
-        }
-        const previous = db
-          .query<{ activeTabId: string | null }, [string]>(
-            "SELECT active_tab_id AS activeTabId FROM surfaces WHERE id = ?",
-          )
-          .get(command.surfaceId);
-        db.query("UPDATE surfaces SET active_tab_id = ? WHERE id = ?").run(
-          command.tabId,
-          command.surfaceId,
-        );
-        return {
-          changed: previous?.activeTabId !== command.tabId,
-          result: { id: command.tabId, surfaceId: command.surfaceId, tabId: command.tabId },
-          effects: [],
         };
       })();
     case "pane.split":

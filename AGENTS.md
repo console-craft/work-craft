@@ -16,6 +16,7 @@
 - Keep the CLI non-interactive and Unix-like, with plain-text or JSON output.
 - Do not introduce remote, distributed, or plugin-system abstractions without an explicit requirement.
 - Run `bun run check` before completing work.
+- When saving shell-command output to a log, also mirror stdout and stderr to the terminal with `2>&1 | tee <log>`, and enable `pipefail` so command failures propagate.
 - Use Conventional Commits for commit messages.
 - Do not stage or commit changes unless explicitly requested or when required when running some skill that requires it.
 

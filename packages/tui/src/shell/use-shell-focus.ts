@@ -19,7 +19,6 @@ type ShellFocusOptions = {
   canReceiveInput(paneId?: string): boolean;
   canReactivate(paneId: string): boolean;
   clearLeader(): void;
-  rememberPane(tabId: string, paneId: string): void;
 };
 export type ShellFocusController = {
   focus: FocusTarget;
@@ -39,7 +38,6 @@ export function useShellFocus({
   canReceiveInput,
   canReactivate,
   clearLeader,
-  rememberPane,
 }: ShellFocusOptions): ShellFocusController {
   const renderer = useRenderer();
   const { state, snapshot, model, layout } = environment;
@@ -76,6 +74,19 @@ export function useShellFocus({
     const focus = focusTargetFor(target);
     if (focus?.region === "navigator") {
       lastNavigatorControl.current = focus.control ?? "results";
+    }
+    if (
+      focus &&
+      focus.region !== "workbench" &&
+      focus.region !== "tabs" &&
+      read().model.navigation !== null &&
+      read().state.focus.region === "workbench" &&
+      read().state.dialog === null &&
+      !entry.hasPending() &&
+      !entry.isClosingDrawer()
+    ) {
+      // A new chrome endpoint cancels remote follow even before the terminal is ready.
+      dispatch({ type: "focus.set", focus });
     }
   }
   useLayoutEffect(() => {
@@ -140,12 +151,16 @@ export function useShellFocus({
     }
   }, [navigatorVisible, state.focus.region]);
 
+  const entryFocus = entry.focusFor(model, state.focus);
   const { focus: resolvedFocus, focusedPaneId } = resolveShellFocus({
-    focus: entry.focusFor(model, state.focus),
-    rememberedPaneId: state.lastPaneByTab[activeTab?.id ?? ""] ?? null,
+    focus: entryFocus,
+    rememberedPaneId: model.navigation?.paneId ?? null,
     paneIds,
     runningPaneIds: paneIds.filter((id) =>
       snapshot?.panes.some((pane) => pane.id === id && pane.processStatus === "running"),
+    ),
+    startingPaneIds: paneIds.filter((id) =>
+      snapshot?.panes.some((pane) => pane.id === id && pane.processStatus === "starting"),
     ),
     reactivatePaneIds: paneIds.filter(canReactivate),
     undersized,
@@ -154,7 +169,7 @@ export function useShellFocus({
   // A measured host needs another frame before a resize-restored terminal is focusable.
   const transientWorkbenchProjection =
     state.focus.region === "workbench" &&
-    nativeTarget?.region === "tabs" &&
+    nativeTarget?.region !== "workbench" &&
     (undersized ||
       (resolvedFocus.region === "workbench" &&
         !(
@@ -163,13 +178,16 @@ export function useShellFocus({
             : entry.terminal(resolvedFocus.paneId)
         )?.focusable));
   const focus =
-    state.dialog === null && !transientWorkbenchProjection
+    state.dialog === null &&
+    !transientWorkbenchProjection &&
+    focusKey(entryFocus) === focusKey(state.focus)
       ? (nativeTarget ?? resolvedFocus)
       : resolvedFocus;
   const resolvedFocusKey = focusKey(resolvedFocus);
   useLayoutEffect(() => {
     if (
       dialogKey === null &&
+      model.navigation !== null &&
       !resizeBlocked &&
       !(
         navigatorMode === "drawer" &&
@@ -178,10 +196,11 @@ export function useShellFocus({
     ) {
       entry.projectFocus(resolvedFocus, () => focusShellTarget(renderer, resolvedFocus));
     }
-  }, [renderer, resolvedFocusKey, dialogKey, resizeBlocked]);
+  }, [renderer, resolvedFocusKey, dialogKey, resizeBlocked, model.navigation]);
   useLayoutEffect(() => {
     if (
       state.dialog === null &&
+      model.navigation !== null &&
       nativeTarget !== null &&
       (nativeTarget.region !== "workbench" || paneIds.includes(nativeTarget.paneId)) &&
       nativeFocus === renderer.currentFocusedRenderable &&
@@ -189,7 +208,7 @@ export function useShellFocus({
     ) {
       dispatch({ type: "focus.set", focus: nativeTarget, tabId: activeTab?.id });
     }
-  }, [nativeFocus, dialogKey, undersized, state.focus]);
+  }, [nativeFocus, dialogKey, undersized, state.focus, model.navigation]);
 
   function setFocus(target: FocusTarget): void {
     if (target.region === "navigator" && target.control === undefined) {
@@ -210,9 +229,6 @@ export function useShellFocus({
         )
       ) {
         return;
-      }
-      if (activeTab) {
-        rememberPane(activeTab.id, target.paneId);
       }
       if (
         !(target.control === "reactivate"

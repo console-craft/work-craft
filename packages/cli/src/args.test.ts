@@ -2,6 +2,81 @@ import { expect, test } from "bun:test";
 
 import { parseArgs, UsageError } from "./args.ts";
 
+test("session select requires one explicit target and preserves session-scoped translation", () => {
+  for (const [flag, target] of [
+    ["workspace", { kind: "workspace", workspaceId: "target" }],
+    ["category", { kind: "category", category: "implementation" }],
+    ["item", { kind: "item", itemId: "target" }],
+    ["tab", { kind: "tab", tabId: "target" }],
+    ["pane", { kind: "pane", paneId: "target" }],
+  ] as const) {
+    expect(
+      parseArgs([
+        "session",
+        "select",
+        "s",
+        `--${flag}`,
+        flag === "category" ? "implementation" : "target",
+        "--json",
+      ]),
+    ).toEqual({
+      command: "session.navigate",
+      sessionId: "s",
+      target,
+      json: true,
+    });
+  }
+  for (const level of ["category", "item", "tab"] as const) {
+    for (const [direction, value] of [
+      ["previous", -1],
+      ["next", 1],
+    ] as const) {
+      expect(
+        parseArgs(["session", "step", "s", "--level", level, "--direction", direction]),
+      ).toEqual({
+        command: "session.step",
+        sessionId: "s",
+        level,
+        direction: value,
+        json: false,
+      });
+    }
+  }
+  expect(
+    parseArgs(["session", "open-item", "s", "--item", "i", "--cwd", "../work", "--json"]),
+  ).toEqual({
+    command: "session.openItem",
+    sessionId: "s",
+    itemId: "i",
+    cwd: "../work",
+    json: true,
+  });
+});
+
+test("session navigation rejects ambiguous targets, duplicates, invalid values and extra positionals", () => {
+  for (const argv of [
+    ["session", "select", "s"],
+    ["session", "select", "--tab", "t"],
+    ["session", "select", "s", "--tab", "t", "--pane", "p"],
+    ["session", "select", "s", "--tab", "t", "--tab", "t"],
+    ["session", "select", "s", "extra", "--tab", "t"],
+    ["session", "select", "s", "--category", "unknown"],
+    ["session", "select", "s", "--item", " "],
+    ["session", "select", "s", "--tab", "t", "--json", "--json"],
+    ["session", "step", "s", "--level", "workspace", "--direction", "next"],
+    ["session", "step", "s", "--level", "tab", "--direction", "forward"],
+    ["session", "step", "s", "--level", "tab"],
+    ["session", "step", "s", "--level", "tab", "--level", "tab", "--direction", "next"],
+    ["session", "step", "s", "extra", "--level", "tab", "--direction", "next"],
+    ["session", "open-item", "s"],
+    ["session", "open-item", "s", "--item", "i", "--item", "i"],
+    ["session", "open-item", "s", "extra", "--item", "i"],
+    ["surface", "select-tab", "surface", "tab"],
+  ]) {
+    expect(() => parseArgs(argv)).toThrow(UsageError);
+  }
+});
+
 test("parses resource-oriented commands", () => {
   const cases: Array<[string[], ReturnType<typeof parseArgs>]> = [
     [["snapshot", "--json"], { command: "snapshot", json: true }],
@@ -79,10 +154,6 @@ test("parses resource-oriented commands", () => {
       { command: "item.setArchived", itemId: "i1", archived: false, json: false },
     ],
     [
-      ["surface", "select-tab", "s1", "t1"],
-      { command: "surface.selectTab", surfaceId: "s1", tabId: "t1", json: false },
-    ],
-    [
       ["tab", "create", "--surface", "s1", "--title", "Shell"],
       { command: "tab.create", surfaceId: "s1", title: "Shell", json: false },
     ],
@@ -150,6 +221,7 @@ test("rejects invalid resource-oriented commands", () => {
     ["surface", "ensure"],
     ["surface", "ensure", "--item", "i1", "--project", "p1"],
     ["surface", "select-tab", "s1"],
+    ["surface", "select-tab", "s1", "t1"],
     ["pane", "split", "pn1", "--direction", "diagonal"],
     ["daemon", "destroy"],
     ["daemon", "destroy", "--force", "--force"],

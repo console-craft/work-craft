@@ -1,4 +1,5 @@
 import { expect, spyOn, test } from "bun:test";
+import { once } from "node:events";
 import * as fs from "node:fs";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -6,7 +7,13 @@ import { join } from "node:path";
 
 import WebSocket from "ws";
 
+import { sendTerminalInput } from "../../../../scripts/test-support/terminal-input.ts";
 import { createApp } from "../application/app.ts";
+import { applyCommand } from "../application/commands.ts";
+import {
+  normalizeSessionNavigations,
+  readNavigationCatalog,
+} from "../application/navigation-store.ts";
 import { ApiError, createClient } from "../client.ts";
 import { openDatabase } from "../persistence/database.ts";
 import { TerminalHistory } from "../terminal/history.ts";
@@ -19,9 +26,16 @@ function seedPane(db: ReturnType<typeof openDatabase>): void {
     INSERT INTO workspaces VALUES ('workspace-1', 'Work');
     INSERT INTO session_workspaces VALUES ('session-1', 'workspace-1', 0);
     INSERT INTO items VALUES ('item-1', 'workspace-1', 'design', NULL, 'generic', 'Build', 0, 0, '{}');
-    INSERT INTO surfaces VALUES ('surface-1', 'item-1', NULL);
+    INSERT INTO surfaces VALUES ('surface-1', 'item-1');
+    INSERT INTO tabs VALUES ('tab-1', 'surface-1', 'Main', 0, '{"type":"pane","paneId":"pane-1"}');
     INSERT INTO panes VALUES ('pane-1', 'surface-1', 'terminal', 'Shell', '/tmp', '{"type":"shell","executable":"/bin/sh","args":[]}', 'interrupted', NULL, NULL, NULL);
   `);
+  normalizeSessionNavigations(db, readNavigationCatalog(db));
+  applyCommand(db, {
+    type: "session.navigate",
+    sessionId: "session-1",
+    target: { kind: "pane", paneId: "pane-1" },
+  });
 }
 
 async function startTestServer(options: { withPane?: boolean } = {}) {
@@ -69,11 +83,401 @@ test("a reconnect receives one coherent current snapshot", async () => {
   }
 });
 
+test("control synchronization never serializes hidden histories", async () => {
+  const fixture = await startTestServer({ withPane: true });
+  fixture.history.append("pane-1", new TextEncoder().encode("private history"));
+  const reads = spyOn(fixture.history, "read");
+  const received: ServerMessage[] = [];
+  let stream;
+  try {
+    const control = await fixture.client.controlSnapshot();
+    expect(control).not.toHaveProperty("terminalHistories");
+    expect(control.terminalStates).toEqual([{ paneId: "pane-1", runtimeGeneration: 0 }]);
+    stream = await fixture.client.stream(
+      { onMessage: (message) => received.push(message) },
+      { snapshot: "control" },
+    );
+    const attachment = await stream.attach("session-1");
+    await stream.command(
+      {
+        type: "session.navigate",
+        sessionId: "session-1",
+        target: { kind: "category", category: "design" },
+      },
+      attachment.generation,
+    );
+    expect(reads).not.toHaveBeenCalled();
+    await stream.command({ type: "process.restart", paneId: "pane-1" }, attachment.generation);
+    // Explicit restart reads history once for inert restoration, not control serialization.
+    expect(reads.mock.calls).toEqual([["pane-1"]]);
+    reads.mockClear();
+    await fixture.client.controlSnapshot();
+    await stream.command({ type: "process.restart", paneId: "pane-1" }, attachment.generation);
+    expect(reads).not.toHaveBeenCalled();
+    expect(received.some((message) => message.type === "control.snapshot")).toBe(true);
+    expect(received.some((message) => message.type === "snapshot")).toBe(false);
+    expect(JSON.stringify(received)).not.toContain("private history");
+    const full = await fixture.client.snapshot();
+    expect(full.terminalHistories[0]).toMatchObject({
+      paneId: "pane-1",
+      cursor: expect.any(Number),
+    });
+    expect(decodeBytes(full.terminalHistories[0]!.data).slice(0, 15)).toEqual(
+      new TextEncoder().encode("private history"),
+    );
+    expect(reads).toHaveBeenCalledTimes(1);
+  } finally {
+    reads.mockRestore();
+    stream?.close();
+    await fixture.app.runtime.stopAll();
+    await fixture.close();
+  }
+});
+
+test("pane history fetch is scoped, validates its cursor and never starts a runtime", async () => {
+  const fixture = await startTestServer({ withPane: true });
+  fixture.history.recordGrid("pane-1", { cols: 100, rows: 30 });
+  fixture.history.append("pane-1", new Uint8Array([65, 66, 67]));
+  const reads = spyOn(fixture.history, "read");
+  try {
+    const result = await fixture.client.paneHistory("pane-1", 1);
+    expect(result).toMatchObject({
+      epoch: fixture.app.health().epoch,
+      paneId: "pane-1",
+      runtimeGeneration: 0,
+      history: { cursor: 3, startCursor: 1, prefixBytes: 0, initialSize: { cols: 100, rows: 30 } },
+    });
+    expect(decodeBytes(result.history.data)).toEqual(new Uint8Array([66, 67]));
+    expect(reads.mock.calls).toEqual([["pane-1", 1]]);
+    expect(fixture.app.runtime.isLive("pane-1")).toBe(false);
+    await expect(fixture.client.paneHistory("missing")).rejects.toThrow("Pane not found");
+    for (const after of ["-1", "1.5", "9007199254740992", "NaN", "", "1e2"]) {
+      const response = await fetch(`http://localhost/panes/pane-1/history?after=${after}`, {
+        unix: fixture.socketPath,
+      });
+      expect(response.status).toBe(400);
+    }
+    expect(reads).toHaveBeenCalledTimes(1);
+    await expect(fixture.client.paneHistory("../pane-1")).rejects.toThrow();
+  } finally {
+    reads.mockRestore();
+    await fixture.close();
+  }
+});
+
+test("large retained history still permits attachment and snapshot updates", async () => {
+  const fixture = await startTestServer({ withPane: true });
+  const bytes = new Uint8Array(900_000).fill(120);
+  fixture.history.append("pane-1", bytes);
+  const snapshots: Snapshot[] = [];
+  let initialSnapshot!: () => void;
+  let updatedSnapshot!: () => void;
+  const initialReceived = new Promise<void>((resolve) => {
+    initialSnapshot = resolve;
+  });
+  const updatedReceived = new Promise<void>((resolve) => {
+    updatedSnapshot = resolve;
+  });
+  const stream = await fixture.client.stream({
+    onMessage(message) {
+      if (message.type === "snapshot") {
+        snapshots.push(message.snapshot);
+        initialSnapshot();
+        if (message.snapshot.sessions[0]?.name === "Still connected") {
+          updatedSnapshot();
+        }
+      }
+    },
+  });
+  try {
+    const attachment = await stream.attach("session-1");
+    await initialReceived;
+    expect(attachment.sessionId).toBe("session-1");
+    expect(decodeBytes(snapshots[0]!.terminalHistories[0]!.data).byteLength).toBe(bytes.byteLength);
+    await fixture.client.command({
+      type: "session.update",
+      sessionId: "session-1",
+      name: "Still connected",
+    });
+    await stream.attach("session-1");
+    await updatedReceived;
+    expect(snapshots.at(-1)!.sessions[0]!.name).toBe("Still connected");
+    expect(decodeBytes(snapshots.at(-1)!.terminalHistories[0]!.data).byteLength).toBe(
+      bytes.byteLength,
+    );
+  } finally {
+    stream.close();
+    await fixture.close();
+  }
+});
+
+for (const mode of ["control", "full"] as const) {
+  test(`${mode}: large metadata uses its own HTTP notification and leaves acknowledgments independent`, async () => {
+    const fixture = await startTestServer();
+    await fixture.app.execute({ type: "session.create", name: "x".repeat(600000) });
+    const path = mode === "control" ? "/control" : "/snapshot";
+    const realFetch = globalThis.fetch;
+    let release!: () => void;
+    let entered!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fetching = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+      Object.assign(
+        async (...args: Parameters<typeof fetch>) => {
+          if (
+            String(args[0]).endsWith(path) &&
+            args[1] &&
+            "unix" in args[1] &&
+            args[1].unix === fixture.socketPath
+          ) {
+            entered();
+            await gate;
+          }
+          return realFetch(...args);
+        },
+        { preconnect: realFetch.preconnect },
+      ),
+    );
+    const snapshots: ServerMessage[] = [];
+    const stream = await fixture.client.stream(
+      { onMessage: (message) => snapshots.push(message) },
+      { snapshot: mode },
+    );
+    try {
+      await fetching;
+      const attached = await Promise.race([stream.attach(null), Bun.sleep(500).then(() => null)]);
+      expect(attached).not.toBeNull();
+      const result = await Promise.race([
+        stream.command(
+          { type: "session.create", name: "While HTTP is held" },
+          attached!.generation,
+        ),
+        Bun.sleep(500).then(() => null),
+      ]);
+      expect(result?.ok).toBe(true);
+      expect(
+        snapshots.filter(
+          (message) => message.type === "snapshot" || message.type === "control.snapshot",
+        ),
+      ).toEqual([]);
+      release();
+      const deadline = Date.now() + 3000;
+      while (
+        !snapshots.some(
+          (message) => message.type === (mode === "control" ? "control.snapshot" : "snapshot"),
+        ) &&
+        Date.now() < deadline
+      ) {
+        await Bun.sleep(1);
+      }
+      const received = snapshots.find(
+        (message) => message.type === (mode === "control" ? "control.snapshot" : "snapshot"),
+      );
+      expect(received).toBeDefined();
+      if (received?.type === "control.snapshot") {
+        expect(received.snapshot).not.toHaveProperty("terminalHistories");
+      }
+      expect(fetchSpy).toHaveBeenCalled();
+    } finally {
+      release();
+      fetchSpy.mockRestore();
+      stream.close();
+      await fixture.close();
+    }
+  });
+}
+
+test("snapshots above 512 KiB use HTTP notification independently of stream burst headroom", async () => {
+  const fixture = await startTestServer({ withPane: true });
+  fixture.history.append("pane-1", new Uint8Array(400_000).fill(120));
+  const socket = new WebSocket(`ws+unix:${fixture.socketPath}:/stream`);
+  try {
+    const notification = new Promise<ServerMessage>((resolve) => {
+      socket.on("message", (data) => {
+        const message = JSON.parse(data.toString()) as ServerMessage;
+        if (message.type === "snapshot" || message.type === "snapshot.available") {
+          resolve(message);
+        }
+      });
+    });
+    await once(socket, "open");
+    expect(await notification).toMatchObject({ type: "snapshot.available" });
+    expect((await fixture.client.snapshot()).terminalHistories[0]!.cursor).toBe(400_000);
+  } finally {
+    socket.terminate();
+    await fixture.close();
+  }
+});
+
+test("a closing stream drops ephemeral reports and input while requests still reject", async () => {
+  const fixture = await startTestServer({ withPane: true });
+  const stream = await fixture.client.stream({ onMessage() {} });
+  try {
+    const attachment = await stream.attach("session-1");
+    const snapshot = await fixture.client.snapshot();
+    const stamp = {
+      epoch: snapshot.epoch,
+      attachmentGeneration: attachment.generation,
+      navigationGeneration: snapshot.navigation[0]!.generation,
+      geometrySequence: snapshot.geometry.tabs[0]!.generation,
+    };
+    stream.close();
+    expect(() => stream.reportViewport(null, stamp)).not.toThrow();
+    expect(() => stream.activity(stamp, 1)).not.toThrow();
+    expect(() =>
+      stream.sendInput("pane-1", new TextEncoder().encode("dropped"), {
+        ...stamp,
+        source: "input",
+        kind: "key",
+      }),
+    ).not.toThrow();
+    await expect(stream.attach("session-1")).rejects.toThrow("Stream is disconnected");
+    await expect(
+      stream.command({ type: "session.delete", sessionId: "session-1" }, attachment.generation),
+    ).rejects.toThrow("Stream is disconnected");
+    expect((await fixture.client.snapshot()).sessions[0]!.id).toBe("session-1");
+  } finally {
+    stream.close();
+    await fixture.close();
+  }
+});
+
 test("the Unix socket is owner-only", async () => {
   const fixture = await startTestServer();
   try {
     expect((await stat(fixture.socketPath)).mode & 0o777).toBe(0o600);
   } finally {
+    await fixture.close();
+  }
+});
+
+test("attached creation returns its committed normalization for a generation-bound follow-up Open", async () => {
+  const fixture = await startTestServer();
+  const sessionId = (await fixture.client.command({ type: "session.create", name: "Main" })).result
+    .id;
+  const workspaceId = (
+    await fixture.client.command({ type: "workspace.create", sessionId, name: "Work" })
+  ).result.id;
+  const stream = await fixture.client.stream({ onMessage() {} });
+  try {
+    const attachment = await stream.attach(sessionId);
+    await stream.command(
+      { type: "session.navigate", sessionId, target: { kind: "category", category: "design" } },
+      attachment.generation,
+    );
+    const before = await fixture.client.snapshot();
+    const created = await stream.command(
+      { type: "item.create", workspaceId, category: "design", title: "First" },
+      attachment.generation,
+    );
+    expect(created.result.navigation).toMatchObject({
+      generation: before.navigation[0]!.generation + 1,
+      itemId: created.result.id,
+    });
+    const opened = await stream.command(
+      {
+        type: "session.openItem",
+        sessionId,
+        itemId: created.result.id,
+        navigationGeneration: created.result.navigation!.generation,
+        cwd: tmpdir(),
+      },
+      attachment.generation,
+    );
+    expect(opened.result.navigation?.itemId).toBe(created.result.id);
+  } finally {
+    stream.close();
+    await fixture.app.runtime.stopAll();
+    await fixture.close();
+  }
+});
+
+test("the real stream rejects captured bytes after a navigation round trip but accepts current bytes", async () => {
+  const fixture = await startTestServer({ withPane: true });
+  await fixture.app.runtime.start(fixture.app.snapshot().panes[0]!);
+  const write = spyOn(fixture.app.runtime, "write");
+  const stream = await fixture.client.stream({ onMessage() {} });
+  try {
+    const attachment = await stream.attach("session-1");
+    const attached = await fixture.client.snapshot();
+    const reportStamp = {
+      epoch: attached.epoch,
+      attachmentGeneration: attachment.generation,
+      navigationGeneration: attached.navigation[0]!.generation,
+      geometrySequence: attached.geometry.tabs[0]!.generation,
+    };
+    stream.reportViewport(
+      {
+        epoch: attached.epoch,
+        attachmentGeneration: attachment.generation,
+        navigationGeneration: attached.navigation[0]!.generation,
+        tabId: "tab-1",
+        canvas: { cols: 80, rows: 25 },
+        eligible: true,
+      },
+      reportStamp,
+    );
+    await stream.command(
+      {
+        type: "session.navigate",
+        sessionId: "session-1",
+        target: { kind: "pane", paneId: "pane-1" },
+      },
+      attachment.generation,
+    );
+    const before = await fixture.client.snapshot();
+    const stamp = {
+      epoch: before.epoch,
+      attachmentGeneration: attachment.generation,
+      navigationGeneration: before.navigation[0]!.generation,
+      geometrySequence: before.geometry.tabs[0]!.generation,
+    };
+    stream.sendInput("pane-1", new TextEncoder().encode("current"), {
+      ...stamp,
+      source: "input",
+      kind: "key",
+    });
+    await stream.command(
+      {
+        type: "session.navigate",
+        sessionId: "session-1",
+        target: { kind: "category", category: "operations" },
+      },
+      attachment.generation,
+    );
+    await stream.command(
+      {
+        type: "session.navigate",
+        sessionId: "session-1",
+        target: { kind: "pane", paneId: "pane-1" },
+      },
+      attachment.generation,
+    );
+    stream.sendInput("pane-1", new TextEncoder().encode("stale"), {
+      ...stamp,
+      source: "input",
+      kind: "key",
+    });
+    const after = await stream.command(
+      {
+        type: "session.navigate",
+        sessionId: "session-1",
+        target: { kind: "pane", paneId: "pane-1" },
+      },
+      attachment.generation,
+    );
+    expect(after.result.navigation!.generation).toBeGreaterThan(stamp.navigationGeneration);
+    expect(write.mock.calls.map(([, bytes]) => new TextDecoder().decode(bytes))).toEqual([
+      "current",
+    ]);
+  } finally {
+    stream.close();
+    write.mockRestore();
+    await fixture.app.runtime.stopAll();
     await fixture.close();
   }
 });
@@ -129,6 +533,52 @@ test("bounds normal client requests when the daemon stops responding", async () 
     await server.stop(true);
     await request.catch(() => {});
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("ordinary stream input authorization never reads retained terminal histories", async () => {
+  const fixture = await startTestServer({ withPane: true });
+  await fixture.app.runtime.start(fixture.app.snapshot().panes[0]!);
+  const stream = await fixture.client.stream({ onMessage() {} });
+  const write = spyOn(fixture.app.runtime, "write");
+  let reads: ReturnType<typeof spyOn> | undefined;
+  try {
+    const attachment = await stream.attach("session-1");
+    let snapshot = await fixture.client.snapshot();
+    const stamp = {
+      epoch: snapshot.epoch,
+      attachmentGeneration: attachment.generation,
+      navigationGeneration: snapshot.navigation[0]!.generation,
+      geometrySequence: snapshot.geometry.tabs[0]!.generation,
+    };
+    stream.reportViewport(
+      { ...stamp, tabId: "tab-1", canvas: { cols: 80, rows: 25 }, eligible: true },
+      stamp,
+    );
+    const barrier = {
+      type: "session.navigate" as const,
+      sessionId: "session-1",
+      target: { kind: "pane" as const, paneId: "pane-1" },
+    };
+    await stream.command(barrier, attachment.generation);
+    snapshot = await fixture.client.snapshot();
+    reads = spyOn(fixture.history, "read");
+    stream.sendInput("pane-1", new TextEncoder().encode("x"), {
+      ...stamp,
+      geometrySequence: snapshot.geometry.tabs[0]!.generation,
+      source: "input",
+      kind: "key",
+      activitySequence: 1,
+    });
+    await stream.command(barrier, attachment.generation);
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(reads).not.toHaveBeenCalled();
+  } finally {
+    reads?.mockRestore();
+    write.mockRestore();
+    stream.close();
+    await fixture.app.runtime.stopAll();
+    await fixture.close();
   }
 });
 
@@ -230,6 +680,9 @@ test("only successful durable commands advance and broadcast snapshots", async (
   try {
     connection = await fixture.client.stream({
       onMessage(message) {
+        if (message.type !== "snapshot") {
+          return;
+        }
         messages.push(message);
         if (messages.length === 1) {
           receiveFirst();
@@ -292,7 +745,7 @@ test("streams runtime input, output, status, and queued history", async () => {
     connection = await fixture.client.stream({
       onMessage(message) {
         messages.push(message);
-        if (messages.length === 1) {
+        if (message.type === "snapshot") {
           initialSnapshot();
         }
         if (message.type === "process.status" && message.status === "exited") {
@@ -306,8 +759,12 @@ test("streams runtime input, output, status, and queued history", async () => {
       cwd: process.cwd(),
       restorePolicy: { type: "shell", executable: "/bin/sh", args: [] },
     });
-    connection.resize("pane-1", 100, 30);
-    connection.sendInput("pane-1", new TextEncoder().encode("printf app-stream; exit\n"));
+    await sendTerminalInput(
+      fixture.client,
+      connection,
+      "pane-1",
+      new TextEncoder().encode("printf app-stream; exit\n"),
+    );
     expect(await fixture.app.runtime.waitForExit("pane-1")).toBe(0);
     await exited;
 
@@ -404,6 +861,8 @@ test("applies a newer snapshot frame after a pending gap refresh", async () => {
     tabs: [],
     panes: [],
     terminalHistories: [],
+    navigation: [],
+    geometry: { sequence: 0, tabs: [], panes: [] },
   });
   let streamSocket: Bun.ServerWebSocket | undefined;
   let markRefreshStarted!: () => void;
@@ -427,6 +886,14 @@ test("applies a newer snapshot frame after a pending gap refresh", async () => {
     websocket: {
       open(socket) {
         streamSocket = socket;
+        socket.send(
+          JSON.stringify({
+            type: "client.ready",
+            epoch: "epoch-1",
+            connectionId: "test",
+            protocol: "work-craft-projection-preview/1",
+          }),
+        );
         socket.send(JSON.stringify({ type: "snapshot", snapshot: snapshot(0) }));
       },
       message() {},
@@ -472,9 +939,9 @@ test("applies a newer snapshot frame after a pending gap refresh", async () => {
         status: "running",
       }),
     );
-    await marker;
     releaseRefresh();
     await refreshed;
+    await marker;
     expect(await Promise.race([newest.then(() => true), Bun.sleep(100).then(() => false)])).toBe(
       true,
     );

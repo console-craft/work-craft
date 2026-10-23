@@ -1,13 +1,6 @@
-import type { CategoryKind, Snapshot } from "@work-craft/server/client";
+import type { ClientAttachment, SessionNavigation, Snapshot } from "@work-craft/server/client";
 
 import { focusAfterNavigatorHide, focusKey, type FocusTarget } from "@/input/focus.ts";
-import {
-  categoriesForWorkspace,
-  navigatorEntries,
-  navigatorItemKey,
-  sessionsInOrder,
-  workspacesForSession,
-} from "@/navigation/model.ts";
 import {
   clearOperationalError,
   type OperationalError,
@@ -16,16 +9,33 @@ import {
   retainsErrorSource,
 } from "@/shell/errors.ts";
 import { DEFAULT_NAVIGATOR_WIDTH, resizeNavigatorWidth } from "@/shell/layout.ts";
-import type { CreateKind } from "@/shell/model.ts";
-import { paneIds } from "@/workbench/layout.ts";
-import { selectedTab, surfaceForItem, tabsForSurface } from "@/workbench/model";
+import { type CreateKind, deriveShellModel } from "@/shell/model.ts";
 
 export type ShellRegion = "workspace" | "session" | "category" | "navigator" | "tabs" | "workbench";
 
+/** The originating epoch and cursor stay frozen while a draft is edited. */
+export type DialogScope = Readonly<{
+  epoch: string;
+  navigation: Readonly<SessionNavigation> | null;
+  parentId: string | null;
+}>;
+
 export type DialogState =
-  | { kind: "sessions"; returnFocus: FocusTarget }
-  | { kind: "create"; createKind: CreateKind; returnFocus: FocusTarget }
-  | { kind: "archive"; itemId: string; title: string; path: string; returnFocus: FocusTarget }
+  | { kind: "sessions"; returnFocus: FocusTarget; awaitingAttachment?: true }
+  | {
+      kind: "create";
+      createKind: CreateKind;
+      returnFocus: FocusTarget;
+      scope: DialogScope;
+    }
+  | {
+      kind: "archive";
+      itemId: string;
+      title: string;
+      path: string;
+      returnFocus: FocusTarget;
+      navigationGeneration: number;
+    }
   | null;
 
 export type ShellState = {
@@ -35,16 +45,11 @@ export type ShellState = {
     { query: string; cursor: string | null; expanded: ReadonlySet<string> }
   >;
   navigatorOrder: string[];
-  activeSessionId: string | null;
-  activeWorkspaceId: string | null;
-  activeCategory: CategoryKind;
-  activeNavigatorKey: string | null;
-  /** A successful open may precede the snapshot containing its new item. */
-  pendingNavigatorActivation: { epoch: string; revision: number } | null;
+  /** Presentation-memory identity, never an active selection. */
+  navigatorScope: string;
   navigatorCursorKey: string | null;
   tabCursorId: string | null;
   focus: FocusTarget;
-  lastPaneByTab: Record<string, string>;
   navigatorOpen: boolean;
   widthBand: "wide" | "narrow" | "blocked";
   navigatorWidth: number;
@@ -63,24 +68,21 @@ export type ShellAction =
   | { type: "navigator.query"; query: string }
   | { type: "navigator.hide" }
   | { type: "presentation.resize"; width: number }
-  | { type: "snapshot.reconcile"; snapshot: Snapshot }
-  | { type: "session.activate"; id: string }
+  | {
+      type: "snapshot.reconcile";
+      snapshot: Omit<Snapshot, "terminalHistories">;
+      attachment: ClientAttachment | null;
+    }
+  | { type: "session.attached" }
   | {
       type: "focus.set";
       focus: FocusTarget;
       tabId?: string;
     }
-  | { type: "workspace.activate"; id: string }
-  | { type: "category.activate"; category: CategoryKind }
   | { type: "navigator.cursor"; key: string | null }
-  | {
-      type: "navigator.activate";
-      key: string;
-      pending?: NonNullable<ShellState["pendingNavigatorActivation"]>;
-    }
   | { type: "tab.cursor"; id: string | null }
   | { type: "root.toggle"; rootId: string }
-  | { type: "navigator.toggle"; hasWorkbench: boolean }
+  | { type: "navigator.toggle"; hasWorkbench: boolean; paneId?: string | null }
   | { type: "navigator.reveal" }
   | { type: "navigator.resize"; direction: -1 | 1; terminalWidth: number }
   | { type: "workspace.viewport"; start: number }
@@ -97,15 +99,10 @@ export function createInitialShellState(width = 120): ShellState {
     navigatorQuery: "",
     navigatorScopes: {},
     navigatorOrder: [],
-    activeSessionId: null,
-    activeWorkspaceId: null,
-    activeCategory: "inbox",
-    activeNavigatorKey: null,
-    pendingNavigatorActivation: null,
+    navigatorScope: "",
     navigatorCursorKey: null,
     tabCursorId: null,
     focus: { region: "workspace" },
-    lastPaneByTab: {},
     navigatorOpen: width >= 120,
     widthBand: width < 80 ? "blocked" : width < 120 ? "narrow" : "wide",
     navigatorWidth: DEFAULT_NAVIGATOR_WIDTH,
@@ -124,15 +121,10 @@ export function createInitialShellState(width = 120): ShellState {
 export function reduceShellState(state: ShellState, action: ShellAction): ShellState {
   switch (action.type) {
     case "snapshot.reconcile":
-      return reconcileShellState(state, action.snapshot);
-    case "session.activate":
+      return reconcileShellState(state, action.snapshot, action.attachment);
+    case "session.attached":
       return {
         ...state,
-        ...changeScope(state, null, state.activeCategory),
-        activeSessionId: action.id,
-        activeWorkspaceId: null,
-        activeNavigatorKey: null,
-        pendingNavigatorActivation: null,
         focus: { region: "workspace" },
         navigatorCursorKey: null,
         tabCursorId: null,
@@ -140,48 +132,17 @@ export function reduceShellState(state: ShellState, action: ShellAction): ShellS
         promptValue: "",
       };
     case "focus.set":
-      if (
-        focusKey(state.focus) === focusKey(action.focus) &&
-        (action.focus.region !== "workbench" ||
-          state.lastPaneByTab[action.tabId ?? state.tabCursorId ?? ""] === action.focus.paneId)
-      ) {
+      if (focusKey(state.focus) === focusKey(action.focus)) {
         return state;
       }
       return {
         ...state,
         focus: action.focus,
-        lastPaneByTab:
-          action.focus.region === "workbench" && (action.tabId ?? state.tabCursorId)
-            ? { ...state.lastPaneByTab, [action.tabId ?? state.tabCursorId!]: action.focus.paneId }
-            : state.lastPaneByTab,
-      };
-    case "workspace.activate":
-      return {
-        ...state,
-        ...changeScope(state, action.id, state.activeCategory),
-        activeWorkspaceId: action.id,
-        activeNavigatorKey: null,
-        pendingNavigatorActivation: null,
-      };
-    case "category.activate":
-      return {
-        ...state,
-        ...changeScope(state, state.activeWorkspaceId, action.category),
-        activeCategory: action.category,
-        activeNavigatorKey: null,
-        pendingNavigatorActivation: null,
       };
     case "navigator.cursor":
       return { ...state, navigatorCursorKey: action.key };
     case "navigator.query":
       return { ...state, navigatorQuery: action.query };
-    case "navigator.activate":
-      return {
-        ...state,
-        activeNavigatorKey: action.key,
-        navigatorCursorKey: action.key,
-        pendingNavigatorActivation: action.pending ?? null,
-      };
     case "tab.cursor":
       return { ...state, tabCursorId: action.id };
     case "root.toggle": {
@@ -207,11 +168,7 @@ export function reduceShellState(state: ShellState, action: ShellAction): ShellS
       return {
         ...state,
         navigatorOpen: false,
-        focus: focusAfterNavigatorHide(
-          state.focus,
-          state.lastPaneByTab[state.tabCursorId ?? ""] ?? null,
-          action.hasWorkbench,
-        ),
+        focus: focusAfterNavigatorHide(state.focus, action.paneId ?? null, action.hasWorkbench),
       };
     }
     case "navigator.hide":
@@ -252,8 +209,8 @@ export function reduceShellState(state: ShellState, action: ShellAction): ShellS
         dialog:
           state.dialog.kind === "create" &&
           state.dialog.createKind === "session" &&
-          state.activeSessionId === null
-            ? { kind: "sessions", returnFocus: state.dialog.returnFocus }
+          state.dialog.scope.navigation === null
+            ? { kind: "sessions", returnFocus: state.dialog.returnFocus, awaitingAttachment: true }
             : null,
         focus: state.dialog.returnFocus,
         promptValue: "",
@@ -314,61 +271,19 @@ export function reduceShellState(state: ShellState, action: ShellAction): ShellS
   }
 }
 
-export function reconcileShellState(state: ShellState, snapshot: Snapshot): ShellState {
-  const sessions = sessionsInOrder(snapshot);
-  const sessionStillExists = sessions.some(({ id }) => id === state.activeSessionId);
-  const activeSessionId = sessionStillExists
-    ? state.activeSessionId
-    : sessions.length === 1
-      ? sessions[0]!.id
-      : null;
-  const sessionChanged = activeSessionId !== state.activeSessionId;
-  const workspaces =
-    activeSessionId === null ? [] : workspacesForSession(snapshot, activeSessionId);
-  const activeWorkspaceId = workspaces.some(({ id }) => id === state.activeWorkspaceId)
-    ? state.activeWorkspaceId
-    : (workspaces[0]?.id ?? null);
-  const categories =
-    activeWorkspaceId === null ? [] : categoriesForWorkspace(snapshot, activeWorkspaceId);
-  const activeCategory = categories.some(({ kind }) => kind === state.activeCategory)
-    ? state.activeCategory
-    : (categories[0]?.kind ?? "inbox");
+export function reconcileShellState(
+  state: ShellState,
+  snapshot: Omit<Snapshot, "terminalHistories">,
+  attachment: ClientAttachment | null,
+): ShellState {
+  const navigation = snapshot.navigation.find(
+    ({ sessionId }) => sessionId === attachment?.sessionId,
+  );
+  const scope = JSON.stringify([navigation?.workspaceId ?? null, navigation?.category ?? null]);
   const scopedState =
-    activeWorkspaceId === state.activeWorkspaceId && activeCategory === state.activeCategory
-      ? state
-      : { ...state, ...changeScope(state, activeWorkspaceId, activeCategory) };
-  const expandedRootIds = scopedState.expandedRootIds;
-  const entries =
-    activeWorkspaceId === null
-      ? []
-      : navigatorEntries(
-          snapshot,
-          activeWorkspaceId,
-          activeCategory,
-          expandedRootIds,
-          scopedState.navigatorQuery,
-          process.env.HOME ?? "",
-        );
-  const pendingNavigatorActivation =
-    state.pendingNavigatorActivation?.epoch === snapshot.epoch &&
-    snapshot.revision < state.pendingNavigatorActivation.revision &&
-    activeSessionId === state.activeSessionId &&
-    activeWorkspaceId === state.activeWorkspaceId &&
-    activeCategory === state.activeCategory
-      ? state.pendingNavigatorActivation
-      : null;
-  // Creation chooses its item on success, not when its snapshot happens to arrive.
-  const activeNavigatorKey =
-    (state.activeNavigatorKey === null && state.dialog?.kind === "create") ||
-    snapshot.items.some(
-      (item) =>
-        navigatorItemKey(item) === state.activeNavigatorKey &&
-        item.workspaceId === activeWorkspaceId &&
-        item.category === activeCategory,
-    ) ||
-    pendingNavigatorActivation !== null
-      ? state.activeNavigatorKey
-      : (entries[0]?.key ?? null);
+    scope === state.navigatorScope ? state : { ...state, ...changeScope(state, scope) };
+  const model = deriveShellModel({ snapshot, state: scopedState, attachment });
+  const entries = model.entries;
   const oldIndex = scopedState.navigatorOrder.indexOf(scopedState.navigatorCursorKey ?? "");
   const surviving = new Set(entries.map((entry) => entry.key));
   const neighbor =
@@ -380,36 +295,40 @@ export function reconcileShellState(state: ShellState, snapshot: Snapshot): Shel
   const navigatorCursorKey = entries.some(({ key }) => key === scopedState.navigatorCursorKey)
     ? scopedState.navigatorCursorKey
     : (neighbor ?? entries.find((entry) => entry.matches)?.key ?? entries[0]?.key ?? null);
-  const itemId = snapshot.items.find((item) => navigatorItemKey(item) === activeNavigatorKey)?.id;
-  const surface = surfaceForItem(snapshot, itemId);
-  const tabs = tabsForSurface(snapshot, surface?.id);
+  const tabs = model.tabs;
   const tabCursorId = tabs.some(({ id }) => id === state.tabCursorId)
     ? state.tabCursorId
-    : tabs.some(({ id }) => id === surface?.activeTabId)
-      ? surface!.activeTabId
-      : (tabs[0]?.id ?? null);
-  const activeTab = selectedTab(tabs, surface?.activeTabId) ?? tabs[0];
-  const panes = paneIds(activeTab?.layout ?? null);
-  const selectedPaneId = state.focus.region === "workbench" ? state.focus.paneId : null;
+    : (model.activeTab?.id ?? tabs[0]?.id ?? null);
+  const selectedPaneId = navigation?.paneId ?? null;
   const focus =
-    sessionChanged && activeSessionId !== null
-      ? { region: "workspace" as const }
-      : state.focus.region === "workbench" &&
-          (!panes.includes(state.focus.paneId) ||
-            !snapshot.panes.some(
-              (pane) =>
-                pane.id === selectedPaneId &&
-                pane.processStatus ===
-                  (state.focus.region === "workbench" && state.focus.control === "reactivate"
-                    ? "exited"
-                    : "running"),
-            ))
-        ? { region: "tabs" as const }
-        : state.focus;
+    attachment !== null && state.dialog === null && state.focus.region === "workbench"
+      ? selectedPaneId &&
+        model.paneIds.includes(selectedPaneId) &&
+        snapshot.panes.some(
+          (pane) =>
+            pane.id === selectedPaneId &&
+            (pane.processStatus === "starting" ||
+              pane.processStatus ===
+                (state.focus.region === "workbench" && state.focus.control === "reactivate"
+                  ? "exited"
+                  : "running")),
+        )
+        ? { ...state.focus, paneId: selectedPaneId }
+        : { region: "tabs" as const }
+      : state.focus;
+  const draftSessionId =
+    state.dialog?.kind === "create" ? state.dialog.scope.navigation?.sessionId : undefined;
+  const deletedDraftSession =
+    draftSessionId !== undefined && !snapshot.sessions.some(({ id }) => id === draftSessionId);
   const dialog =
-    activeSessionId === null
-      ? { kind: "sessions" as const, returnFocus: state.focus }
-      : sessionChanged && state.dialog?.kind === "create"
+    (attachment?.sessionId === null || deletedDraftSession) &&
+    (state.dialog?.kind !== "create" || deletedDraftSession)
+      ? state.dialog?.kind === "sessions"
+        ? state.dialog
+        : { kind: "sessions" as const, returnFocus: state.focus, awaitingAttachment: true as const }
+      : attachment?.sessionId &&
+          state.dialog?.kind === "sessions" &&
+          state.dialog.awaitingAttachment
         ? null
         : state.dialog;
 
@@ -426,47 +345,38 @@ export function reconcileShellState(state: ShellState, snapshot: Snapshot): Shel
     sourceFailures: Object.fromEntries(
       Object.entries(state.sourceFailures).filter(([key]) => retainsSource(key)),
     ),
-    activeSessionId,
-    activeWorkspaceId,
-    activeCategory,
-    activeNavigatorKey,
-    pendingNavigatorActivation,
     navigatorCursorKey,
     navigatorOrder: entries.map((entry) => entry.key),
     tabCursorId,
     focus,
-    expandedRootIds,
     dialog,
     promptValue: dialog?.kind === "create" ? state.promptValue : "",
-    lastPaneByTab: Object.fromEntries(
-      Object.entries(state.lastPaneByTab).filter(
-        ([tabId, paneId]) =>
-          snapshot.tabs.some((tab) => tab.id === tabId && paneIds(tab.layout).includes(paneId)) &&
-          snapshot.panes.some((pane) => pane.id === paneId),
-      ),
-    ),
   };
 }
 
 function changeScope(
   state: ShellState,
-  workspaceId: string | null,
-  category: CategoryKind,
+  scope: string,
 ): Pick<
   ShellState,
-  "navigatorScopes" | "navigatorQuery" | "navigatorCursorKey" | "expandedRootIds" | "navigatorOrder"
+  | "navigatorScope"
+  | "navigatorScopes"
+  | "navigatorQuery"
+  | "navigatorCursorKey"
+  | "expandedRootIds"
+  | "navigatorOrder"
 > {
-  const key = JSON.stringify([state.activeWorkspaceId, state.activeCategory]);
   const navigatorScopes = {
     ...state.navigatorScopes,
-    [key]: {
+    [state.navigatorScope]: {
       query: state.navigatorQuery,
       cursor: state.navigatorCursorKey,
       expanded: state.expandedRootIds,
     },
   };
-  const next = navigatorScopes[JSON.stringify([workspaceId, category])];
+  const next = navigatorScopes[scope];
   return {
+    navigatorScope: scope,
     navigatorScopes,
     navigatorQuery: next?.query ?? "",
     navigatorCursorKey: next?.cursor ?? null,

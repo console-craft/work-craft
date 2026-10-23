@@ -78,10 +78,10 @@ export function TabBar(props: TabBarProps): ReactNode {
           }
           candidate.current = id;
           live.current.onFocus(id);
-          live.current.onActivate(id);
         }}
         onActivate={(id) => {
           if (enabled() && live.current.entryEnabled !== false) {
+            live.current.onActivate(id);
             live.current.onEnter(id);
           }
         }}
@@ -107,6 +107,7 @@ export function TabBar(props: TabBarProps): ReactNode {
           onMouseDown={(event) => {
             gate(event);
             if (enabled() && candidate.current !== null) {
+              live.current.onScrollInteraction();
               live.current.onFocus(candidate.current);
             }
           }}

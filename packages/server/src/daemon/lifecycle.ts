@@ -357,7 +357,7 @@ export async function runDaemon(
   let lock: Lock | undefined;
   let db: Database | undefined;
   let app: WorkCraftApp | undefined;
-  let server: Bun.Server<undefined> | undefined;
+  let server: ReturnType<typeof startHttpServer> | undefined;
   let socketIdentity: FileIdentity | undefined;
   let shutdownPromise: Promise<void> | undefined;
   let forceShutdown = false;

@@ -2,8 +2,10 @@ import { expect, test } from "bun:test";
 
 import {
   BoxRenderable,
-  EmbeddedTerminalRenderable,
+  KeyEvent,
   parseColor,
+  parseKeypress,
+  PasteEvent,
   type ScrollBoxRenderable,
   TextRenderable,
 } from "@opentui/core";
@@ -11,10 +13,12 @@ import { type Command } from "@work-craft/server/client";
 import { act, type Dispatch, type SetStateAction, useState } from "react";
 
 import { calculateShellLayout } from "@/shell/layout.ts";
+import { projectShellPresentation } from "@/shell/presentation";
 import { SessionSwitcher } from "@/shell/session-switcher.tsx";
 import { WorkCraftShell } from "@/shell/shell.tsx";
 import { StatusBar } from "@/shell/status-bar.tsx";
 import {
+  deferred,
   liveInputFixture,
   openFixtureItem,
   splitSurfaceSnapshot,
@@ -24,13 +28,164 @@ import {
   workCraftStateFixture,
 } from "@/shell/tests/fixtures";
 import { WorkspaceBar } from "@/shell/workspace-bar.tsx";
-import { snapshotFixture } from "@/tests/support/fixtures.ts";
+import { attachmentFixture, controlSnapshotFixture } from "@/tests/support/fixtures";
+import { snapshotFixture, streamFixture } from "@/tests/support/fixtures.ts";
 import { Box } from "@/ui/primitives/box.tsx";
 import type { Theme } from "@/ui/theming/theme";
 import { ThemeProvider } from "@/ui/theming/theme-provider.tsx";
 import { defaultTheme } from "@/ui/theming/themes/default.ts";
 import { draculaTheme } from "@/ui/theming/themes/dracula.ts";
 import { paneIds } from "@/workbench/layout.ts";
+import { TerminalMaterialRenderable } from "@/workbench/terminal-material";
+
+test("confirmed detach and a deliberate destination change cannot reuse stale presentation", () => {
+  const snapshot = controlSnapshotFixture(surfaceSnapshot());
+  const previous = projectShellPresentation(null, {
+    snapshot,
+    attachment: attachmentFixture(),
+    status: "connected",
+    requestedSessionId: "session-work",
+  });
+  expect(previous?.sessionId).toBe("session-work");
+  expect(
+    projectShellPresentation(previous, {
+      snapshot,
+      attachment: null,
+      status: "connecting",
+      requestedSessionId: "session-work",
+    }),
+  ).toBe(previous);
+  expect(
+    projectShellPresentation(previous, {
+      snapshot,
+      attachment: attachmentFixture(null),
+      status: "connected",
+      requestedSessionId: null,
+    }),
+  ).toBeNull();
+  expect(
+    projectShellPresentation(previous, {
+      snapshot,
+      attachment: null,
+      status: "connected",
+      requestedSessionId: "other-session",
+    }),
+  ).toBeNull();
+  const removed = { ...snapshot, sessions: [] };
+  expect(
+    projectShellPresentation(previous, {
+      snapshot: removed,
+      attachment: null,
+      status: "connecting",
+      requestedSessionId: "session-work",
+    }),
+  ).toBeNull();
+  const archived = {
+    ...snapshot,
+    items: snapshot.items.map((item) => ({ ...item, archived: true })),
+  };
+  expect(
+    projectShellPresentation(previous, {
+      snapshot: archived,
+      attachment: null,
+      status: "connecting",
+      requestedSessionId: "session-work",
+    }),
+  ).toBeNull();
+});
+
+test("transient reattachment preserves the exact native frame and cursor without input authority", async () => {
+  const setup = await liveInputFixture();
+  const native = setup.renderer.root.findDescendantById(
+    "terminal:pane-1",
+  ) as TerminalMaterialRenderable;
+  await act(async () => setup.output("\x1b[2J\x1b[2;3Hkept through reconnect"));
+  await act(async () => Bun.sleep(35));
+  await setup.flush();
+  const body = setup
+    .captureCharFrame()
+    .split("\n")
+    .slice(0, setup.renderer.height - 1)
+    .join("\n");
+  const cursor = setup.renderer.getCursorState();
+  const oldData = native.handleKeyPress.bind(native);
+  const pending = deferred<ReturnType<typeof streamFixture>>();
+  const entered = deferred<void>();
+  setup.client.stream = async () => {
+    entered.resolve();
+    return pending.promise;
+  };
+  const reconnect = setup.store.reload();
+  try {
+    await entered.promise;
+    native.handlePaste(new PasteEvent(new Uint8Array([97])));
+    oldData(new KeyEvent(parseKeypress("b")!));
+    expect(setup.sent).toEqual([]);
+    setup.renderCurrent();
+    await setup.flush();
+    expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBe(native);
+    expect(setup.renderer.getCursorState()).toEqual(cursor);
+    expect(
+      setup
+        .captureCharFrame()
+        .split("\n")
+        .slice(0, setup.renderer.height - 1)
+        .join("\n"),
+    ).toBe(body);
+    pending.resolve(streamFixture());
+    await reconnect;
+    setup.renderCurrent();
+    await setup.flush();
+    expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBe(native);
+  } finally {
+    pending.resolve(streamFixture());
+    await reconnect;
+    setup.store.stop();
+    act(() => setup.renderer.destroy());
+  }
+});
+
+test("runtime replacement changes only its native viewport once and rejects old callbacks before commit", async () => {
+  const setup = await liveInputFixture();
+  const first = setup.renderer.root.findDescendantById(
+    "terminal:pane-1",
+  ) as TerminalMaterialRenderable;
+  const sibling = setup.renderer.root.findDescendantById("terminal:pane-2");
+  const outer = first.parent!.parent;
+  const captured = first.handleKeyPress.bind(first);
+  const full = splitSurfaceSnapshot();
+  setup.client.paneHistory = async (paneId) => ({
+    epoch: full.epoch,
+    paneId,
+    runtimeGeneration: paneId === "pane-1" ? 1 : 0,
+    history: full.terminalHistories.find((history) => history.paneId === paneId)!,
+  });
+  try {
+    const current = setup.store.snapshot()!;
+    const next = {
+      ...current,
+      revision: current.revision + 1,
+      terminalStates: current.terminalStates.map((state) =>
+        state.paneId === "pane-1" ? { ...state, runtimeGeneration: 1 } : state,
+      ),
+    };
+    await setup.store.apply({ type: "control.snapshot", snapshot: next });
+    first.handlePaste(new PasteEvent(new Uint8Array([97])));
+    captured(new KeyEvent(parseKeypress("b")!));
+    expect(setup.sent).toEqual([]);
+    setup.renderCurrent();
+    await setup.flush();
+    const replacement = setup.renderer.root.findDescendantById("terminal:pane-1")!;
+    expect(replacement).not.toBe(first);
+    expect(replacement.parent!.parent).toBe(outer);
+    expect(setup.renderer.root.findDescendantById("terminal:pane-2")).toBe(sibling);
+    await setup.publish({ ...next, revision: next.revision + 1 });
+    expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBe(replacement);
+  } finally {
+    setup.store.stop();
+    act(() => setup.renderer.destroy());
+  }
+});
 
 for (const direction of ["single", "horizontal", "vertical"] as const) {
   for (const stopped of [false, true]) {
@@ -93,9 +248,10 @@ for (const direction of ["single", "horizontal", "vertical"] as const) {
             if (node.target.region !== "workbench") {
               continue;
             }
-            const rendered = root.findDescendantById(
+            const target = root.findDescendantById(
               `${node.target.control ? "reactivate" : "terminal"}:${node.target.paneId}`,
             )!;
+            const rendered = node.target.control ? target : target.parent!;
             expect({
               x: rendered.screenX,
               y: rendered.screenY,
@@ -105,14 +261,16 @@ for (const direction of ["single", "horizontal", "vertical"] as const) {
           }
           for (const id of paneIds(initial.tabs[0]!.layout)) {
             const terminal = root.findDescendantById(`terminal:${id}`)!;
-            const pane = terminal.parent!;
-            expect(terminal.screenY).toBe(pane.screenY + 1);
-            expect(terminal.screenY + terminal.height).toBeLessThanOrEqual(
+            const viewport = terminal.parent!;
+            const pane = viewport.parent!.parent!;
+            expect(viewport.screenY).toBe(pane.screenY + 1);
+            expect(viewport.screenY + viewport.height).toBeLessThanOrEqual(
               pane.screenY + pane.height,
             );
+            expect([terminal.width, terminal.height]).toEqual([80, 24]);
             const alert = root.findDescendantById(`pane-alert:${id}`);
             if (alert) {
-              expect(alert.screenY).toBe(terminal.screenY + terminal.height);
+              expect(alert.screenY).toBe(viewport.screenY + viewport.height);
               expect(alert.screenY + alert.height).toBe(pane.screenY + pane.height);
             }
             expect(pane.screenY + pane.height).toBeLessThanOrEqual(status.screenY);
@@ -122,7 +280,7 @@ for (const direction of ["single", "horizontal", "vertical"] as const) {
       }
       try {
         assertLayout(120, 40, true);
-        const first = setup.renderer.root.findDescendantById("terminal:pane-1")!;
+        const first = setup.renderer.root.findDescendantById("terminal:pane-1")!.parent!;
         expect([first.screenX, first.screenY, first.width, first.height]).toEqual(
           direction === "single"
             ? [51, 6, 68, stopped ? 30 : 33]
@@ -203,13 +361,12 @@ test("resize guard blocks same-buffer terminal bytes and keeps dialog input moun
   const sent: Uint8Array[] = [];
   const workCraft = workCraftStateFixture({
     snapshot: surfaceSnapshot(),
-    stream: {
+    stream: streamFixture({
       sendInput: (_id, data) => {
         sent.push(data);
       },
-      resize() {},
       close() {},
-    },
+    }),
   });
   const setup = await testRender(<WorkCraftShell workCraft={workCraft} />, {
     width: 120,
@@ -311,11 +468,10 @@ test("theme changes preserve workbench identity, focus, hints and status geometr
       commands.push(command);
       return { ok: true, revision: snapshot.revision, result: { id: "result-1" } };
     },
-    stream: {
+    stream: streamFixture({
       close: () => {},
-      resize: () => {},
       sendInput: (paneId, bytes) => received.push({ paneId, bytes: [...bytes] }),
-    },
+    }),
   });
   let changeTheme: Dispatch<SetStateAction<Theme>>;
   function Fixture() {
@@ -336,8 +492,8 @@ test("theme changes preserve workbench identity, focus, hints and status geometr
     const root = setup.renderer.root;
     const terminal = root.findDescendantById("terminal:pane-1")!;
     const stoppedTerminal = root.findDescendantById("terminal:pane-2")!;
-    expect(terminal).toBeInstanceOf(EmbeddedTerminalRenderable);
-    expect(stoppedTerminal).toBeInstanceOf(EmbeddedTerminalRenderable);
+    expect(terminal).toBeInstanceOf(TerminalMaterialRenderable);
+    expect(stoppedTerminal).toBeInstanceOf(TerminalMaterialRenderable);
     const previousHints = statusText(setup);
     const commandCount = commands.length;
     function assertPalette(theme: Theme, modal = false): void {
@@ -412,11 +568,10 @@ test("horizontal pointer scrolling preserves terminal identity and subsequent in
   const workCraft = workCraftStateFixture({
     snapshot,
     connectionError: "Connection detail ".repeat(10),
-    stream: {
+    stream: streamFixture({
       close: () => {},
-      resize: () => {},
       sendInput: (paneId, bytes) => received.push({ paneId, bytes: [...bytes] }),
-    },
+    }),
   });
   let changeTheme: Dispatch<SetStateAction<Theme>>;
   function Fixture() {

@@ -13,9 +13,8 @@ import {
   submitCreate,
 } from "@/shell/commands";
 import type { ShellEnvironment } from "@/shell/context";
-import { commandSourceKey } from "@/shell/errors";
+import { commandSourceKey, OPERATIONAL_ERROR_DURATION } from "@/shell/errors";
 import { focusTargetFor } from "@/shell/focus";
-import { deriveShellModel } from "@/shell/model";
 import type { DialogState, ShellAction } from "@/shell/state";
 import type {
   PaneEntryHandle,
@@ -41,6 +40,7 @@ type ShellCommandsOptions = {
   nextRequestId(): number;
 };
 export type ShellCommandsController = {
+  attach(sessionId: string): Promise<void>;
   run: ExecuteCommandInput["run"];
   execute(
     command: CommandId,
@@ -82,6 +82,33 @@ export function useShellCommands({
   });
   const submittingDialogRef = useRef<NonNullable<DialogState> | null>(null);
   const sourceOperations = useRef(new Map<string, number>());
+  async function attachSession(sessionId: string): Promise<void> {
+    const requestId = nextRequestId();
+    const epoch = read().snapshot?.epoch ?? "";
+    const contextKey = read().model.navigationKey;
+    try {
+      await workCraft.attach(sessionId);
+      dispatch({ type: "session.attached" });
+      dispatch({ type: "source.clear", sourceKey: "session:client.attach", requestId });
+    } catch (cause) {
+      const now = Date.now();
+      dispatch({
+        type: "source.report",
+        now,
+        error: {
+          sourceKey: "session:client.attach",
+          sourceLabel: "Session",
+          operation: "Attach",
+          epoch,
+          contextKey,
+          requestId,
+          message: cause instanceof Error ? cause.message : String(cause),
+          expiresAt: now + OPERATIONAL_ERROR_DURATION,
+          origin: "direct",
+        },
+      });
+    }
+  }
   function reconcileRestartProtection(): void {
     const currentSnapshot = read().snapshot;
     let changed = false;
@@ -89,7 +116,13 @@ export function useShellCommands({
       if (
         workCraft.status !== "connected" ||
         currentSnapshot?.epoch !== restart.epoch ||
-        (restart.revision !== null && currentSnapshot.revision >= restart.revision)
+        (restart.revision !== null &&
+          (currentSnapshot.revision > restart.revision ||
+            (currentSnapshot.revision === restart.revision &&
+              !currentSnapshot.panes.some(
+                (pane) =>
+                  pane.id === paneId && ["exited", "interrupted"].includes(pane.processStatus),
+              ))))
       ) {
         reactivatingPaneIdsRef.current.delete(paneId);
         changed = true;
@@ -107,7 +140,7 @@ export function useShellCommands({
   ) => {
     const { snapshot, state, model } = view();
     const entry = getEntry();
-    if (command.type === "surface.ensure" && expected.key === undefined) {
+    if (command.type === "session.openItem" && expected.key === undefined) {
       // Activation owns this navigation change before React commits its reducer action.
       completionContextRef.current = expected;
     }
@@ -120,9 +153,15 @@ export function useShellCommands({
             ? command.surfaceId
             : region;
     const sourceKey = commandSourceKey(command, region);
+    const operationKey =
+      command.type === "session.navigate" ||
+      command.type === "session.step" ||
+      command.type === "session.openItem"
+        ? `navigation:${command.sessionId}`
+        : sourceKey;
     const requestId = nextRequestId();
     const entryIsCurrent = entry.commandStarted(command);
-    sourceOperations.current.set(sourceKey, requestId);
+    sourceOperations.current.set(operationKey, requestId);
     const label =
       snapshot?.items.find((item) => item.id === id)?.title ??
       snapshot?.panes.find((pane) => pane.id === id)?.title ??
@@ -131,7 +170,11 @@ export function useShellCommands({
       command,
       region,
       expected,
-      current: () => completionContextFor(read().model, read().state.dialog),
+      current: () => ({
+        ...completionContextFor(read().model, read().state.dialog),
+        snapshot: read().snapshot ?? undefined,
+        navigation: read().model.navigation,
+      }),
       send: async (command) => {
         const restart =
           command.type === "process.restart"
@@ -150,7 +193,8 @@ export function useShellCommands({
         label,
         requestId,
         epoch: snapshot?.epoch ?? "",
-        isCurrent: () => sourceOperations.current.get(sourceKey) === requestId && entryIsCurrent(),
+        isCurrent: () =>
+          sourceOperations.current.get(operationKey) === requestId && entryIsCurrent(),
       },
     });
   };
@@ -170,7 +214,7 @@ export function useShellCommands({
     } = view();
     const entry = getEntry();
     const currentState = read().state;
-    const currentModel = deriveShellModel({ snapshot, state: currentState });
+    const currentModel = read().model;
     const enteringPanes =
       command === "focus.right" &&
       (overrides.focus ?? focus).region === "navigator" &&
@@ -232,11 +276,16 @@ export function useShellCommands({
       dispatch,
       setFocus,
       onItemOpened: undefined,
-      onTabSelectionStarted: (id) => entry.startTabSelection(id).complete,
+      onTabSelectionStarted: (id) => {
+        const handle = entry.startTabSelection(id);
+        return (revision, tabId, navigation) =>
+          handle.complete(revision, tabId, undefined, navigation);
+      },
       onTabCreateStarted: () => {
         const handle = entry.startTabSelection(undefined, false, true);
         commandEntry = handle;
-        return (tabId, paneId, revision) => handle.complete(revision, tabId, paneId);
+        return (tabId, paneId, revision, navigation) =>
+          handle.complete(revision, tabId, paneId, navigation);
       },
       onPaneRestarted: restartEntry?.complete,
       onPaneSplitStarted: () => {
@@ -268,7 +317,6 @@ export function useShellCommands({
       return;
     }
     const target: FocusTarget = { region: "workbench", paneId, control: "reactivate" };
-    setFocus(target);
     void execute("pane.restart", { focus: target, focusedPaneId: paneId });
   }
 
@@ -294,6 +342,7 @@ export function useShellCommands({
       dispatch,
       run: runCommand,
       onItemCreated: entry.createdItemHandler(currentState.dialog),
+      attach: attachSession,
     });
   }
 
@@ -329,6 +378,7 @@ export function useShellCommands({
   }
 
   return {
+    attach: attachSession,
     run: runCommand,
     execute,
     submitCreate: handleCreate,

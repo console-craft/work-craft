@@ -374,6 +374,20 @@ test("reserved malformed fields and conflicting availability or bare records are
   ]);
 });
 
+async function waitForPublishedPid(path: string): Promise<number> {
+  const deadline = Date.now() + 2000;
+  while (Date.now() < deadline) {
+    // Existence precedes write completion; PID 0 would target our own process group.
+    const contents = (await Bun.file(path).exists()) ? await readFile(path, "utf8") : "";
+    const pid = Number(contents);
+    if (Number.isSafeInteger(pid) && pid > 0) {
+      return pid;
+    }
+    await Bun.sleep(1);
+  }
+  throw new Error(`Git shim did not publish its PID: ${path}`);
+}
+
 async function withGitShim(
   mode: string,
   run: (path: string, pidFile: string) => Promise<void>,
@@ -466,19 +480,17 @@ test("bounded Git processes are drained killed and reaped on overflow timeout an
       const scan = await inspectDirectory(path);
       expect(scan.discoveryError).toBeDefined();
       expect(Date.now() - start).toBeLessThan(3000);
-      const pid = Number(await readFile(pidFile, "utf8"));
+      const pid = await waitForPublishedPid(pidFile);
       expect(() => process.kill(pid, 0)).toThrow();
     });
   }
   await withGitShim("setInterval(()=>{},1000);", async (path, pidFile) => {
     const controller = new AbortController();
     const scan = inspectDirectory(path, controller.signal);
-    while (!(await Bun.file(pidFile).exists())) {
-      await Bun.sleep(1);
-    }
+    const pid = await waitForPublishedPid(pidFile);
     controller.abort();
     expect((await scan).discoveryError).toBeDefined();
-    const pid = Number(await readFile(pidFile, "utf8"));
+    expect(pid).toBeGreaterThan(0);
     expect(() => process.kill(pid, 0)).toThrow();
   });
 }, 10000);
@@ -556,18 +568,14 @@ test("timeout and abort bound inherited pipes and terminate Git descendants", as
         const descendant = join(path, "descendant");
         let descendantPid: number | undefined;
         try {
-          const readinessDeadline = Date.now() + 2000;
-          while (!(await Bun.file(descendant).exists()) && Date.now() < readinessDeadline) {
-            await Bun.sleep(1);
-          }
-          descendantPid = Number(await readFile(descendant, "utf8"));
+          descendantPid = await waitForPublishedPid(descendant);
           const start = Date.now();
           if (abort) {
             controller.abort();
           }
           expect((await scan).discoveryError).toMatch(abort ? /abort/i : /timed out/i);
           expect(Date.now() - start).toBeLessThan(abort ? 1000 : 2800);
-          const wrapperPid = Number(await readFile(pidFile, "utf8"));
+          const wrapperPid = await waitForPublishedPid(pidFile);
           expect(() => process.kill(wrapperPid, 0)).toThrow();
           await expectProcessExit(descendantPid!);
         } finally {

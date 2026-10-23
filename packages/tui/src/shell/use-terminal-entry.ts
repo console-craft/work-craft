@@ -1,6 +1,6 @@
-import { CliRenderEvents, type EmbeddedTerminalRenderable, type Renderable } from "@opentui/core";
+import { CliRenderEvents, type Renderable } from "@opentui/core";
 import { useRenderer } from "@opentui/react";
-import type { Command } from "@work-craft/server/client";
+import type { Command, SessionNavigation } from "@work-craft/server/client";
 import { useLayoutEffect, useRef, useState } from "react";
 
 import type { FocusTarget } from "@/input/focus";
@@ -10,7 +10,11 @@ import type {
   ExecuteCommandInput,
   SubmitCreateInput,
 } from "@/shell/commands";
-import { navigationContextKey, type ShellEnvironment } from "@/shell/context";
+import {
+  isCreationNavigationCurrent,
+  navigationContextKey,
+  type ShellEnvironment,
+} from "@/shell/context";
 import { entrySourceKey, OPERATIONAL_ERROR_DURATION } from "@/shell/errors";
 import { focusShellTarget, focusTargetFor, nativeFocusId } from "@/shell/focus";
 import { resolveShellFocus, type ShellModel } from "@/shell/model";
@@ -25,11 +29,11 @@ import { isEligibleFocusTarget } from "@/ui/interaction/focus-utils";
 import { hasTerminalViewport } from "@/workbench/layout";
 
 export type TabEntryHandle = {
-  complete(revision: number, tabId?: string, paneId?: string): void;
+  complete(revision: number, tabId?: string, paneId?: string, navigation?: SessionNavigation): void;
   finish(): void;
 };
 export type PaneEntryHandle = {
-  complete(paneId: string, revision: number): void;
+  complete(paneId: string, revision: number, navigation?: SessionNavigation): void;
   finish(): void;
 };
 
@@ -61,8 +65,8 @@ export type TerminalEntryCoordinator = {
   requestTabSelection(tabId: string): Promise<DurableCommandResult | undefined>;
   enterTab(tabId: string): Promise<void>;
   canEnterTab(): boolean;
-  terminal(paneId: string): EmbeddedTerminalRenderable | undefined;
-  registerTerminal(paneId: string, node: EmbeddedTerminalRenderable | null): void;
+  terminal(paneId: string): Renderable | undefined;
+  registerTerminal(paneId: string, node: Renderable | null): void;
   focusFor(model: ShellModel, requested: FocusTarget): FocusTarget;
   projectFocus(target: FocusTarget, perform: () => boolean): boolean;
   isClosingDrawer(): boolean;
@@ -73,11 +77,7 @@ export type TerminalEntryCoordinator = {
   /** Scheduling bridges used only by the shell's existing layout-effect positions. */
   contextChanged(connected: boolean): void;
   hasPending(): boolean;
-  completePending(
-    environment: ShellEnvironment,
-    focusedPaneId: string | null,
-    frame?: { frameId: number },
-  ): void;
+  completePending(environment: ShellEnvironment, frame?: { frameId: number }): void;
 };
 
 /** Owns focus intent, not restart submission protection or authoritative input permission. */
@@ -96,6 +96,7 @@ export function useTerminalEntry({
   const [pending, setPending] = useState<PendingTerminalEntry | null>(null);
   const version = useRef(0);
   const tabOwner = useRef<PendingTerminalEntry | null>(null);
+  const cancelledNavigation = useRef<string | null>(null);
   const latestTabRequest = useRef<{
     tabId: string;
     promise: Promise<DurableCommandResult | undefined>;
@@ -106,7 +107,9 @@ export function useTerminalEntry({
   const formCloseOwner = useRef<{ entry: PendingTerminalEntry; target: Renderable | null } | null>(
     null,
   );
-  const terminals = useRef(new Map<string, EmbeddedTerminalRenderable>());
+  const terminals = useRef(new Map<string, Renderable>());
+  const liveCanReceiveInput = useRef(canReceiveInput);
+  liveCanReceiveInput.current = canReceiveInput;
 
   useLayoutEffect(() => {
     if (pending === null) {
@@ -118,11 +121,29 @@ export function useTerminalEntry({
     function observeFocus(_target?: Renderable | null, previous?: Renderable | null): void {
       onNativeFocus(renderer.currentFocusedRenderable);
       const entry = tabOwner.current;
+      if (projectingTab.current) {
+        return;
+      }
       if (entry?.version === version.current) {
+        const origin = focusTargetFor(entry.origin);
+        const selectionMoved =
+          origin?.region === "workbench" &&
+          (read().model.navigation?.paneId !== origin.paneId ||
+            !liveCanReceiveInput.current(origin.paneId));
+        if (
+          renderer.currentFocusedRenderable?.id === "region:tabs" &&
+          (previous === entry.origin ||
+            (previous == null && !isEligibleFocusTarget(entry.origin, renderer.root))) &&
+          selectionMoved &&
+          canProjectTabEntry(entry, read().snapshot)
+        ) {
+          entry.origin = renderer.currentFocusedRenderable;
+          return;
+        }
         if (
           (renderer.currentFocusedRenderable === null &&
             previous === entry.origin &&
-            !isEligibleFocusTarget(entry.origin, renderer.root) &&
+            (!isEligibleFocusTarget(entry.origin, renderer.root) || selectionMoved) &&
             canProjectTabEntry(entry, read().snapshot)) ||
           (projectingTab.current && renderer.currentFocusedRenderable === entry.origin)
         ) {
@@ -144,6 +165,9 @@ export function useTerminalEntry({
       ) {
         return;
       }
+      if (entry?.version === version.current) {
+        cancelledNavigation.current = read().model.navigationKey;
+      }
       version.current += 1;
       latestTabRequest.current = null;
     }
@@ -154,6 +178,9 @@ export function useTerminalEntry({
   }, [renderer]);
 
   function cancel(): void {
+    if (tabOwner.current?.version === version.current) {
+      cancelledNavigation.current = read().model.navigationKey;
+    }
     version.current += 1;
     setPending(null);
   }
@@ -170,12 +197,13 @@ export function useTerminalEntry({
     );
   }
   function startItemOpen(): NonNullable<ExecuteCommandInput["onItemOpened"]> {
+    cancelledNavigation.current = null;
     const origin = renderer.currentFocusedRenderable;
     const epoch = rendered().snapshot?.epoch;
     const requestVersion = ++version.current;
     const requestId = nextRequestId();
     setPending(null);
-    return (itemId, revision) => {
+    return (itemId, revision, navigation) => {
       if (
         origin !== null &&
         epoch !== undefined &&
@@ -185,13 +213,16 @@ export function useTerminalEntry({
       ) {
         setPending({
           kind: "item",
+          sessionId: read().model.navigation!.sessionId,
           itemId,
           epoch,
           revision,
           origin,
           version: requestVersion,
           requestId,
-          navigationKey: read().model.navigationKey,
+          navigationKey: navigation
+            ? navigationContextKey(epoch, navigation)
+            : read().model.navigationKey,
         });
       }
     };
@@ -211,6 +242,7 @@ export function useTerminalEntry({
     fromStrip = false,
     creating = false,
   ): TabEntryHandle {
+    cancelledNavigation.current = null;
     const origin = renderer.currentFocusedRenderable;
     const originTarget = focusTargetFor(origin);
     const currentModel = read().model;
@@ -229,6 +261,7 @@ export function useTerminalEntry({
     }
     const entry: PendingTerminalEntry = {
       kind: "tab",
+      sessionId: currentModel.navigation!.sessionId,
       itemId: currentModel.activeItem.id,
       tabId,
       epoch: snapshot.epoch,
@@ -250,9 +283,17 @@ export function useTerminalEntry({
     tabOwner.current = entry;
     setPending(entry);
     return {
-      complete(revision, createdTabId, paneId) {
+      complete(revision, createdTabId, paneId, navigation) {
         if (version.current === entry.version && !renderer.isDestroyed) {
-          const completed = { ...entry, revision, tabId: createdTabId ?? entry.tabId, paneId };
+          const completed = {
+            ...entry,
+            revision,
+            tabId: createdTabId ?? entry.tabId,
+            paneId,
+            navigationKey: navigation
+              ? navigationContextKey(entry.epoch, navigation)
+              : entry.navigationKey,
+          };
           tabOwner.current = completed;
           setPending(completed);
         }
@@ -261,6 +302,7 @@ export function useTerminalEntry({
     };
   }
   function startPaneCommand(kind: "restart" | "split", paneId?: string): PaneEntryHandle {
+    cancelledNavigation.current = null;
     const origin = renderer.currentFocusedRenderable;
     const { model, snapshot } = read();
     const epoch = snapshot?.epoch;
@@ -270,6 +312,7 @@ export function useTerminalEntry({
       origin && epoch && model.activeItem
         ? {
             kind,
+            sessionId: model.navigation!.sessionId,
             itemId: model.activeItem.id,
             tabId: model.activeTab?.id,
             paneId,
@@ -281,17 +324,27 @@ export function useTerminalEntry({
             requestId,
           }
         : null;
+    tabOwner.current = entry;
     setPending(entry);
     return {
-      complete(paneId, revision) {
+      complete(paneId, revision, navigation) {
         if (
           entry &&
           (entry.kind === "split" || entry.paneId === paneId) &&
           !renderer.isDestroyed &&
           version.current === requestVersion &&
-          renderer.currentFocusedRenderable === origin
+          renderer.currentFocusedRenderable === entry.origin
         ) {
-          setPending({ ...entry, paneId, revision });
+          const completed = {
+            ...entry,
+            paneId,
+            revision,
+            navigationKey: navigation
+              ? navigationContextKey(entry.epoch, navigation)
+              : entry.navigationKey,
+          };
+          tabOwner.current = completed;
+          setPending(completed);
         }
       },
       finish: () => finish(requestVersion),
@@ -299,14 +352,26 @@ export function useTerminalEntry({
   }
   function requestTabSelection(tabId: string): Promise<DurableCommandResult | undefined> {
     const { model, connected } = read();
-    if (!connected || !model.surface || !model.tabs.some((tab) => tab.id === tabId)) {
+    if (
+      !connected ||
+      !model.navigation ||
+      !model.surface ||
+      !model.tabs.some((tab) => tab.id === tabId)
+    ) {
       return Promise.resolve(undefined);
+    }
+    if (latestTabRequest.current?.tabId === tabId) {
+      return latestTabRequest.current.promise;
     }
     const expected = { navigationKey: model.navigationKey, dialog: null };
     const request = {
       tabId,
       promise: run(
-        { type: "surface.selectTab", surfaceId: model.surface.id, tabId },
+        {
+          type: "session.navigate",
+          sessionId: model.navigation.sessionId,
+          target: { kind: "tab", tabId },
+        },
         "tabs",
         expected,
       ),
@@ -340,16 +405,47 @@ export function useTerminalEntry({
       ? latestTabRequest.current.promise
       : requestTabSelection(tabId));
     if (result) {
-      handle.complete(result.revision);
+      handle.complete(result.revision, result.tabId, result.paneId, result.navigation);
     } else if (tabOwner.current === entry) {
       setPending(null);
     }
   }
   function focusFor(model: ShellModel, requested: FocusTarget): FocusTarget {
+    if (
+      cancelledNavigation.current !== null &&
+      cancelledNavigation.current !== model.navigationKey
+    ) {
+      if (requested.region === "workbench") {
+        return { region: "tabs" };
+      }
+      cancelledNavigation.current = null;
+    }
     const entry = tabOwner.current;
+    if (
+      entry?.version === version.current &&
+      read().snapshot?.epoch !== entry.epoch &&
+      requested.region === "workbench"
+    ) {
+      return { region: "tabs" };
+    }
+    if (
+      entry?.version === version.current &&
+      requested.region === "workbench" &&
+      nativeFocusId(requested) !== entry.origin.id
+    ) {
+      return { region: "tabs" };
+    }
+    if (
+      entry?.version === version.current &&
+      entry.revision === null &&
+      model.navigationKey !== entry.navigationKey &&
+      requested.region === "workbench"
+    ) {
+      return { region: "tabs" };
+    }
     return entry?.version === version.current &&
       entry.tabId !== undefined &&
-      model.surface?.activeTabId === entry.tabId &&
+      model.navigation?.tabId === entry.tabId &&
       model.activeTab?.id !== entry.tabId
       ? { region: "tabs" }
       : requested;
@@ -380,19 +476,22 @@ export function useTerminalEntry({
     return result;
   }
   function commandStarted(command: Command): () => boolean {
-    if (command.type === "surface.selectTab") {
+    if (
+      (command.type === "session.navigate" && command.target.kind === "tab") ||
+      (command.type === "session.step" && command.level === "tab")
+    ) {
       latestTabRequest.current = null;
     }
     const requestVersion = version.current;
     const origin = focusTargetFor(renderer.currentFocusedRenderable);
     const guardsEntry =
-      command.type === "surface.ensure" ||
+      command.type === "session.openItem" ||
       command.type === "directory.register" ||
       command.type === "item.create" ||
       command.type === "process.restart" ||
       command.type === "pane.split" ||
       command.type === "tab.create" ||
-      (command.type === "surface.selectTab" &&
+      ((command.type === "session.navigate" || command.type === "session.step") &&
         origin?.region === "workbench" &&
         !origin.control &&
         tabOwner.current?.version === requestVersion);
@@ -401,12 +500,12 @@ export function useTerminalEntry({
   function createdItemHandler(
     dialog: Extract<NonNullable<DialogState>, { kind: "create" }>,
   ): SubmitCreateInput["onItemCreated"] {
+    cancelledNavigation.current = null;
     const origin = renderer.currentFocusedRenderable;
     const epoch = read().snapshot?.epoch;
     const requestVersion = ++version.current;
     const requestId = nextRequestId();
     setPending(null);
-    const navigationKey = read().model.navigationKey;
     const undersized = rendered().layout.undersized;
     function isCurrent(
       expectedNavigation: string,
@@ -423,8 +522,26 @@ export function useTerminalEntry({
         latest.model.navigationKey === expectedNavigation
       );
     }
-    return async (itemId, parentId, revision) => {
-      if (!origin || !epoch || !isCurrent(navigationKey, dialog, origin)) {
+    return async (itemId, parentId, revision, creationNavigation) => {
+      const currentNavigation = read().model.navigation;
+      if (
+        !origin ||
+        !epoch ||
+        !isCurrent(read().model.navigationKey, dialog, origin) ||
+        !isCreationNavigationCurrent(
+          dialog.scope.navigation,
+          currentNavigation,
+          itemId,
+          parentId,
+        ) ||
+        (creationNavigation !== undefined &&
+          !isCreationNavigationCurrent(
+            dialog.scope.navigation,
+            creationNavigation,
+            itemId,
+            parentId,
+          ))
+      ) {
         return;
       }
       const currentSnapshot = read().snapshot;
@@ -443,9 +560,8 @@ export function useTerminalEntry({
         dispatch({ type: "root.toggle", rootId: parentId });
       }
       dispatch({
-        type: "navigator.activate",
+        type: "navigator.cursor",
         key: navigatorItemKey({ id: itemId, parentId }),
-        pending: { epoch, revision },
       });
       const latest = read();
       const nextModel = latest.model;
@@ -461,6 +577,7 @@ export function useTerminalEntry({
       }).focus;
       const entry: PendingTerminalEntry = {
         kind: "item",
+        sessionId: latest.model.navigation!.sessionId,
         itemId,
         epoch,
         revision: null,
@@ -477,23 +594,41 @@ export function useTerminalEntry({
       if (!isCurrent(nextNavigation, null, entry.origin)) {
         return;
       }
-      const result = await run({ type: "surface.ensure", itemId }, "navigator", {
-        navigationKey: nextNavigation,
-        dialog: null,
-      });
-      if (!isCurrent(nextNavigation, null, entry.origin)) {
+      const sessionId = latest.model.navigation?.sessionId;
+      if (!sessionId) {
         return;
       }
-      setPending(result ? { ...entry, revision: result.revision } : null);
+      const result = await run(
+        {
+          type: "session.openItem",
+          sessionId,
+          itemId,
+          navigationGeneration:
+            creationNavigation?.generation ?? latest.model.navigation!.generation,
+        },
+        "navigator",
+        {
+          navigationKey: nextNavigation,
+          dialog: null,
+        },
+      );
+      const receiptNavigation = result?.navigation
+        ? navigationContextKey(epoch, result.navigation)
+        : nextNavigation;
+      if (
+        !isCurrent(nextNavigation, null, entry.origin) &&
+        !isCurrent(receiptNavigation, null, entry.origin)
+      ) {
+        return;
+      }
+      setPending(
+        result ? { ...entry, revision: result.revision, navigationKey: receiptNavigation } : null,
+      );
     };
   }
 
   // Completion consumes the rendered projection; cancellation also checks current native/live state.
-  function completePending(
-    environment: ShellEnvironment,
-    focusedPaneId: string | null,
-    frame?: { frameId: number },
-  ): void {
+  function completePending(environment: ShellEnvironment, frame?: { frameId: number }): void {
     if (!pending || cancelStale(pending, environment)) {
       return;
     }
@@ -501,29 +636,40 @@ export function useTerminalEntry({
     if (!entryRevisionReady(pending, snapshot) || !snapshot) {
       return;
     }
-    const { model, state, layout } = environment;
+    const { model, layout } = environment;
     const tabEntry = pending.kind === "tab";
     const paneEntry = pending.kind === "restart" || pending.kind === "split";
     const exactPaneEntry = paneEntry || pending.creation !== undefined;
+    // The selection commit precedes spawn status; its old stopped process is not a failed restart.
+    if (
+      exactPaneEntry &&
+      snapshot.revision === pending.revision &&
+      snapshot.panes.some(
+        (pane) =>
+          pane.id === pending.paneId && ["exited", "interrupted"].includes(pane.processStatus),
+      )
+    ) {
+      return;
+    }
     const missingTarget = targetIsMissing(pending, environment);
     const missingTab =
       tabEntry &&
       (!model.tabs.some((tab) => tab.id === pending.tabId) ||
-        model.surface?.activeTabId !== pending.tabId);
+        model.navigation?.tabId !== pending.tabId);
     const paneIds = missingTab ? [] : model.paneIds;
     const sourceKey = paneEntry
       ? entrySourceKey("pane", pending.paneId!)
       : tabEntry
         ? entrySourceKey("tab", pending.tabId!)
         : entrySourceKey("item", pending.itemId);
-    const remembered = state.lastPaneByTab[model.activeTab?.id ?? ""];
+    const remembered = model.navigation?.paneId ?? undefined;
     const running = (missingTarget ? [] : paneIds).filter((id) =>
       snapshot.panes.some((pane) => pane.id === id && pane.processStatus === "running"),
     );
     const candidates = entryPaneCandidates(pending, running, remembered);
     const usable = candidates.find((id) => {
       const terminal = terminals.current.get(id);
-      return terminal && hasTerminalViewport(terminal);
+      return terminal?.parent && hasTerminalViewport(terminal.parent.getLayout());
     });
     const paneId = usable ?? candidates[0];
     if (
@@ -532,7 +678,7 @@ export function useTerminalEntry({
       !usable &&
       !missingTarget &&
       !missingTab &&
-      tryRecovery(paneIds, focusedPaneId ?? remembered, frame)
+      tryRecovery(paneIds, remembered, frame)
     ) {
       return;
     }
@@ -552,19 +698,33 @@ export function useTerminalEntry({
       return;
     }
     const terminal = paneId ? terminals.current.get(paneId) : undefined;
-    if (paneId && terminal && !layout.undersized && hasTerminalViewport(terminal)) {
+    if (
+      paneId &&
+      terminal?.parent &&
+      !layout.undersized &&
+      hasTerminalViewport(terminal.parent.getLayout())
+    ) {
       if (layout.navigatorMode === "drawer") {
         closingDrawer.current = true;
         dispatch({ type: "navigator.hide" });
         return;
       }
-      closingDrawer.current = false;
-      if (
-        (pending.kind === "split" || pending.creation !== undefined) &&
-        (!canReceiveInput(paneId) || !isEligibleFocusTarget(terminal, renderer.root))
-      ) {
+      if (closingDrawer.current) {
+        const strip = renderer.root.findDescendantById("region:tabs");
+        if (!strip || !isEligibleFocusTarget(strip, renderer.root)) {
+          return;
+        }
+        projectingTab.current = true;
+        pending.origin = strip;
+        focusShellTarget(renderer, { region: "tabs" });
+        projectingTab.current = false;
+        closingDrawer.current = false;
+        dispatch({ type: "focus.set", focus: { region: "tabs" } });
+      }
+      if (!canReceiveInput(paneId) || !isEligibleFocusTarget(terminal, renderer.root)) {
         return;
       }
+      tabOwner.current = null;
       setFocus({ region: "workbench", paneId });
       if (renderer.currentFocusedRenderable === terminal) {
         dispatch({ type: "source.clear", sourceKey, requestId: pending.requestId });
@@ -588,9 +748,7 @@ export function useTerminalEntry({
       return false;
     }
     const snapshot = read().snapshot;
-    const selected = snapshot?.surfaces.find(
-      (surface) => surface.itemId === entry.itemId,
-    )?.activeTabId;
+    const selected = read().model.navigation?.tabId;
     if (entry.revision === null || (snapshot?.revision ?? 0) < entry.revision) {
       if (canProjectTabEntry(entry, snapshot)) {
         entry.creation.selectionAdvanced = true;
@@ -607,11 +765,7 @@ export function useTerminalEntry({
       entry.revision !== null &&
       snapshot.revision >= entry.revision &&
       !snapshot.items.some((item) => item.id === entry.itemId) &&
-      ["root", "item"].some(
-        (prefix) =>
-          entry.navigationKey ===
-          navigationContextKey(snapshot.epoch, read().state, `${prefix}:${entry.itemId}`),
-      )
+      read().model.navigation?.itemId === entry.itemId
     );
   }
   function cancelStale(entry: PendingTerminalEntry, environment: ShellEnvironment): boolean {
@@ -628,6 +782,13 @@ export function useTerminalEntry({
     }
     const missingTarget = targetIsMissing(entry, environment);
     const { snapshot, model, layout } = environment;
+    const origin = focusTargetFor(entry.origin);
+    const awaitingStrip =
+      renderer.currentFocusedRenderable === null &&
+      canProjectTabEntry(entry, latest.snapshot) &&
+      (!isEligibleFocusTarget(entry.origin, renderer.root) ||
+        (origin?.region === "workbench" &&
+          (latest.model.navigation?.paneId !== origin.paneId || !canReceiveInput(origin.paneId))));
     if (
       snapshot === null ||
       archived ||
@@ -635,12 +796,16 @@ export function useTerminalEntry({
       !environment.connected ||
       latest.snapshot?.epoch !== entry.epoch ||
       latest.state.dialog !== null ||
-      (!missingTarget && latest.model.navigationKey !== entry.navigationKey) ||
+      (entry.revision !== null &&
+        (latest.snapshot?.revision ?? -1) >= entry.revision &&
+        !missingTarget &&
+        latest.model.navigationKey !== entry.navigationKey) ||
       layout.resizeBlocked ||
       version.current !== entry.version ||
       ((entry.kind === "split" || entry.kind === "restart") &&
         model.activeTab?.id !== entry.tabId) ||
       (renderer.currentFocusedRenderable !== entry.origin &&
+        !awaitingStrip &&
         !(
           closingDrawer.current &&
           (renderer.currentFocusedRenderable === null ||
@@ -657,6 +822,9 @@ export function useTerminalEntry({
       ) {
         version.current += 1;
       }
+      if (snapshot?.epoch !== entry.epoch) {
+        cancelledNavigation.current = entry.navigationKey;
+      }
       setPending((current) => (current?.version === entry.version ? null : current));
       return true;
     }
@@ -668,7 +836,7 @@ export function useTerminalEntry({
     frame?: { frameId: number },
   ): boolean {
     const actionIds = paneIds.filter(canReactivate);
-    const actionId = selectedId && actionIds.includes(selectedId) ? selectedId : actionIds[0];
+    const actionId = selectedId && actionIds.includes(selectedId) ? selectedId : undefined;
     if (actionId) {
       const target: FocusTarget = { region: "workbench", paneId: actionId, control: "reactivate" };
       if (focusShellTarget(renderer, target)) {
@@ -689,9 +857,10 @@ export function useTerminalEntry({
   ): boolean {
     return candidates.some((id) => {
       const terminal = terminals.current.get(id);
+      const viewport = terminal?.parent?.getLayout();
       return (
         !terminal ||
-        ((terminal.width === 0 || terminal.height === 0) &&
+        ((!viewport || !(viewport.width > 0 && viewport.height > 0)) &&
           (!tabEntry || !frame || canReceiveInput(id)))
       );
     });
@@ -762,7 +931,11 @@ export function useTerminalEntry({
     },
     isClosingDrawer: () => closingDrawer.current,
     isClosingForm: () => formCloseOwner.current?.entry.version === version.current,
-    isProjectingTabFocus: () => projectingTab.current,
+    isProjectingTabFocus: () =>
+      projectingTab.current ||
+      (tabOwner.current?.version === version.current &&
+        tabOwner.current.origin.id === "region:tabs" &&
+        renderer.currentFocusedRenderable === tabOwner.current.origin),
     canRestoreFocus: (dialog) => !successfulFormCloses.current.has(dialog),
     contextChanged(connected) {
       latestTabRequest.current = null;
@@ -778,7 +951,6 @@ export function useTerminalEntry({
 export function useTerminalEntryCompletion(
   entry: TerminalEntryCoordinator,
   environment: ShellEnvironment,
-  focusedPaneId: string | null,
   nativeFocus: Renderable | null,
 ): void {
   const renderer = useRenderer();
@@ -786,8 +958,7 @@ export function useTerminalEntryCompletion(
     if (!entry.hasPending()) {
       return;
     }
-    const complete = (frame?: { frameId: number }) =>
-      entry.completePending(environment, focusedPaneId, frame);
+    const complete = (frame?: { frameId: number }) => entry.completePending(environment, frame);
     complete();
     renderer.on(CliRenderEvents.FRAME, complete);
     return () => {
@@ -796,7 +967,7 @@ export function useTerminalEntryCompletion(
   }, [
     entry,
     environment.snapshot,
-    environment.state.activeNavigatorKey,
+    environment.model.navigationKey,
     environment.state.dialog,
     nativeFocus,
     environment.model.paneIds,

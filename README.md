@@ -6,6 +6,7 @@ A local-first terminal work organizer with persistent terminals, tabs, and split
 - Open root items or their one-level children into their own terminal workspaces.
 - Register existing repositories and browse their linked Git worktrees without changing branches or creating checkouts.
 - Detach and reconnect without stopping running terminals.
+- Share a session across clients to mirror navigation and one running editor.
 
 One local Bun daemon owns SQLite state, terminal processes, and bounded terminal history. The React/OpenTUI interface and non-interactive CLI are disposable clients connected through an owner-only Unix socket. Work Craft is local-only on macOS and Linux.
 
@@ -45,9 +46,17 @@ The status bar shows actions available for the focused region. **Leader** means 
 
 Within navigator results, use arrows or `j/k` to browse and Enter or a primary-button release to open an item. `Tab`/`Shift+Tab` moves between the filter and results; `Ctrl+n` in the filter enters the first match, while Enter in the filter does not open an item. Use `h`/Left, `l`/Right, or Space to collapse/expand roots when not filtering. Filters and expansion stay local to each workspace/category without changing the active workbench.
 
-The tab strip changes the displayed tab while browsing; Enter/Space or a primary-button release requests entry into its terminal. Switching tabs from a running terminal enters the destination's remembered running pane, or its first usable running pane. New input/navigation cancels a pending entry.
+Browsing the tab strip changes only your local candidate. Enter/Space or a primary-button release activates that tab for the session and requests terminal entry. Explicit previous/next-tab shortcuts also change shared selection. Entry uses the session's remembered pane; it never silently substitutes a running sibling for a stopped or locally clipped selection. New input/navigation cancels a pending entry.
 
 The navigator docks at 120+ columns and becomes a dismissible drawer at 80–119 columns. Below 80 columns, a resize message blocks interaction. Application overlays always leave the one-row status bar visible.
+
+### Shared Sessions
+
+Clients attached to the same session share workspace, category, item, tab and pane selection. They see the same running terminal application, including Neovim edits and logical cursor movement—not separately launched editors. Each client keeps its own attachment, keyboard focus, browsing cursors, filters, expansion, drawer and drafts. Remote navigation follows focus already inside an unobscured workbench, but does not steal focus from editing or close an observer's overlay.
+
+Different sessions retain independent selections and tab/pane memories even when they share a workspace and its running terminals. One eligible, latest-active viewer determines each tab's terminal dimensions across all sessions. Attachment and user input count as activity; idle resizing, output and programmatic focus do not. An owner's resize applies immediately; a non-owner's resize changes only its candidate viewport. Covered or unusable viewers withdraw; with no eligible viewer, the daemon retains the last usable grid.
+
+Every viewer parses output at those canonical dimensions. Smaller local panes clip and follow the shared terminal cursor; larger panes show unused background. This changes neither the program's identity nor another client's local shell layout.
 
 ### Coding And Terminal Recovery
 
@@ -57,7 +66,7 @@ Successful TUI registration opens the requested checkout's terminal, including d
 
 Splits inherit the owned shell's live working directory after `cd`, not a foreground child's private cwd. Each successful split equalizes pane shares in the affected tab while preserving existing processes and output. CLI `--cwd` overrides discovery and resolves relative to the CLI's directory; invalid/unavailable paths fail without adding a pane. macOS uses bounded `/usr/sbin/lsof` discovery; Linux uses `/proc/<shell-pid>/cwd`.
 
-Stopped panes retain output/history and never restart from typing or pasting. Use `leader+r` for explicit restart, or the **Reactivate** action on an exited pane. Terminal input requires a 20-column by five-row viewport; Reactivate requires a 20-column by four-row pane. Splitting, creating a tab, and restarting enter only their exact ready destination.
+Stopped panes keep bounded output scrollable with the mouse wheel; browsing, typing and pasting never restart a shell. Use `leader+r` for explicit restart, or **Reactivate** on an exited pane. A fresh shell starts below `[work-craft: shell restarted manually]`, with older output retained as read-only scrollback. Client Reconnect neither starts a shell nor adds a divider. Terminal input and wheel browsing require a 20-column by five-row viewport; Reactivate requires a 20-column by four-row pane. Splitting, creating a tab, and restarting enter only their exact ready destination.
 
 Operational failures appear as source-labelled, eight-second status messages; field validation stays beside its field. Failed sources retain compact indicators, and child-program output stays in its terminal.
 
@@ -70,6 +79,13 @@ work-craft session create --name Main --json
 work-craft workspace create --session SESSION_ID --name Work --json
 work-craft directory register --workspace WORKSPACE_ID --path ~/code/repository --json
 work-craft surface ensure --item ITEM_ID --json
+work-craft session open-item SESSION_ID --item ITEM_ID --json
+work-craft session select SESSION_ID --workspace WORKSPACE_ID
+work-craft session select SESSION_ID --category implementation
+work-craft session select SESSION_ID --item ITEM_ID
+work-craft session select SESSION_ID --tab TAB_ID
+work-craft session select SESSION_ID --pane PANE_ID --json
+work-craft session step SESSION_ID --level tab --direction next
 work-craft pane split PANE_ID --direction vertical --json
 work-craft pane split PANE_ID --direction horizontal --cwd ./checkout
 work-craft item create --workspace WORKSPACE_ID --category design --title Notes
@@ -79,7 +95,7 @@ work-craft snapshot --json
 work-craft daemon status --json
 ```
 
-CLI/API directory registration is metadata-only: it never opens a surface or focuses a client. Its JSON result includes `id`/`itemId` for the requested checkout and `rootItemId` for its parent. Open a surface explicitly with `surface ensure`.
+CLI/API directory registration is metadata-only: it never opens a surface or focuses a client. Its JSON result includes `id`/`itemId` for the requested checkout and `rootItemId` for its parent. `surface ensure` opens/reuses a surface without choosing a session; `session open-item` atomically opens/reuses it and selects it for that session. Selection alone never starts or restarts a terminal. `session select` requires exactly one target flag; `session step` supports category/item/tab and previous/next. JSON navigation results include the authoritative cursor; text snapshots print each session's selected IDs (`-` for null). Obsolete `surface select-tab` is not an alias.
 
 Sessions are profiles over reusable workspaces. Switching or deleting a session does not stop its workspaces' terminals; deleting a session does not delete those workspaces. The CLI also supports session updates, workspace membership, tab creation/selection, and pane restart. See the [command syntax](packages/cli/src/args.ts) for the complete CLI surface; old project commands are not aliases.
 
@@ -87,7 +103,7 @@ Sessions are profiles over reusable workspaces. Switching or deleting a session 
 
 The default state directory is `$XDG_STATE_HOME/work-craft` when `XDG_STATE_HOME` is set, otherwise `~/.local/state/work-craft`. It contains:
 
-- `work-craft.sqlite` — durable hierarchy, layouts, pane status, restore policies, and bounded terminal history
+- `work-craft.sqlite` — durable hierarchy, session cursors/memories, layouts, pane status, restore policies, and bounded terminal history with resize markers
 - `work-craft.sock` — owner-only local Unix socket
 - `daemon.lock` — single-daemon ownership lock
 
@@ -103,11 +119,11 @@ Closing a client does not stop the daemon or its terminals. For a clean shutdown
 work-craft daemon stop
 ```
 
-After a daemon or machine restart, Work Craft reloads SQLite state, retains bounded output, inserts a restart separator, and starts one fresh shell per eligible pane. It restores shells, not arbitrary Unix process memory.
+After a daemon or machine restart, Work Craft reloads SQLite state and restores retained output into ordinary pane scrollback above a restart separator and one fresh shell per eligible pane. Already exited/failed panes stay stopped with history readable on demand. Wheel scrolling stays local to each client. Old output contributes display only: terminal input modes and query replies belong exclusively to the fresh shell. Reconnecting a client does not restart that shell or add another separator. Work Craft restores shells, not arbitrary Unix process memory.
 
 ### Compatibility And Destructive Reset
 
-Schema 4 rejects incompatible development databases, including schema 3, without migrating or deleting them. Old independent-worktree records/surfaces are not merged. Prefer a fresh `WORK_CRAFT_HOME` for experiments; startup never silently resets data.
+Schema 6 migrates schemas 4 and 5 non-destructively in one transaction, preserving IDs, resources, layouts, policies and output. Schema 4 gains per-session cursors/tab memories; schema 5 gains internal runtime boundaries in the bounded resize timeline. Earlier incompatible development schemas remain rejected without deletion; migration failure rolls back. Stop the old daemon and restart every client on the same version: mixed-version operation is unsupported. Prefer a fresh `WORK_CRAFT_HOME` for experiments; startup never silently resets data.
 
 **`daemon destroy --force` stops all managed runtimes and deletes persisted Work Craft state for the selected home.** Only use it after deciding to discard those records:
 
@@ -120,7 +136,10 @@ Destroy stops/reaps managed terminals before removing the database/sidecars; it 
 
 ### Current Limitations
 
-- Specialized non-Coding category screens, `gh`/`az` views, Neovim/OpenCode restore metadata, remote access, agent automation, and shared session navigation are not implemented.
+- Specialized non-Coding category screens, `gh`/`az` views, Neovim/OpenCode restore metadata, remote access, agent automation and further Stage 3/4 pane operations are not implemented.
+- History is bounded to 1 MiB and 1,024 resize/runtime-start markers per pane by default. Exceeding either budget explicitly truncates earlier replay with a reset marker. Legacy bytes without geometry are preserved, but their unknown past dimensions cannot be reconstructed.
+- Display reconstruction keeps the native 10,000-line scrollback, 2,097,152-cell drawing budget and 8-MiB transcript ceiling. Unsupported or over-budget capture fails the scoped read/start explicitly while preserving durable bytes; it does not silently drop display or retry. Stopped history is reconstructed lazily with one daemon-wide display cache, so switching stopped panes may rebuild it. Regional-indicator spacing and hyperlink/invisible-wide fidelity remain unsupported limitations.
+- The native viewport reports in-band resize mode 2048 as unsupported until its emulator can deliver those reports; applications such as Neovim use ordinary terminal resize signals instead.
 - Repository identity is path-based: replacing a repository at the same paths is not detected as a new incarnation. Moved worktrees can leave an unavailable old entry. Registration/discovery never retargets, merges, or restarts existing terminals.
 - Bare repositories are plain-directory targets. Linked worktrees with only a bare backing repository, and separate-git-dir layouts without a registered primary checkout, are rejected rather than guessed.
 - Demo theme cycling is not an application theme-switching feature. Automated checks do not certify physical-terminal visual/focus behavior or long-running listener stability; Linux live-cwd behavior was not manually verified on the macOS development host.
@@ -161,7 +180,24 @@ Run the full gate before completing changes:
 bun run check
 ```
 
-It runs lint, formatting checks, typechecking, all tests, a current-host standalone build, and compiled CLI/TUI/daemon smoke coverage. Individual commands are `bun run lint`, `bun run format:check`, `bun run typecheck`, and `bun run test`.
+It runs lint, formatting checks, typechecking, ordinary correctness tests, a current-host standalone build, and compiled CLI/TUI/daemon smoke coverage. Individual commands are `bun run lint`, `bun run format:check`, `bun run typecheck`, and `bun run test`. Native parser continuation checks run by default; manual benchmarks and known-failing fidelity reproducers are separate commands, not skipped tests.
+
+Output benchmarks require a fresh directory for their artifacts. The full run includes repeated PTY/native/application comparisons, fifty panes and a ten-minute soak; it is intentionally outside the normal check:
+
+```sh
+PROFILE_DIR="$(mktemp -d)"
+WORK_CRAFT_OUTPUT_PROFILE_DIR="$PROFILE_DIR" bun run benchmark:output
+```
+
+Use `-t 'output profile comparison'` or `-t 'fifty-pane capacity'` after the benchmark command to select a subset.
+
+Run the three OSC8 hyperlink/hidden-wide-cell reproducers explicitly:
+
+```sh
+bun run diagnose:hyperlinks
+```
+
+These diagnostics preserve their original assertions and currently fail against stock OpenTUI 0.6.6, exiting nonzero. They document unsupported fidelity, not a passing acceptance guarantee. Neither manual command requires an opt-in skip flag; `.benchmark.ts` and `.diagnostic.ts(x)` files run only when explicitly selected.
 
 Build without installing, or build and install to `~/.local/bin`:
 

@@ -12,6 +12,7 @@ import { act, type Dispatch, type SetStateAction, useState } from "react";
 import { WorkCraftShell } from "@/shell/shell.tsx";
 import {
   deferred,
+  liveInputFixture,
   localTabFixture,
   openFixtureItem,
   splitSurfaceSnapshot,
@@ -31,6 +32,7 @@ for (const createKind of ["directory", "generic-root"] as const) {
       const value = createKind === "directory" ? "/work/New root" : "New root";
       const initial = snapshotFixture({
         revision: 1,
+        navigation: [{ ...snapshotFixture().navigation[0]!, generation: 1, category }],
         sessions: [{ id: "session-work", name: "Work", position: 0 }],
         categories: [
           { workspaceId: "workspace-shared", kind: category, title: category, position: 0 },
@@ -63,6 +65,15 @@ for (const createKind of ["directory", "generic-root"] as const) {
       const ready: Snapshot = {
         ...initial,
         revision: 3,
+        navigation: [
+          {
+            ...initial.navigation[0]!,
+            generation: 3,
+            itemId: "new-root",
+            tabId: "tab-1",
+            paneId: "pane-1",
+          },
+        ],
         items: [created],
         surfaces: [{ ...surface.surfaces[0]!, itemId: "new-root" }],
         tabs: surface.tabs,
@@ -80,8 +91,19 @@ for (const createKind of ["directory", "generic-root"] as const) {
             workCraft={workCraftStateFixture({
               snapshot,
               command: (command) => {
+                if (
+                  command.type === "session.navigate" &&
+                  command.target.kind === "category" &&
+                  command.target.category === category
+                ) {
+                  return Promise.resolve({
+                    ok: true,
+                    revision: snapshot.revision,
+                    result: { id: "session-work", navigation: snapshot.navigation[0] },
+                  });
+                }
                 sent.push(command);
-                return command.type === "surface.ensure" ? opened.promise : response.promise;
+                return command.type === "session.openItem" ? opened.promise : response.promise;
               },
             })}
           />
@@ -99,7 +121,14 @@ for (const createKind of ["directory", "generic-root"] as const) {
         await act(async () => setup.mockInput.pressEnter());
         expect(sent).toHaveLength(1);
         if (order === "snapshot first") {
-          act(() => publish(ready));
+          act(() =>
+            publish({
+              ...initial,
+              revision: 2,
+              items: [created],
+              navigation: [{ ...initial.navigation[0]!, generation: 2, itemId: "new-root" }],
+            }),
+          );
           await setup.flush();
           expect(setup.renderer.currentFocusedRenderable?.id).toBe(inputId);
         }
@@ -107,14 +136,32 @@ for (const createKind of ["directory", "generic-root"] as const) {
           response.resolve({
             ok: true,
             revision: 2,
-            result: { id: "new-root", itemId: "new-root", rootItemId: "new-root" },
+            result: {
+              id: "new-root",
+              itemId: "new-root",
+              rootItemId: "new-root",
+              navigation: { ...initial.navigation[0]!, generation: 2, itemId: "new-root" },
+            },
           }),
         );
         await setup.flush();
         expect(setup.renderer.root.findDescendantById("dialog")).toBeUndefined();
-        expect(sent[1]).toEqual({ type: "surface.ensure", itemId: "new-root" });
+        expect(sent[1]).toEqual({
+          type: "session.openItem",
+          sessionId: "session-work",
+          itemId: "new-root",
+          navigationGeneration: 2,
+        });
+        if (order === "snapshot first") {
+          act(() => publish(ready));
+          await setup.flush();
+        }
         await act(async () =>
-          opened.resolve({ ok: true, revision: 3, result: { id: "surface-1" } }),
+          opened.resolve({
+            ok: true,
+            revision: 3,
+            result: { id: "surface-1", navigation: ready.navigation[0] },
+          }),
         );
         if (order === "response first") {
           act(() => publish(ready));
@@ -131,7 +178,12 @@ for (const createKind of ["directory", "generic-root"] as const) {
                 category: "design",
                 title: value,
               },
-          { type: "surface.ensure", itemId: "new-root" },
+          {
+            type: "session.openItem",
+            sessionId: "session-work",
+            itemId: "new-root",
+            navigationGeneration: 2,
+          },
         ]);
       } finally {
         act(() => setup.renderer.destroy());
@@ -156,6 +208,13 @@ for (const kind of ["new-linked", "duplicate-linked", "generic-child"] as const)
         const ready: Snapshot = {
           ...base,
           revision: 3,
+          navigation: [
+            {
+              ...base.navigation[0]!,
+              category: generic ? "design" : "implementation",
+              generation: duplicate ? 1 : generic ? 2 : 3,
+            },
+          ],
           items,
           categories: [
             {
@@ -171,6 +230,15 @@ for (const kind of ["new-linked", "duplicate-linked", "generic-child"] as const)
           : {
               ...ready,
               revision: 1,
+              navigation: [
+                {
+                  ...ready.navigation[0]!,
+                  generation: 1,
+                  itemId: generic ? "root-1" : null,
+                  tabId: null,
+                  paneId: null,
+                },
+              ],
               items: kind === "new-linked" ? [] : [items[0]!],
               surfaces: [],
               tabs: [],
@@ -188,8 +256,18 @@ for (const kind of ["new-linked", "duplicate-linked", "generic-child"] as const)
               workCraft={workCraftStateFixture({
                 snapshot,
                 command: (command) => {
+                  if (
+                    (command.type === "session.navigate" && command.target.kind === "category") ||
+                    (command.type === "session.step" && command.level === "item")
+                  ) {
+                    return Promise.resolve({
+                      ok: true,
+                      revision: snapshot.revision,
+                      result: { id: "session-work", navigation: snapshot.navigation[0] },
+                    });
+                  }
                   commands.push(command);
-                  return command.type === "surface.ensure" ? opened.promise : response.promise;
+                  return command.type === "session.openItem" ? opened.promise : response.promise;
                 },
               })}
             />
@@ -227,25 +305,64 @@ for (const kind of ["new-linked", "duplicate-linked", "generic-child"] as const)
           await act(async () => setup.mockInput.pressEnter());
           expect(commands).toHaveLength(1);
           if (order === "snapshot first") {
-            act(() => publish(ready));
+            act(() =>
+              publish(
+                duplicate
+                  ? ready
+                  : {
+                      ...initial,
+                      revision: 2,
+                      items,
+                      navigation: [
+                        {
+                          ...initial.navigation[0]!,
+                          generation: generic ? 1 : 2,
+                          itemId: "root-1",
+                        },
+                      ],
+                    },
+              ),
+            );
             await setup.flush();
           }
           await act(async () =>
             response.resolve({
               ok: true,
               revision: 2,
-              result: { id: "item-1", itemId: "item-1", rootItemId: "root-1" },
+              result: {
+                id: "item-1",
+                itemId: "item-1",
+                rootItemId: "root-1",
+                navigation: {
+                  ...initial.navigation[0]!,
+                  generation: kind === "new-linked" ? 2 : 1,
+                  itemId: duplicate ? "item-1" : "root-1",
+                },
+              },
             }),
           );
           await setup.flush();
           expect(commands.map(({ type }) => type)).toEqual([
             generic ? "item.create" : "directory.register",
-            "surface.ensure",
+            "session.openItem",
           ]);
-          expect(commands[1]).toEqual({ type: "surface.ensure", itemId: "item-1" });
+          expect(commands[1]).toEqual({
+            type: "session.openItem",
+            sessionId: "session-work",
+            itemId: "item-1",
+            navigationGeneration: kind === "new-linked" ? 2 : 1,
+          });
           expect(setup.renderer.root.findDescendantById("dialog")).toBeUndefined();
+          if (order === "snapshot first") {
+            act(() => publish(ready));
+            await setup.flush();
+          }
           await act(async () =>
-            opened.resolve({ ok: true, revision: 3, result: { id: "surface-1" } }),
+            opened.resolve({
+              ok: true,
+              revision: 3,
+              result: { id: "surface-1", navigation: ready.navigation[0] },
+            }),
           );
           if (order === "response first") {
             act(() => publish(ready));
@@ -283,7 +400,15 @@ for (const width of [120, 100]) {
   ] as const) {
     test(`creation entry ${outcome} at width ${width} keeps successful metadata and drawer policy`, async () => {
       const ready = { ...surfaceSnapshot(), revision: 3 };
-      const initial = { ...ready, revision: 1, surfaces: [], tabs: [], panes: [] };
+      ready.navigation[0]!.generation = 2;
+      const initial = {
+        ...ready,
+        revision: 1,
+        surfaces: [],
+        tabs: [],
+        panes: [],
+        navigation: [{ ...ready.navigation[0]!, generation: 1, tabId: null, paneId: null }],
+      };
       if (outcome === "starting" || outcome === "exited") {
         ready.panes[0]!.processStatus = outcome;
       }
@@ -310,8 +435,15 @@ for (const width of [120, 100]) {
             workCraft={workCraftStateFixture({
               snapshot,
               command: (command) => {
+                if (command.type === "session.navigate" && command.target.kind === "category") {
+                  return Promise.resolve({
+                    ok: true,
+                    revision: snapshot.revision,
+                    result: { id: "session-work", navigation: snapshot.navigation[0] },
+                  });
+                }
                 commands.push(command);
-                return command.type === "surface.ensure" ? opened.promise : response.promise;
+                return command.type === "session.openItem" ? opened.promise : response.promise;
               },
             })}
           />
@@ -338,13 +470,20 @@ for (const width of [120, 100]) {
           }),
         );
         await setup.flush();
-        expect(commands.map(({ type }) => type)).toEqual(["directory.register", "surface.ensure"]);
+        expect(commands.map(({ type }) => type)).toEqual([
+          "directory.register",
+          "session.openItem",
+        ]);
         expect(setup.renderer.root.findDescendantById("dialog")).toBeUndefined();
         if (outcome === "ensure failure") {
           await act(async () => opened.reject(new Error("Cannot open requested checkout")));
         } else {
           await act(async () =>
-            opened.resolve({ ok: true, revision: 3, result: { id: "surface-1" } }),
+            opened.resolve({
+              ok: true,
+              revision: 3,
+              result: { id: "surface-1", navigation: ready.navigation[0] },
+            }),
           );
         }
         act(() => publish(ready));
@@ -402,7 +541,15 @@ for (const stage of ["registration", "ensure", "readiness"] as const) {
     }
     test(`creation ${stage} is cancelled by ${cancel} without stale entry`, async () => {
       const ready = { ...surfaceSnapshot(), revision: 3 };
-      const initial = { ...ready, revision: 1, surfaces: [], tabs: [], panes: [] };
+      ready.navigation[0]!.generation = 2;
+      const initial = {
+        ...ready,
+        revision: 1,
+        surfaces: [],
+        tabs: [],
+        panes: [],
+        navigation: [{ ...ready.navigation[0]!, generation: 1, tabId: null, paneId: null }],
+      };
       const response = deferred<CommandResponse>();
       const opened = deferred<CommandResponse>();
       const commands: Command[] = [];
@@ -415,8 +562,15 @@ for (const stage of ["registration", "ensure", "readiness"] as const) {
             workCraft={workCraftStateFixture({
               snapshot,
               command: (command) => {
+                if (command.type === "session.navigate" && command.target.kind === "category") {
+                  return Promise.resolve({
+                    ok: true,
+                    revision: snapshot.revision,
+                    result: { id: "session-work", navigation: snapshot.navigation[0] },
+                  });
+                }
                 commands.push(command);
-                return command.type === "surface.ensure" ? opened.promise : response.promise;
+                return command.type === "session.openItem" ? opened.promise : response.promise;
               },
             })}
           />
@@ -442,7 +596,11 @@ for (const stage of ["registration", "ensure", "readiness"] as const) {
         }
         if (stage === "readiness") {
           await act(async () =>
-            opened.resolve({ ok: true, revision: 3, result: { id: "surface-1" } }),
+            opened.resolve({
+              ok: true,
+              revision: 3,
+              result: { id: "surface-1", navigation: ready.navigation[0] },
+            }),
           );
           act(() =>
             publish({ ...ready, panes: [{ ...ready.panes[0]!, processStatus: "starting" }] }),
@@ -477,6 +635,16 @@ for (const stage of ["registration", "ensure", "readiness"] as const) {
         } else if (cancel === "context") {
           final = {
             ...ready,
+            navigation: [
+              {
+                ...ready.navigation[0]!,
+                generation: 3,
+                category: "design",
+                itemId: null,
+                tabId: null,
+                paneId: null,
+              },
+            ],
             categories: [
               { workspaceId: "workspace-shared", kind: "design", title: "Design", position: 0 },
             ],
@@ -494,7 +662,11 @@ for (const stage of ["registration", "ensure", "readiness"] as const) {
         await setup.flush();
         await act(async () => response.resolve(registered));
         await act(async () =>
-          opened.resolve({ ok: true, revision: 3, result: { id: "surface-1" } }),
+          opened.resolve({
+            ok: true,
+            revision: 3,
+            result: { id: "surface-1", navigation: ready.navigation[0] },
+          }),
         );
         await setup.flush();
         if (cancel === "guard") {
@@ -521,6 +693,7 @@ test("generic child creation from a native terminal enters the new child's termi
   const base = surfaceSnapshot();
   const initial: Snapshot = {
     ...base,
+    navigation: [{ ...base.navigation[0]!, category: "design" }],
     items: base.items.map((item) => ({ ...item, category: "design", kind: "generic", data: {} })),
     categories: [{ workspaceId: "workspace-shared", kind: "design", title: "Design", position: 0 }],
   };
@@ -537,7 +710,7 @@ test("generic child creation from a native terminal enters the new child's termi
           snapshot,
           command: (command) => {
             commands.push(command);
-            return command.type === "surface.ensure" ? opened.promise : response.promise;
+            return command.type === "session.openItem" ? opened.promise : response.promise;
           },
         })}
       />
@@ -564,18 +737,30 @@ test("generic child creation from a native terminal enters the new child's termi
     ]);
     await act(async () => response.resolve({ ok: true, revision: 5, result: { id: "new-child" } }));
     await setup.flush();
-    expect(commands[1]).toEqual({ type: "surface.ensure", itemId: "new-child" });
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:tabs");
-    await act(async () => opened.resolve({ ok: true, revision: 6, result: { id: "surface-2" } }));
+    expect(commands[1]).toEqual({
+      type: "session.openItem",
+      sessionId: "session-work",
+      itemId: "new-child",
+      navigationGeneration: 1,
+    });
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("terminal:pane-1");
+    const navigation = {
+      ...initial.navigation[0]!,
+      generation: 2,
+      itemId: "new-child",
+      tabId: "tab-2",
+      paneId: "pane-2",
+    };
+    await act(async () =>
+      opened.resolve({ ok: true, revision: 6, result: { id: "surface-2", navigation } }),
+    );
     act(() =>
       publish({
         ...initial,
         revision: 6,
+        navigation: [navigation],
         items: [...initial.items, { ...initial.items[1]!, id: "new-child" }],
-        surfaces: [
-          ...initial.surfaces,
-          { id: "surface-2", itemId: "new-child", activeTabId: "tab-2" },
-        ],
+        surfaces: [...initial.surfaces, { id: "surface-2", itemId: "new-child" }],
         tabs: [
           ...initial.tabs,
           {
@@ -608,6 +793,7 @@ test("a newer registration supersedes the old form without blocking its own term
       surfaces: [],
       tabs: [],
       panes: [],
+      navigation: [{ ...surfaceSnapshot().navigation[0]!, tabId: null, paneId: null }],
     } as Snapshot);
     publish = setSnapshot;
     return (
@@ -615,8 +801,15 @@ test("a newer registration supersedes the old form without blocking its own term
         workCraft={workCraftStateFixture({
           snapshot,
           command: (command) => {
+            if (command.type === "session.navigate" && command.target.kind === "category") {
+              return Promise.resolve({
+                ok: true,
+                revision: snapshot.revision,
+                result: { id: "session-work", navigation: snapshot.navigation[0] },
+              });
+            }
             commands.push(command);
-            return command.type === "surface.ensure"
+            return command.type === "session.openItem"
               ? opened.promise
               : commands.length === 1
                 ? first.promise
@@ -659,9 +852,22 @@ test("a newer registration supersedes the old form without blocking its own term
         result: { id: "item-1", itemId: "item-1", rootItemId: "root-1" },
       }),
     );
-    expect(commands[2]).toEqual({ type: "surface.ensure", itemId: "item-1" });
-    await act(async () => opened.resolve({ ok: true, revision: 4, result: { id: "surface-1" } }));
-    act(() => publish({ ...surfaceSnapshot(), revision: 4 }));
+    expect(commands[2]).toEqual({
+      type: "session.openItem",
+      sessionId: "session-work",
+      itemId: "item-1",
+      navigationGeneration: 1,
+    });
+    const ready = { ...surfaceSnapshot(), revision: 4 };
+    ready.navigation[0]!.generation = 2;
+    await act(async () =>
+      opened.resolve({
+        ok: true,
+        revision: 4,
+        result: { id: "surface-1", navigation: ready.navigation[0] },
+      }),
+    );
+    act(() => publish(ready));
     await setup.flush();
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("terminal:pane-1");
   } finally {
@@ -676,7 +882,7 @@ test("a cancelled ensure failure cannot report status over a replacement form", 
       workCraft={workCraftStateFixture({
         snapshot: surfaceSnapshot(),
         command: (command) =>
-          command.type === "surface.ensure"
+          command.type === "session.openItem"
             ? opened.promise
             : Promise.resolve({
                 ok: true,
@@ -714,6 +920,9 @@ test("directory validation retry retains edited input and deduplicates buffered 
     <WorkCraftShell
       workCraft={workCraftStateFixture({
         command: (command) => {
+          if (command.type === "session.navigate" && command.target.kind === "category") {
+            return Promise.resolve({ ok: true, revision: 1, result: { id: "session-work" } });
+          }
           commands.push(command);
           return response.promise;
         },
@@ -748,11 +957,11 @@ test("directory validation retry retains edited input and deduplicates buffered 
 
 for (const order of ["response first", "snapshot first"] as const) {
   for (const remembered of [false, true]) {
-    test(`tab entry skips ${remembered ? "remembered" : "first"} tiny pane with ${order}`, async () => {
+    test(`tab entry retains the shared ${remembered ? "remembered" : "first"} pane when its local viewport is tiny with ${order}`, async () => {
       const setup = await localTabFixture(remembered);
       try {
         await setup.next();
-        const ready = twoTabSnapshot("tab-2", 5);
+        const ready = twoTabSnapshot("tab-2", 5, 2, remembered ? "b" : "a");
         const layout = ready.tabs[1]!.layout!;
         if (layout.type === "split") {
           layout.ratio = remembered ? 0.9 : 0.1;
@@ -767,12 +976,10 @@ for (const order of ["response first", "snapshot first"] as const) {
           await setup.respond();
         }
         await setup.flush();
-        expect(setup.renderer.currentFocusedRenderable?.id).toBe(
-          remembered ? "terminal:pane-2a" : "terminal:pane-2b",
-        );
-        expect(statusText(setup)).not.toContain("Terminal entry failed");
+        expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:tabs");
+        expect(statusText(setup)).toContain("Terminal layout is too small");
         expect(setup.commands).toEqual([
-          { type: "surface.selectTab", surfaceId: "surface-1", tabId: "tab-2" },
+          { type: "session.step", sessionId: "session-work", level: "tab", direction: 1 },
         ]);
       } finally {
         act(() => setup.renderer.destroy());
@@ -781,7 +988,7 @@ for (const order of ["response first", "snapshot first"] as const) {
   }
 }
 
-test("item entry skips its tiny first pane for a usable running sibling", async () => {
+test("item entry cannot change shared selection just because its local first pane is tiny", async () => {
   const snapshot = splitSurfaceSnapshot();
   const layout = snapshot.tabs[0]!.layout!;
   if (layout.type === "split") {
@@ -796,15 +1003,16 @@ test("item entry skips its tiny first pane for a usable running sibling", async 
     await openFixtureItem(setup);
     await act(async () => setup.mockInput.pressEnter());
     await setup.flush();
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("terminal:pane-2");
-    expect(statusText(setup)).not.toContain("Terminal entry failed");
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:navigator");
+    expect(snapshot.navigation[0]?.paneId).toBe("pane-1");
+    expect(statusText(setup)).toContain("Terminal layout is too small");
   } finally {
     act(() => setup.renderer.destroy());
   }
 });
 
 for (const remembered of ["stopped", "missing"] as const) {
-  test(`tab entry falls back from ${remembered} memory to the first running destination pane`, async () => {
+  test(`tab entry respects daemon selection after ${remembered} pane memory`, async () => {
     const setup = await localTabFixture();
     try {
       await setup.next();
@@ -813,11 +1021,15 @@ for (const remembered of ["stopped", "missing"] as const) {
         ready.panes.find((pane) => pane.id === "pane-2b")!.processStatus = "exited";
       } else {
         ready.panes = ready.panes.filter((pane) => pane.id !== "pane-2b");
+        ready.tabs[1]!.layout = { type: "pane", paneId: "pane-2a" };
+        ready.navigation[0]!.paneId = "pane-2a";
       }
       setup.publish(ready);
-      await setup.respond();
+      await setup.respond(0, 5, remembered === "missing" ? "pane-2a" : "pane-2b");
       await setup.flush();
-      expect(setup.renderer.currentFocusedRenderable?.id).toBe("terminal:pane-2a");
+      expect(setup.renderer.currentFocusedRenderable?.id).toBe(
+        remembered === "missing" ? "terminal:pane-2a" : "region:tabs",
+      );
     } finally {
       act(() => setup.renderer.destroy());
     }
@@ -861,19 +1073,23 @@ for (const destination of [
       expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:tabs");
       if (destination === "stopped") {
         await act(async () => setup.mockInput.pressKeys(["\x00r"]));
-        expect(setup.commands.at(-1)).toEqual({ type: "process.restart", paneId: "pane-2b" });
+        expect(setup.commands.at(-1)).toEqual({
+          type: "process.restart",
+          paneId: "pane-2b",
+          activation: { sessionId: "session-work", generation: 5 },
+        });
       }
       if (destination !== "starting") {
         expect(statusText(setup)).toContain("Terminal entry failed");
       }
-      setup.publish(twoTabSnapshot("tab-2", 6));
+      const running = twoTabSnapshot("tab-2", 6);
+      running.navigation[0]!.generation = 5;
+      setup.publish(running);
       await setup.flush();
       expect(setup.renderer.currentFocusedRenderable?.id).toBe(
         destination === "starting" ? "terminal:pane-2b" : "region:tabs",
       );
-      expect(setup.commands.filter((command) => command.type === "surface.selectTab")).toHaveLength(
-        1,
-      );
+      expect(setup.commands.filter((command) => command.type === "session.step")).toHaveLength(1);
     } finally {
       act(() => setup.renderer.destroy());
     }
@@ -960,20 +1176,16 @@ for (const stage of [
 }
 
 test("item Enter enters and restores a remembered active-tab pane without remounting it", async () => {
-  const setup = await testRender(
-    <WorkCraftShell workCraft={workCraftStateFixture({ snapshot: splitSurfaceSnapshot() })} />,
-    { width: 120, height: 40, kittyKeyboard: true },
-  );
+  const setup = await liveInputFixture();
   try {
     await setup.flush();
-    act(() => setup.renderer.root.findDescendantById("region:category")!.focus());
-    await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
-    await act(async () => setup.mockInput.pressKey("l"));
-    await act(async () => setup.mockInput.pressKey("j"));
-    await act(async () => setup.mockInput.pressEnter());
+    await openFixtureItem(setup);
+    const row = setup.renderer.root.findDescendantById("navigator-row:item-1")!;
+    await act(async () => setup.mockMouse.click(row.screenX + 8, row.screenY));
     await setup.flush();
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("terminal:pane-1");
     await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
+    await setup.flush();
     const remembered = setup.renderer.currentFocusedRenderable;
     expect(remembered?.id).toBe("terminal:pane-2");
     await act(async () => setup.mockInput.pressKey("k", { ctrl: true }));
@@ -984,6 +1196,7 @@ test("item Enter enters and restores a remembered active-tab pane without remoun
     expect(setup.renderer.root.findDescendantById("terminal:pane-2")).toBe(remembered!);
   } finally {
     act(() => setup.renderer.destroy());
+    setup.store.stop();
   }
 });
 
@@ -1001,6 +1214,9 @@ for (const action of ["item Enter", "root Enter"] as const) {
           surfaces: [],
           tabs: [],
           panes: [],
+          navigation: [
+            { ...surfaceSnapshot().navigation[0]!, itemId: "root-1", tabId: null, paneId: null },
+          ],
         }));
         publishSnapshot = setSnapshot;
         return (
@@ -1029,12 +1245,19 @@ for (const action of ["item Enter", "root Enter"] as const) {
         }
         expect(sent).toEqual([
           action === "item Enter"
-            ? { type: "surface.ensure", itemId: "item-1" }
-            : { type: "surface.ensure", itemId: "root-1" },
+            ? { type: "session.openItem", sessionId: "session-work", itemId: "item-1" }
+            : { type: "session.openItem", sessionId: "session-work", itemId: "root-1" },
         ]);
         const ready = {
           ...surfaceSnapshot(),
           revision: 3,
+          navigation: [
+            {
+              ...surfaceSnapshot().navigation[0]!,
+              generation: 2,
+              itemId: action === "root Enter" ? "root-1" : "item-1",
+            },
+          ],
           surfaces: [
             {
               ...surfaceSnapshot().surfaces[0]!,
@@ -1056,6 +1279,7 @@ for (const action of ["item Enter", "root Enter"] as const) {
               surfaceId: "surface-1",
               tabId: "tab-1",
               paneId: "pane-1",
+              navigation: ready.navigation[0],
             },
           }),
         );
@@ -1069,6 +1293,15 @@ for (const action of ["item Enter", "root Enter"] as const) {
               surfaces: [],
               tabs: [],
               panes: [],
+              navigation: [
+                {
+                  ...ready.navigation[0]!,
+                  generation: 1,
+                  itemId: "root-1",
+                  tabId: null,
+                  paneId: null,
+                },
+              ],
             }),
           );
           await setup.flush();
@@ -1091,6 +1324,7 @@ test("project expansion and collapse cancel a pending open-focus handoff", async
       workCraft={workCraftStateFixture({
         snapshot: {
           ...surfaceSnapshot(),
+          navigation: [{ ...surfaceSnapshot().navigation[0]!, itemId: "root-1" }],
           surfaces: surfaceSnapshot().surfaces.map((surface) => ({ ...surface, itemId: "root-1" })),
         },
         command: () => open.promise,
@@ -1321,18 +1555,34 @@ test("drawer entry closes coverage without remounting its terminal and dismissal
 
 test("browsing stays local until Enter activates the item", async () => {
   const commands: Command[] = [];
-  const setup = await testRender(
-    <WorkCraftShell
-      workCraft={workCraftStateFixture({
-        snapshot: surfaceSnapshot(),
-        command: async (command) => {
-          commands.push(command);
-          return { ok: true, revision: 1, result: { id: "result-1" } };
-        },
-      })}
-    />,
-    { width: 120, height: 40, kittyKeyboard: true },
-  );
+  function Fixture() {
+    const [snapshot, setSnapshot] = useState<Snapshot>(() => ({
+      ...surfaceSnapshot(),
+      navigation: [
+        { ...surfaceSnapshot().navigation[0]!, itemId: "root-1", tabId: null, paneId: null },
+      ],
+    }));
+    return (
+      <WorkCraftShell
+        workCraft={workCraftStateFixture({
+          snapshot,
+          command: async (command) => {
+            commands.push(command);
+            const selected = surfaceSnapshot();
+            selected.revision = 5;
+            selected.navigation[0]!.generation = 2;
+            setSnapshot(selected);
+            return {
+              ok: true,
+              revision: 5,
+              result: { id: "item-1", navigation: selected.navigation[0] },
+            };
+          },
+        })}
+      />
+    );
+  }
+  const setup = await testRender(<Fixture />, { width: 120, height: 40, kittyKeyboard: true });
   await setup.flush();
   act(() => setup.renderer.root.findDescendantById("region:category")!.focus());
   await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
@@ -1343,7 +1593,11 @@ test("browsing stays local until Enter activates the item", async () => {
 
   await act(async () => setup.mockInput.pressEnter());
   await setup.flush();
-  expect(commands[0]).toEqual({ type: "surface.ensure", itemId: "item-1" });
+  expect(commands[0]).toEqual({
+    type: "session.openItem",
+    sessionId: "session-work",
+    itemId: "item-1",
+  });
   expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBeDefined();
   act(() => setup.renderer.destroy());
 });
@@ -1355,7 +1609,7 @@ test("a current item-open failure remains visible after activation", async () =>
       workCraft={workCraftStateFixture({
         snapshot: surfaceSnapshot(),
         command: async (command) =>
-          command.type === "surface.ensure"
+          command.type === "session.openItem"
             ? open.promise
             : { ok: true, revision: 1, result: { id: "result-1" } },
       })}

@@ -1,11 +1,10 @@
-import type { CategoryKind, Snapshot } from "@work-craft/server/client";
+import type { ClientAttachment, SessionNavigation, Snapshot } from "@work-craft/server/client";
 
 import type { FocusTarget } from "@/input/focus.ts";
 import {
   categoriesForWorkspace,
   navigatorEntries,
   type NavigatorEntry,
-  navigatorItemKey,
   rootIdForEntry,
   sessionsInOrder,
   workspacesForSession,
@@ -17,14 +16,9 @@ import { selectedTab, surfaceForItem, tabsForSurface } from "@/workbench/model";
 export type CreateKind = "session" | "workspace" | "directory" | "generic-root" | "generic-child";
 
 export type ShellModelState = {
-  activeSessionId: string | null;
-  activeWorkspaceId: string | null;
-  activeCategory: CategoryKind;
-  activeNavigatorKey: string | null;
   navigatorCursorKey: string | null;
   tabCursorId: string | null;
   focus: FocusTarget;
-  lastPaneByTab: Record<string, string>;
   navigatorOpen: boolean;
   navigatorWidth: number;
   expandedRootIds: ReadonlySet<string>;
@@ -32,6 +26,7 @@ export type ShellModelState = {
 };
 
 export type ShellModel = {
+  navigation: SessionNavigation | null;
   navigationKey: string;
   completionKey: string;
   sessions: Snapshot["sessions"];
@@ -55,54 +50,40 @@ export type ShellModel = {
   firstMatchId: string | undefined;
 };
 
-const FIXED_CATEGORIES: readonly { kind: CategoryKind; title: string }[] = [
-  { kind: "inbox", title: "Inbox" },
-  { kind: "today", title: "Today" },
-  { kind: "design", title: "Design" },
-  { kind: "implementation", title: "Implementation" },
-  { kind: "collaboration", title: "Collaboration" },
-  { kind: "operations", title: "Operations" },
-];
-
 export function deriveShellModel(input: {
-  snapshot: Snapshot | null;
+  snapshot: Omit<Snapshot, "terminalHistories"> | null;
   state: ShellModelState;
+  attachment: Pick<ClientAttachment, "sessionId"> | null;
 }): ShellModel {
-  const { snapshot, state } = input;
+  const { snapshot, state, attachment } = input;
+  const navigation =
+    snapshot?.navigation.find(({ sessionId }) => sessionId === attachment?.sessionId) ?? null;
+  const workspaceId = navigation?.workspaceId ?? null;
+  const category = navigation?.category ?? null;
   const sessions = snapshot === null ? [] : sessionsInOrder(snapshot);
-  const activeSession = sessions.find(({ id }) => id === state.activeSessionId);
+  const activeSession = sessions.find(({ id }) => id === attachment?.sessionId);
   const workspaces =
-    snapshot === null || state.activeSessionId === null
+    snapshot === null || !attachment?.sessionId
       ? []
-      : workspacesForSession(snapshot, state.activeSessionId);
-  const projectedCategories =
-    snapshot === null || state.activeWorkspaceId === null
-      ? []
-      : categoriesForWorkspace(snapshot, state.activeWorkspaceId);
+      : workspacesForSession(snapshot, attachment.sessionId);
   const categories =
-    projectedCategories.length > 0
-      ? projectedCategories
-      : FIXED_CATEGORIES.map((category, position) => ({
-          ...category,
-          workspaceId: state.activeWorkspaceId ?? "",
-          position,
-        }));
+    snapshot === null || workspaceId === null ? [] : categoriesForWorkspace(snapshot, workspaceId);
   const entries =
-    snapshot === null || state.activeWorkspaceId === null
+    snapshot === null || workspaceId === null || category === null
       ? []
       : navigatorEntries(
           snapshot,
-          state.activeWorkspaceId,
-          state.activeCategory,
+          workspaceId,
+          category,
           state.expandedRootIds,
           state.navigatorQuery,
           process.env.HOME ?? "",
         );
   const activeItem = snapshot?.items.find(
     (item) =>
-      navigatorItemKey(item) === state.activeNavigatorKey &&
-      item.workspaceId === state.activeWorkspaceId &&
-      item.category === state.activeCategory,
+      item.id === navigation?.itemId &&
+      item.workspaceId === workspaceId &&
+      item.category === category,
   );
   const activeEntry = entries.find(({ id }) => id === activeItem?.id);
   const surface =
@@ -110,14 +91,11 @@ export function deriveShellModel(input: {
       ? undefined
       : surfaceForItem(snapshot, activeItem.id);
   const tabs = snapshot === null ? [] : tabsForSurface(snapshot, surface?.id);
-  const activeTab = selectedTab(tabs, surface?.activeTabId) ?? tabs[0];
-  const navigationKey = navigationContextKey(
-    snapshot?.epoch ?? null,
-    state,
-    state.activeNavigatorKey,
-  );
+  const activeTab = selectedTab(tabs, navigation?.tabId);
+  const navigationKey = navigationContextKey(snapshot?.epoch ?? null, navigation);
 
   return {
+    navigation,
     navigationKey,
     completionKey: completionContextKey(navigationKey, surface?.id ?? null, activeTab?.id ?? null),
     sessions,
@@ -132,13 +110,12 @@ export function deriveShellModel(input: {
     tabs,
     activeTab,
     paneIds: paneIds(activeTab?.layout ?? null),
-    categoryIndex: categories.findIndex(({ kind }) => kind === state.activeCategory),
-    navigatorActiveIndex: entries.findIndex(({ key }) => key === state.activeNavigatorKey),
+    categoryIndex: categories.findIndex(({ kind }) => kind === category),
+    navigatorActiveIndex: entries.findIndex(({ id }) => id === navigation?.itemId),
     navigatorCursorIndex: entries.findIndex(({ key }) => key === state.navigatorCursorKey),
     tabActiveIndex: tabs.findIndex(({ id }) => id === activeTab?.id),
     tabCursorIndex: tabs.findIndex(({ id }) => id === state.tabCursorId),
-    activeCategoryTitle:
-      categories.find(({ kind }) => kind === state.activeCategory)?.title ?? "Work",
+    activeCategoryTitle: categories.find(({ kind }) => kind === category)?.title ?? "Work",
     cursorEntry: entries.find(({ key }) => key === state.navigatorCursorKey),
   };
 }
@@ -148,6 +125,7 @@ export function resolveShellFocus(input: {
   rememberedPaneId: string | null;
   paneIds: readonly string[];
   runningPaneIds: readonly string[];
+  startingPaneIds?: readonly string[];
   reactivatePaneIds?: readonly string[];
   undersized: boolean;
 }): { focus: FocusTarget; focusedPaneId: string | null } {
@@ -164,7 +142,7 @@ export function resolveShellFocus(input: {
       !(
         input.focus.control === "reactivate"
           ? (input.reactivatePaneIds ?? [])
-          : input.runningPaneIds
+          : [...input.runningPaneIds, ...(input.startingPaneIds ?? [])]
       ).includes(input.focus.paneId))
       ? { region: "tabs" as const }
       : input.focus;
@@ -173,23 +151,26 @@ export function resolveShellFocus(input: {
 
 export function genericRootIdForShellContext(
   state: ShellModelState,
-  snapshot: Snapshot,
+  snapshot: Omit<Snapshot, "terminalHistories">,
+  navigation: SessionNavigation | null,
 ): string | undefined {
-  if (state.activeWorkspaceId === null || state.activeCategory === "implementation") {
+  if (
+    !navigation?.workspaceId ||
+    !navigation.category ||
+    navigation.category === "implementation"
+  ) {
     return undefined;
   }
   const entries = navigatorEntries(
     snapshot,
-    state.activeWorkspaceId,
-    state.activeCategory,
+    navigation.workspaceId,
+    navigation.category,
     state.expandedRootIds,
   );
   const entry = entries.find(
-    (entry) =>
-      entry.key ===
-      (state.focus.region === "navigator" ? state.navigatorCursorKey : state.activeNavigatorKey),
+    (entry) => entry.key === (state.focus.region === "navigator" ? state.navigatorCursorKey : null),
   );
-  const active = snapshot.items.find((item) => navigatorItemKey(item) === state.activeNavigatorKey);
+  const active = snapshot.items.find((item) => item.id === navigation.itemId);
   const rootId =
     state.focus.region === "navigator" ? rootIdForEntry(entry) : (active?.parentId ?? active?.id);
   return snapshot.items.some(

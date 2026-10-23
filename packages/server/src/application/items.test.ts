@@ -15,6 +15,7 @@ import {
   registerDirectory,
   setItemArchived,
 } from "./items.ts";
+import { normalizeSessionNavigations, readNavigationCatalog } from "./navigation-store.ts";
 import { readSnapshot } from "./snapshot.ts";
 
 function fixture() {
@@ -362,8 +363,12 @@ test("failed discovery and a missing workspace cannot create registration record
         discoveryError: "Unsupported repository layout",
       }),
     ).toThrow(/Unsupported repository layout/);
-    db.query("DELETE FROM session_workspaces WHERE workspace_id = ?").run(workspaceId);
-    db.query("DELETE FROM workspaces WHERE id = ?").run(workspaceId);
+    db.transaction(() => {
+      const before = readNavigationCatalog(db);
+      db.query("DELETE FROM session_workspaces WHERE workspace_id = ?").run(workspaceId);
+      db.query("DELETE FROM workspaces WHERE id = ?").run(workspaceId);
+      normalizeSessionNavigations(db, before);
+    })();
     expect(() => registerDirectory(db, workspaceId, scan)).toThrow(/workspace/);
     expect(readSnapshot(db, "e", 0).items).toEqual([]);
   } finally {
@@ -689,10 +694,10 @@ test("concurrent registration reuses IDs without terminals or no-op publications
     expect(app.snapshot().items).toHaveLength(1);
     expect(app.snapshot().surfaces).toEqual([]);
     expect(app.snapshot().panes).toEqual([]);
-    expect(messages).toHaveLength(2);
+    expect(messages.filter((message) => JSON.parse(message).type === "snapshot")).toHaveLength(2);
     const revision = app.health().revision;
     expect((await app.execute(command)).revision).toBe(revision);
-    expect(messages).toHaveLength(2);
+    expect(messages.filter((message) => JSON.parse(message).type === "snapshot")).toHaveLength(2);
     await app.execute({ type: "item.setArchived", itemId: first.result.id, archived: true });
     await expect(app.execute(command)).rejects.toThrow(/Restore/);
     const archivedRevision = app.health().revision;
@@ -789,8 +794,12 @@ test("registration rechecks workspace and archive state after awaiting inspectio
         pending = app.execute({ type: "directory.register", workspaceId, path });
         await entered.promise;
         if (change === "workspace") {
-          db.query("DELETE FROM session_workspaces WHERE workspace_id = ?").run(workspaceId);
-          db.query("DELETE FROM workspaces WHERE id = ?").run(workspaceId);
+          db.transaction(() => {
+            const before = readNavigationCatalog(db);
+            db.query("DELETE FROM session_workspaces WHERE workspace_id = ?").run(workspaceId);
+            db.query("DELETE FROM workspaces WHERE id = ?").run(workspaceId);
+            normalizeSessionNavigations(db, before);
+          })();
         } else {
           const id =
             change === "root"

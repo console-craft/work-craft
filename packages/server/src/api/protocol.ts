@@ -1,3 +1,8 @@
+import type {
+  TerminalProjectionReply,
+  TerminalProjectionRequest,
+} from "./terminal-projection-protocol";
+
 export type CategoryKind =
   | "inbox"
   | "today"
@@ -7,6 +12,84 @@ export type CategoryKind =
   | "operations";
 
 export type PaneStatus = "starting" | "running" | "exited" | "interrupted" | "failed";
+
+export type SessionNavigation = {
+  sessionId: string;
+  generation: number;
+  workspaceId: string | null;
+  category: CategoryKind | null;
+  itemId: string | null;
+  tabId: string | null;
+  paneId: string | null;
+};
+
+export type NavigationTarget =
+  | { kind: "workspace"; workspaceId: string }
+  | { kind: "category"; category: CategoryKind }
+  | { kind: "item"; itemId: string }
+  | { kind: "tab"; tabId: string }
+  | { kind: "pane"; paneId: string };
+
+export type NavigationLevel = "category" | "item" | "tab";
+
+export type TerminalSize = { cols: number; rows: number };
+export type GridMarker = TerminalSize & { cursor: number; sequence: number };
+export type ViewerReport = {
+  epoch: string;
+  attachmentGeneration: number;
+  navigationGeneration: number;
+  tabId: string;
+  canvas: TerminalSize;
+  eligible: boolean;
+};
+export type TerminalGeometry = {
+  sequence: number;
+  tabs: {
+    tabId: string;
+    generation: number;
+    ownerConnectionId: string | null;
+    canvas: TerminalSize | null;
+  }[];
+  panes: { paneId: string; size: TerminalSize }[];
+};
+
+export type ActivationContext = { sessionId: string; generation: number };
+export type ClientAttachment = {
+  connectionId: string;
+  generation: number;
+  sessionId: string | null;
+};
+export type InputStamp = {
+  epoch: string;
+  attachmentGeneration: number;
+  navigationGeneration: number;
+  /** Per-tab generation; unrelated tab activity must not invalidate these bytes. */
+  geometrySequence: number;
+};
+export type TerminalInputContext = InputStamp & { runtimeGeneration?: number } & (
+    | { source: "response" }
+    | { source: "input"; kind: "key" | "paste" | "mouse" | "focus"; activitySequence?: number }
+  );
+export type InteractiveMessage =
+  | TerminalProjectionRequest
+  | { type: "client.attach"; requestId: number; sessionId: string | null }
+  | { type: "client.command"; requestId: number; attachmentGeneration: number; command: unknown }
+  | { type: "client.viewport"; stamp: InputStamp; report: ViewerReport | null }
+  | { type: "client.activity"; stamp: InputStamp; sequence: number }
+  | { type: "terminal.input"; paneId: string; data: string; context: TerminalInputContext };
+
+export type InteractiveServerMessage =
+  | TerminalProjectionReply
+  | { type: "client.ready"; epoch: string; connectionId: string; protocol: string }
+  | { type: "client.attached"; requestId: number | null; attachment: ClientAttachment }
+  | { type: "command.result"; requestId: number; response: CommandResponse }
+  | { type: "command.error"; requestId: number; message: string; field?: ValidationField }
+  | {
+      type: "terminal.geometry";
+      epoch: string;
+      geometry: TerminalGeometry;
+      resizes: { paneId: string; marker: GridMarker; runtimeGeneration: number }[];
+    };
 
 export type LayoutNode =
   | { type: "pane"; paneId: string }
@@ -56,7 +139,9 @@ export type Snapshot = {
   sessionWorkspaces: { sessionId: string; workspaceId: string; position: number }[];
   categories: { workspaceId: string; kind: CategoryKind; title: string; position: number }[];
   items: WorkItem[];
-  surfaces: { id: string; itemId: string; activeTabId: string | null }[];
+  navigation: SessionNavigation[];
+  geometry: TerminalGeometry;
+  surfaces: { id: string; itemId: string }[];
   tabs: {
     id: string;
     surfaceId: string;
@@ -76,7 +161,17 @@ export type Snapshot = {
     startedAt: string | null;
     exitedAt: string | null;
   }[];
-  terminalHistories: { paneId: string; cursor: number; data: string; truncated: boolean }[];
+  terminalHistories: {
+    paneId: string;
+    cursor: number;
+    data: string;
+    truncated: boolean;
+    startCursor: number;
+    prefixBytes: number;
+    initialSize: TerminalSize | null;
+    initialGridSequence: number | null;
+    resizes: GridMarker[];
+  }[];
 };
 
 export type CommandResult = {
@@ -90,11 +185,36 @@ export type CommandResult = {
   paneId?: string;
   stopping?: true;
   destroying?: true;
+  navigation?: SessionNavigation;
+};
+
+/** Runtime identity is daemon-local; epoch disambiguates daemon restarts. */
+export type PaneRuntimeIdentity = { paneId: string; runtimeGeneration: number };
+export type ControlSnapshot = Omit<Snapshot, "terminalHistories"> & {
+  terminalStates: PaneRuntimeIdentity[];
+};
+export type PaneHistoryResponse = PaneRuntimeIdentity & {
+  epoch: string;
+  history: Snapshot["terminalHistories"][number];
 };
 
 export type CommandResponse = { ok: true; revision: number; result: CommandResult };
 
 export type Command =
+  | {
+      type: "session.navigate";
+      sessionId: string;
+      target: NavigationTarget;
+      navigationGeneration?: number;
+    }
+  | { type: "session.step"; sessionId: string; level: NavigationLevel; direction: -1 | 1 }
+  | {
+      type: "session.openItem";
+      sessionId: string;
+      itemId: string;
+      cwd?: string;
+      navigationGeneration?: number;
+    }
   | { type: "session.create"; name: string }
   | { type: "session.update"; sessionId: string; name?: string; position?: number }
   | { type: "session.delete"; sessionId: string }
@@ -112,21 +232,46 @@ export type Command =
     }
   | { type: "surface.ensure"; itemId: string; cwd?: string }
   | { type: "item.setArchived"; itemId: string; archived: boolean }
-  | { type: "tab.create"; surfaceId: string; title: string }
-  | { type: "surface.selectTab"; surfaceId: string; tabId: string }
-  | { type: "pane.split"; paneId: string; direction: "horizontal" | "vertical"; cwd?: string }
-  | { type: "process.restart"; paneId: string }
+  | { type: "tab.create"; surfaceId: string; title: string; activation?: ActivationContext }
+  | {
+      type: "pane.split";
+      paneId: string;
+      direction: "horizontal" | "vertical";
+      cwd?: string;
+      activation?: ActivationContext;
+    }
+  | { type: "process.restart"; paneId: string; activation?: ActivationContext }
   | { type: "daemon.stop" }
   | { type: "daemon.destroy" };
 
-export type ClientMessage =
-  | { type: "terminal.input"; paneId: string; data: string }
-  | { type: "terminal.resize"; paneId: string; cols: number; rows: number };
+export type ClientMessage = InteractiveMessage;
+
+// shortcut: bounded burst headroom, replace disconnect-based recovery in the output/lifecycle follow-up.
+export const STREAM_BACKPRESSURE_LIMIT = 8 * 1024 * 1024;
 
 export type ServerMessage =
+  | InteractiveServerMessage
   | { type: "snapshot"; snapshot: Snapshot }
-  | { type: "terminal.output"; epoch: string; paneId: string; cursor: number; data: string }
-  | { type: "process.status"; epoch: string; paneId: string; status: PaneStatus; error?: string };
+  | { type: "snapshot.available"; epoch: string; revision: number }
+  | { type: "control.snapshot"; snapshot: ControlSnapshot }
+  | { type: "control.available"; epoch: string; revision: number }
+  | {
+      type: "terminal.output";
+      epoch: string;
+      paneId: string;
+      cursor: number;
+      data: string;
+      geometrySequence: number;
+      runtimeGeneration: number;
+    }
+  | {
+      type: "process.status";
+      epoch: string;
+      paneId: string;
+      runtimeGeneration: number;
+      status: PaneStatus;
+      error?: string;
+    };
 
 export type ValidationField = "name" | "title" | "path";
 
@@ -170,14 +315,6 @@ function idValue(value: unknown, field: string): string {
   return stringValue(value, field, true);
 }
 
-function base64Value(value: unknown, field: string): string {
-  const encoded = stringValue(value, field);
-  if (Buffer.from(encoded, "base64").toString("base64") !== encoded) {
-    throw new ProtocolError(`${field} must be base64`);
-  }
-  return encoded;
-}
-
 function optionalString(value: unknown, field: string): string | undefined {
   return value === undefined ? undefined : stringValue(value, field);
 }
@@ -192,7 +329,47 @@ function categoryValue(value: unknown): CategoryKind {
 export function parseCommand(value: unknown): Command {
   const input = objectValue(value);
   const type = stringValue(input.type, "type");
+  const activation = input.activation === undefined ? undefined : activationValue(input.activation);
+  if (
+    input.navigationGeneration !== undefined &&
+    (!Number.isSafeInteger(input.navigationGeneration) ||
+      (input.navigationGeneration as number) < 0)
+  ) {
+    throw new ProtocolError("navigationGeneration must be a non-negative safe integer");
+  }
+  const navigationGuard =
+    input.navigationGeneration === undefined
+      ? {}
+      : { navigationGeneration: input.navigationGeneration as number };
   switch (type) {
+    case "session.navigate":
+      return {
+        type,
+        sessionId: idValue(input.sessionId, "sessionId"),
+        target: navigationTarget(input.target),
+        ...navigationGuard,
+      };
+    case "session.step":
+      if (
+        !["category", "item", "tab"].includes(input.level as string) ||
+        (input.direction !== -1 && input.direction !== 1)
+      ) {
+        throw new ProtocolError("step requires category/item/tab and direction -1 or 1");
+      }
+      return {
+        type,
+        sessionId: idValue(input.sessionId, "sessionId"),
+        level: input.level as NavigationLevel,
+        direction: input.direction,
+      };
+    case "session.openItem":
+      return {
+        type,
+        sessionId: idValue(input.sessionId, "sessionId"),
+        itemId: idValue(input.itemId, "itemId"),
+        ...navigationGuard,
+        ...(input.cwd === undefined ? {} : { cwd: optionalString(input.cwd, "cwd") }),
+      };
     case "session.create":
       return { type, name: stringValue(input.name, "name", true) };
     case "session.update": {
@@ -268,15 +445,14 @@ export function parseCommand(value: unknown): Command {
     case "tab.create":
       return {
         type,
+        ...(activation === undefined ? {} : { activation }),
         surfaceId: idValue(input.surfaceId, "surfaceId"),
         title: stringValue(input.title, "title", true),
       };
     case "surface.selectTab":
-      return {
-        type,
-        surfaceId: idValue(input.surfaceId, "surfaceId"),
-        tabId: idValue(input.tabId, "tabId"),
-      };
+      throw new ProtocolError(
+        "surface.selectTab was removed; use session.navigate with a sessionId and tab target",
+      );
     case "pane.split": {
       if (input.direction !== "horizontal" && input.direction !== "vertical") {
         throw new ProtocolError("direction must be horizontal or vertical");
@@ -284,12 +460,17 @@ export function parseCommand(value: unknown): Command {
       return {
         type,
         paneId: idValue(input.paneId, "paneId"),
+        ...(activation === undefined ? {} : { activation }),
         direction: input.direction,
         ...(input.cwd === undefined ? {} : { cwd: optionalString(input.cwd, "cwd") }),
       };
     }
     case "process.restart":
-      return { type, paneId: idValue(input.paneId, "paneId") };
+      return {
+        type,
+        paneId: idValue(input.paneId, "paneId"),
+        ...(activation === undefined ? {} : { activation }),
+      };
     case "daemon.stop":
     case "daemon.destroy":
       return { type };
@@ -298,36 +479,34 @@ export function parseCommand(value: unknown): Command {
   }
 }
 
-export function parseClientMessage(value: unknown): ClientMessage {
+export { parseInteractiveMessage as parseClientMessage } from "./interactive-protocol.ts";
+
+function activationValue(value: unknown): ActivationContext {
   const input = objectValue(value);
-  const type = stringValue(input.type, "type");
-  switch (type) {
-    case "terminal.input":
-      return {
-        type,
-        paneId: idValue(input.paneId, "paneId"),
-        data: base64Value(input.data, "data"),
-      };
-    case "terminal.resize": {
-      const cols = input.cols;
-      const rows = input.rows;
-      if (
-        !Number.isInteger(cols) ||
-        (cols as number) <= 0 ||
-        !Number.isInteger(rows) ||
-        (rows as number) <= 0
-      ) {
-        throw new ProtocolError("cols and rows must be positive integers");
-      }
-      return {
-        type,
-        paneId: idValue(input.paneId, "paneId"),
-        cols: cols as number,
-        rows: rows as number,
-      };
-    }
+  if (!Number.isSafeInteger(input.generation) || (input.generation as number) < 0) {
+    throw new ProtocolError("activation generation must be a non-negative safe integer");
+  }
+  return {
+    sessionId: idValue(input.sessionId, "sessionId"),
+    generation: input.generation as number,
+  };
+}
+
+function navigationTarget(value: unknown): NavigationTarget {
+  const input = objectValue(value);
+  switch (input.kind) {
+    case "workspace":
+      return { kind: input.kind, workspaceId: idValue(input.workspaceId, "workspaceId") };
+    case "category":
+      return { kind: input.kind, category: categoryValue(input.category) };
+    case "item":
+      return { kind: input.kind, itemId: idValue(input.itemId, "itemId") };
+    case "tab":
+      return { kind: input.kind, tabId: idValue(input.tabId, "tabId") };
+    case "pane":
+      return { kind: input.kind, paneId: idValue(input.paneId, "paneId") };
     default:
-      throw new ProtocolError(`unknown client message type: ${type}`);
+      throw new ProtocolError("unknown navigation target kind");
   }
 }
 

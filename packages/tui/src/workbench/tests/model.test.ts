@@ -5,7 +5,7 @@ import { selectedTab, surfaceForItem, tabsForSurface } from "@/workbench/model";
 
 test("surface projection is exact and ordered tabs never mutate snapshot order", () => {
   const snapshot = snapshotFixture({
-    surfaces: [{ id: "surface", itemId: "item-1", activeTabId: "missing" }],
+    surfaces: [{ id: "surface", itemId: "item-1" }],
     tabs: [
       { id: "b", surfaceId: "surface", position: 0, title: "B", layout: null },
       { id: "other", surfaceId: "other", position: -1, title: "Other", layout: null },

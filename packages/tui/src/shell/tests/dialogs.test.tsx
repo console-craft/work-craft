@@ -26,7 +26,7 @@ import {
   twoSurfaceSnapshot,
   workCraftStateFixture,
 } from "@/shell/tests/fixtures";
-import { snapshotFixture } from "@/tests/support/fixtures.ts";
+import { createScopeFixture, snapshotFixture, streamFixture } from "@/tests/support/fixtures.ts";
 import { Dialog } from "@/ui/components/dialog";
 import { icons } from "@/ui/icons/nerd";
 import { getControlHints } from "@/ui/interaction/control-hints";
@@ -71,7 +71,12 @@ for (const kind of [
     const dialog: Exclude<DialogState, null> =
       kind === "sessions"
         ? { kind, returnFocus: { region: "category" } }
-        : { kind: "create", createKind: kind, returnFocus: { region: "category" } };
+        : {
+            kind: "create",
+            createKind: kind,
+            scope: createScopeFixture(snapshotFixture()),
+            returnFocus: { region: "category" },
+          };
     let cancellations = 0;
     const setup = await testRender(
       <Stack width="100%" height="100%" gap={0}>
@@ -390,11 +395,10 @@ test("dialogs blur and restore the focused terminal", async () => {
     <WorkCraftShell
       workCraft={workCraftStateFixture({
         snapshot: surfaceSnapshot(),
-        stream: {
+        stream: streamFixture({
           close: () => {},
-          resize: () => {},
           sendInput: (paneId, bytes) => received.push({ paneId, bytes: [...bytes] }),
-        },
+        }),
       })}
     />,
     { width: 120, height: 40, kittyKeyboard: true },

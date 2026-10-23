@@ -993,9 +993,10 @@ test("refresh timeouts stay stable and shutdown aborts and reaps a real Git proc
   const bin = join(f.home, "bin");
   const pidFile = join(f.home, "git.pid");
   await mkdir(bin);
+  // File existence must acknowledge a complete PID, not an empty in-progress write.
   await writeFile(
     join(bin, "git"),
-    `#!${process.execPath}\nimport {writeFileSync} from 'node:fs';writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>{},1000);\n`,
+    `#!${process.execPath}\nimport {writeFileSync,renameSync} from 'node:fs';writeFileSync(${JSON.stringify(`${pidFile}.tmp`)},String(process.pid));renameSync(${JSON.stringify(`${pidFile}.tmp`)},${JSON.stringify(pidFile)});setInterval(()=>{},1000);\n`,
     { mode: 0o755 },
   );
   const savedPath = process.env.PATH;
@@ -1023,6 +1024,7 @@ test("refresh timeouts stay stable and shutdown aborts and reaps a real Git proc
     }
     pid = Number(await Bun.file(pidFile).text());
     const start = Date.now();
+    expect(pid).toBeGreaterThan(0);
     await f.app.closeDirectoryRefresh();
     await pass;
     expect(Date.now() - start).toBeLessThan(1000);
@@ -1052,7 +1054,7 @@ test("shutdown during fallback reaps its real Git helper without late publicatio
   await mkdir(bin);
   await writeFile(
     join(bin, "git"),
-    `#!${process.execPath}\nimport {writeFileSync} from 'node:fs';writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>{},1000);\n`,
+    `#!${process.execPath}\nimport {writeFileSync,renameSync} from 'node:fs';writeFileSync(${JSON.stringify(`${pidFile}.tmp`)},String(process.pid));renameSync(${JSON.stringify(`${pidFile}.tmp`)},${JSON.stringify(pidFile)});setInterval(()=>{},1000);\n`,
     { mode: 0o755 },
   );
   const savedPath = process.env.PATH;
@@ -1066,6 +1068,7 @@ test("shutdown during fallback reaps its real Git helper without late publicatio
     }
     expect(await Bun.file(pidFile).exists()).toBe(true);
     const pid = Number(await Bun.file(pidFile).text());
+    expect(pid).toBeGreaterThan(0);
     const before = f.app.snapshot();
     const snapshots = f.messages.filter((message) => message.type === "snapshot").length;
     const start = Date.now();

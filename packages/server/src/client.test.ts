@@ -1,8 +1,27 @@
 import { expect, test } from "bun:test";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { ApiError, createClient, resolveClientPath } from "./client.ts";
+
+test("a missing daemon socket rejects the stream without an uncaught process error", async () => {
+  const socketPath = join(tmpdir(), `wc-${crypto.randomUUID()}.sock`);
+  const child = Bun.spawn(
+    [
+      process.execPath,
+      "-e",
+      `
+    import assert from "node:assert/strict";
+    import { createClient } from ${JSON.stringify(new URL("./client.ts", import.meta.url).href)};
+    await assert.rejects(createClient({ socketPath: ${JSON.stringify(socketPath)} }).stream({ onMessage() {} }));
+    await Bun.sleep(25);
+  `,
+    ],
+    { stdout: "pipe", stderr: "pipe" },
+  );
+  const [code, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
+  expect({ code, stderr }).toEqual({ code: 0, stderr: "" });
+});
 
 test("registration resolves relative to client not daemon without changing path bytes", () => {
   expect(resolveClientPath(" directory ", "/client")).toBe("/client/ directory ");

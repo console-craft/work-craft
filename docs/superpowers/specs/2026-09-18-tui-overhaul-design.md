@@ -1,5 +1,25 @@
 # TUI Overhaul Design
 
+## Stage 2 Implementation And Verification (2026-10-21)
+
+The approved [shared-session companion](./2026-10-21-shared-session-navigation-design.md)
+is implemented on the normal daemon/TUI/CLI path. Sessions own durable navigation
+and tab/pane memories; clients keep attachment, focus and editing local. Canonical
+latest-active grids, cursor-follow clipping and ordered retained geometry let two
+normal clients work in one running terminal/editor session. Schema 4 migrates
+transactionally to schema 5 without destructive reset.
+
+The final macOS full check passed 1,659 tests, zero failures, lint/format/types,
+compiled build and compiled smoke. Two-normal-client acceptance includes one
+deterministic full-screen program and installed Neovim, activity/idle-resize sizing,
+query ownership, reconnect, session isolation and cold recovery. Independent
+whole-branch review found five Important issues; all were reproduced and repaired
+with regression tests, then the full gate passed. Stage 2 is verified for progression;
+the companion records the final evidence and limitations.
+Human/physical-terminal, Linux and long-duration acceptance remain unverified.
+No further Stage 3 or Stage 4 completion is claimed. Earlier checkpoints below
+remain historical.
+
 ## Component Adoption Complete And Accepted (2026-10-19)
 
 The approved [workbench companion](./2026-10-18-tui-component-adoption-phase-5-design.md)

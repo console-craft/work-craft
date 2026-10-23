@@ -4,7 +4,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { CATEGORIES, readSnapshot } from "../application/snapshot.ts";
+import { decodeBytes } from "../api/protocol.ts";
+import { CATEGORIES } from "../application/categories.ts";
+import {
+  normalizeSessionNavigations,
+  readNavigationCatalog,
+} from "../application/navigation-store.ts";
+import { readSnapshot } from "../application/snapshot.ts";
 import { openDatabase } from "./database.ts";
 
 function seedSnapshot(db: ReturnType<typeof openDatabase>): void {
@@ -13,7 +19,7 @@ function seedSnapshot(db: ReturnType<typeof openDatabase>): void {
     INSERT INTO workspaces VALUES ('workspace-1', 'Personal');
     INSERT INTO session_workspaces VALUES ('session-a', 'workspace-1', 0);
     INSERT INTO items VALUES ('item-1', 'workspace-1', 'design', NULL, 'generic', 'Build', 0, 0, '{"flag":true}');
-    INSERT INTO surfaces VALUES ('surface-1', 'item-1', 'tab-1');
+    INSERT INTO surfaces VALUES ('surface-1', 'item-1');
     INSERT INTO tabs VALUES (
       'tab-1',
       'surface-1',
@@ -34,11 +40,12 @@ function seedSnapshot(db: ReturnType<typeof openDatabase>): void {
     INSERT INTO terminal_chunks (pane_id, cursor_start, cursor_end, data)
       VALUES ('pane-1', 2, 4, X'6162'), ('pane-1', 4, 5, X'63');
   `);
+  normalizeSessionNavigations(db, readNavigationCatalog(db));
 }
 
 test("migrates an empty database and exposes six fixed categories", () => {
   const db = openDatabase(":memory:");
-  expect(db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(4);
+  expect(db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(6);
   expect(CATEGORIES.map((category) => category.kind)).toEqual([
     "inbox",
     "today",
@@ -171,10 +178,31 @@ test("reads a deterministic snapshot from persisted rows", () => {
     executable: "/bin/zsh",
     args: ["-l"],
   });
-  expect(snapshot.terminalHistories).toEqual([
-    { paneId: "pane-1", cursor: 5, data: "YWJj", truncated: true },
-    { paneId: "pane-2", cursor: 0, data: "", truncated: false },
+  expect(snapshot.terminalHistories).toMatchObject([
+    {
+      paneId: "pane-1",
+      cursor: 5,
+      startCursor: 2,
+      truncated: true,
+      initialSize: null,
+      initialGridSequence: null,
+      resizes: [],
+    },
+    {
+      paneId: "pane-2",
+      cursor: 0,
+      startCursor: 0,
+      prefixBytes: 0,
+      data: "",
+      truncated: false,
+      initialSize: null,
+      initialGridSequence: null,
+      resizes: [],
+    },
   ]);
+  expect(new TextDecoder().decode(decodeBytes(snapshot.terminalHistories[0]!.data))).toEndWith(
+    "abc",
+  );
   db.close();
 });
 

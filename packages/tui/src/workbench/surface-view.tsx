@@ -1,65 +1,69 @@
-import type { BoxRenderable, EmbeddedTerminalRenderable } from "@opentui/core";
-import type { Snapshot, StreamConnection } from "@work-craft/server/client";
+import type { BoxRenderable, Renderable } from "@opentui/core";
+import {
+  type ControlSnapshot,
+  projectPaneLayout,
+  type Snapshot,
+  type StreamConnection,
+} from "@work-craft/server/client";
 import { useEffect, useState } from "react";
 
-import type { TerminalBuffer } from "@/client/terminal-buffer.ts";
+import type { TerminalOutputs } from "@/client/terminal-output";
 import { EmptyState, EmptyStateDescription, EmptyStateTitle } from "@/ui/components/empty-state";
 import { Box } from "@/ui/primitives/box.tsx";
 import { Divider } from "@/ui/primitives/divider.tsx";
 import { Text } from "@/ui/primitives/text.tsx";
 import { useTheme } from "@/ui/theming/theme-provider.tsx";
-import {
-  hasTerminalViewport,
-  paneIds,
-  projectPaneLayout,
-  terminalRect,
-} from "@/workbench/layout.ts";
+import { hasTerminalViewport, paneIds, terminalRect } from "@/workbench/layout.ts";
 import { selectedTab } from "@/workbench/model";
 import { paneNotice } from "@/workbench/pane-state.ts";
-import { TerminalPane } from "@/workbench/terminal-pane.tsx";
+import { TerminalPane, type TerminalPaneProps } from "@/workbench/terminal-pane.tsx";
 
-export function terminalPaneKey(
-  paneId: string,
-  buffer: Pick<TerminalBuffer, "epoch" | "historyCursor"> | undefined,
-): string {
-  return `${paneId}:${buffer?.epoch ?? "pending"}:${buffer?.historyCursor ?? 0}`;
-}
-
-export type SurfaceViewProps = {
+export type SurfaceViewProps = Pick<TerminalPaneProps, "stamp" | "inputEvent" | "onMouseInput"> & {
+  activeTabId: string | null;
   connected: boolean;
+  preservePresentation?: boolean;
   reactivatingPaneIds: ReadonlySet<string>;
   canReactivate(paneId: string): boolean;
   onReactivatePane(paneId: string): void;
-  snapshot: Snapshot;
+  snapshot: Omit<Snapshot, "terminalHistories"> & Partial<Pick<ControlSnapshot, "terminalStates">>;
   stream: StreamConnection | null;
   surface: Snapshot["surfaces"][number];
-  terminals: ReadonlyMap<string, TerminalBuffer>;
+  outputs: TerminalOutputs;
   focusedPaneId: string | null;
   workbenchFocused: boolean;
   undersized: boolean;
   onFocusPane(paneId: string): void;
-  onTerminalReady(paneId: string, terminal: EmbeddedTerminalRenderable | null): void;
-  onSourceFailure?(source: { paneId: string; message: string }): void;
+  onTerminalReady(paneId: string, terminal: Renderable | null): void;
+  onSourceFailure?(source: {
+    paneId: string;
+    message: string;
+    operation?: "Layout" | "Terminal";
+  }): void;
   inputEnabled?: boolean;
   canReceiveInput?(paneId?: string): boolean;
-  canResize?(): boolean;
+  canBrowse?(paneId: string): boolean;
 };
 
 export function SurfaceView({
   connected,
+  preservePresentation = false,
   reactivatingPaneIds,
   canReactivate,
   onReactivatePane,
-  canResize,
+  activeTabId,
+  stamp,
+  inputEvent,
+  onMouseInput,
   inputEnabled = true,
   canReceiveInput,
+  canBrowse,
   focusedPaneId,
   onFocusPane,
   onTerminalReady,
   snapshot,
   stream,
   surface,
-  terminals,
+  outputs,
   undersized,
   workbenchFocused,
   onSourceFailure,
@@ -75,7 +79,7 @@ export function SurfaceView({
   }
   const activeTab = selectedTab(
     snapshot.tabs.filter(({ surfaceId }) => surfaceId === surface.id),
-    surface.activeTabId,
+    activeTabId,
   );
   useEffect(() => {
     for (const paneId of paneIds(activeTab?.layout ?? null)) {
@@ -105,10 +109,11 @@ export function SurfaceView({
         <Box visible={!undersized} width="100%" height="100%">
           {geometry.panes.map(({ paneId, rect }) => {
             const pane = snapshot.panes.find(({ id }) => id === paneId);
-            const buffer = terminals.get(paneId);
+            const output = outputs.pane(paneId);
             const viewport = terminalRect(
               rect,
-              pane !== undefined && paneNotice(pane.processStatus, connected) !== null,
+              pane !== undefined &&
+                paneNotice(pane.processStatus, connected || preservePresentation) !== null,
             );
             const usable = !undersized && hasTerminalViewport(viewport);
             return (
@@ -128,18 +133,32 @@ export function SurfaceView({
                   <TerminalPane
                     bounds={rect}
                     connected={connected}
+                    preservePresentation={preservePresentation}
                     reactivatingPaneIds={reactivatingPaneIds}
                     canReactivate={canReactivate}
                     onReactivatePane={onReactivatePane}
-                    key={terminalPaneKey(paneId, buffer)}
-                    buffer={buffer}
+                    output={output}
+                    runtimeIdentity={{
+                      epoch: snapshot.epoch,
+                      runtimeGeneration:
+                        snapshot.terminalStates?.find((entry) => entry.paneId === paneId)
+                          ?.runtimeGeneration ??
+                        output.read()?.runtimeGeneration ??
+                        0,
+                    }}
                     focused={workbenchFocused && paneId === focusedPaneId}
                     pane={pane}
-                    resizeEnabled={usable}
+                    size={snapshot.geometry.panes.find((entry) => entry.paneId === paneId)!.size}
+                    stamp={stamp}
+                    inputEvent={inputEvent}
+                    onMouseInput={onMouseInput}
+                    onError={(message) =>
+                      onSourceFailure?.({ paneId, message, operation: "Terminal" })
+                    }
                     stream={stream}
                     inputEnabled={inputEnabled && usable}
                     canReceiveInput={canReceiveInput}
-                    canResize={canResize}
+                    canBrowse={canBrowse}
                     onFocus={() => onFocusPane(paneId)}
                     onTerminalReady={onTerminalReady}
                   />

@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { createClient, decodeBytes, type WorkCraftClient } from "@work-craft/server/client";
 
+import { sendTerminalInput } from "../../../scripts/test-support/terminal-input.ts";
 import { USAGE } from "./args.ts";
 import { readStatus } from "./format.ts";
 
@@ -375,7 +376,14 @@ test("creates resources and controls surfaces through canonical commands", async
       "--title",
       "Second",
     ]);
-    await runJson(home, ["surface", "select-tab", String(ensured.surfaceId), String(tab.tabId)]);
+    const legacySelection = await runCli(home, [
+      "surface",
+      "select-tab",
+      String(ensured.surfaceId),
+      String(tab.tabId),
+    ]);
+    expect(legacySelection.exitCode).not.toBe(0);
+    expect(legacySelection.stderr).toContain("session select <session-id> --tab <id>");
     const split = await runJson(home, [
       "pane",
       "split",
@@ -414,7 +422,7 @@ test("creates resources and controls surfaces through canonical commands", async
       expect.objectContaining({ id: item.id, parentId: project.id, data: { source: "cli" } }),
     );
     expect(surfaces).toContainEqual(
-      expect.objectContaining({ id: ensured.surfaceId, itemId: item.id, activeTabId: tab.tabId }),
+      expect.objectContaining({ id: ensured.surfaceId, itemId: item.id }),
     );
     expect(tabs).toContainEqual(
       expect.objectContaining({
@@ -461,7 +469,9 @@ test("split text and JSON preserve shape, inherit live cwd and validate client-r
     const opened = await runJson(home, ["surface", "ensure", "--item", items.first, "--cwd", home]);
     const sourceId = String(opened.paneId);
     stream = await client.stream({ onMessage() {} });
-    stream.sendInput(
+    await sendTerminalInput(
+      client,
+      stream,
       sourceId,
       new TextEncoder().encode(`cd '${live}'; printf 'CLI-%s\\n' ready\n`),
     );
@@ -471,7 +481,9 @@ test("split text and JSON preserve shape, inherit live cwd and validate client-r
     const inherited = afterPlain.panes.find(({ id }) => id !== sourceId)!;
     expect(plain).toEqual({ exitCode: 0, stderr: "", stdout: `Pane: ${inherited.id}\n` });
     expect(inherited.cwd).toBe(live);
-    stream.sendInput(
+    await sendTerminalInput(
+      client,
+      stream,
       inherited.id,
       new TextEncoder().encode("printf 'INHERITED-%s\\n' \"$(pwd)\"\n"),
     );
@@ -496,7 +508,9 @@ test("split text and JSON preserve shape, inherit live cwd and validate client-r
       tabId: opened.tabId,
     });
     expect(overridden.cwd).toBe(override);
-    stream.sendInput(
+    await sendTerminalInput(
+      client,
+      stream,
       overridden.id,
       new TextEncoder().encode("printf 'OVERRIDE-%s\\n' \"$(pwd)\"\n"),
     );
@@ -519,7 +533,7 @@ test("split text and JSON preserve shape, inherit live cwd and validate client-r
       expect(after.tabs).toEqual(before.tabs);
       expect(after.revision).toBe(before.revision);
     }
-    stream.sendInput(sourceId, new TextEncoder().encode("exit\n"));
+    await sendTerminalInput(client, stream, sourceId, new TextEncoder().encode("exit\n"));
     const deadline = Date.now() + 3_000;
     let stopped = await client.snapshot();
     while (
@@ -908,6 +922,9 @@ test("prints representative mutation and snapshot output", async () => {
       stderr: "",
       stdout:
         `Main\n` +
+        `  Session: ${sessionId}\n` +
+        `  Workspace: ${workspace.id}\n` +
+        `  Category: inbox\n  Item: -\n  Tab: -\n  Pane: -\n` +
         `  Work\n` +
         `    Inbox\n` +
         `    Today\n` +
@@ -927,6 +944,178 @@ test("rejects invalid invocation with usage and exit 2", async () => {
   const home = await tempHome();
   try {
     expect(await runCli(home, ["list"])).toEqual({ exitCode: 2, stdout: "", stderr: USAGE });
+  } finally {
+    await cleanup(home);
+  }
+});
+
+test("session CLI navigation keeps shared resources but independent selections and returns their authoritative cursor", async () => {
+  const home = await tempHome();
+  try {
+    const first = await runJson(home, ["session", "create", "--name", "First"]);
+    const second = await runJson(home, ["session", "create", "--name", "Second"]);
+    const client = createClient({ socketPath: join(home, "work-craft.sock") });
+    const a = String(first.id);
+    const b = String(second.id);
+    const workspace = await client.command({
+      type: "workspace.create",
+      sessionId: a,
+      name: "Shared",
+    });
+    const workspaceId = workspace.result.id;
+    await client.command({ type: "session.workspace.add", sessionId: b, workspaceId });
+    const root = await client.command({
+      type: "item.create",
+      workspaceId,
+      category: "design",
+      title: "Root",
+    });
+    const item = await client.command({
+      type: "item.create",
+      workspaceId,
+      category: "design",
+      parentId: root.result.id,
+      title: "Line\n\x1b[31m",
+    });
+    const opened = await client.command({
+      type: "surface.ensure",
+      itemId: item.result.id,
+      cwd: home,
+    });
+    const tab = await client.command({
+      type: "tab.create",
+      surfaceId: opened.result.surfaceId!,
+      title: "Other",
+    });
+    const before = await client.snapshot();
+    for (const [flag, target] of [
+      ["workspace", workspaceId],
+      ["category", "design"],
+      ["item", item.result.id],
+      ["tab", tab.result.tabId!],
+      ["pane", tab.result.paneId!],
+    ]) {
+      const result = await runJson(home, ["session", "select", a, `--${flag}`, target!]);
+      expect(result.navigation).toEqual(
+        (await client.snapshot()).navigation.find(({ sessionId }) => sessionId === a),
+      );
+    }
+    const other = await runJson(home, ["session", "open-item", b, "--item", item.result.id]);
+    expect(other.navigation).toMatchObject({
+      sessionId: b,
+      tabId: opened.result.tabId,
+      paneId: opened.result.paneId,
+    });
+    for (const direction of ["next", "previous"]) {
+      const result = await runJson(home, [
+        "session",
+        "step",
+        b,
+        "--level",
+        "tab",
+        "--direction",
+        direction,
+      ]);
+      expect(result.navigation).toMatchObject({
+        tabId: direction === "next" ? tab.result.tabId : opened.result.tabId,
+      });
+    }
+    const snapshot = await client.snapshot();
+    expect(snapshot.navigation.find(({ sessionId }) => sessionId === a)?.tabId).toBe(
+      tab.result.tabId!,
+    );
+    expect(snapshot.navigation.find(({ sessionId }) => sessionId === b)?.tabId).toBe(
+      opened.result.tabId!,
+    );
+    expect(snapshot.panes.map(({ id, startedAt }) => ({ id, startedAt }))).toEqual(
+      before.panes.map(({ id, startedAt }) => ({ id, startedAt })),
+    );
+    const text = await runCli(home, ["snapshot"]);
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain(`Tab: ${tab.result.tabId}`);
+    expect(text.stdout).toContain(`Tab: ${opened.result.tabId}`);
+    expect(text.stdout).toContain('"Line\\n\\u001b[31m"');
+    expect(text.stdout).not.toContain("\x1b");
+    const plain = await runCli(home, ["session", "select", a, "--category", "operations"]);
+    expect(plain).toEqual({
+      exitCode: 0,
+      stderr: "",
+      stdout: `Session: ${a}\nWorkspace: ${workspaceId}\nCategory: operations\nItem: -\nTab: -\nPane: -\n`,
+    });
+
+    const fresh = await client.command({
+      type: "item.create",
+      workspaceId,
+      category: "design",
+      title: "Fresh",
+    });
+    await mkdir(join(home, "client cwd"));
+    const relative = await runCli(
+      home,
+      ["session", "open-item", a, "--item", fresh.result.id, "--cwd", "client cwd", "--json"],
+      {},
+      home,
+    );
+    expect(relative.exitCode).toBe(0);
+    const selected = JSON.parse(relative.stdout) as { paneId: string };
+    expect((await client.snapshot()).panes.find(({ id }) => id === selected.paneId)?.cwd).toBe(
+      join(await realpath(home), "client cwd"),
+    );
+
+    const foreign = await client.command({ type: "workspace.create", sessionId: b, name: "Other" });
+    const invalid = await runCli(home, ["session", "select", a, "--workspace", foreign.result.id]);
+    expect(invalid.exitCode).toBe(1);
+    expect(invalid.stderr).not.toContain("Usage:");
+    expect(
+      (await client.snapshot()).navigation.find(({ sessionId }) => sessionId === a)?.paneId,
+    ).toBe(selected.paneId);
+    const failed = await client.command({
+      type: "item.create",
+      workspaceId,
+      category: "design",
+      title: "Failed",
+    });
+    const failure = await client.command({
+      type: "surface.ensure",
+      itemId: failed.result.id,
+      cwd: join(home, "missing"),
+    });
+    const selectFailed = await runCli(home, [
+      "session",
+      "select",
+      a,
+      "--pane",
+      failure.result.paneId!,
+      "--json",
+    ]);
+    expect(selectFailed.exitCode).toBe(0);
+    expect(JSON.parse(selectFailed.stdout).navigation.paneId).toBe(failure.result.paneId!);
+  } finally {
+    await cleanup(home);
+  }
+}, 20000);
+
+test("invalid session navigation exits with usage before starting a daemon", async () => {
+  const home = await tempHome();
+  try {
+    for (const args of [
+      ["session", "select", "s"],
+      ["session", "select", "s", "--tab", "t", "--pane", "p"],
+      ["session", "select", "s", "--tab", "t", "--tab", "t"],
+      ["session", "select", "s", "--category", "wrong"],
+      ["session", "step", "s", "--level", "pane", "--direction", "next"],
+      ["session", "step", "s", "--level", "tab", "--direction", "up"],
+      ["session", "open-item", "s", "extra", "--item", "i"],
+      ["surface", "select-tab", "surface", "tab"],
+    ]) {
+      const result = await runCli(home, args);
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("Usage:");
+      if (args[0] === "surface") {
+        expect(result.stderr).toContain("session select <session-id> --tab <id>");
+      }
+    }
+    expect(await Bun.file(join(home, "daemon.lock")).exists()).toBe(false);
   } finally {
     await cleanup(home);
   }
@@ -1300,6 +1489,8 @@ test("cleanup preserves owned files when post-kill observation is uncertain", as
 
 test("retries status reads until snapshot and health revisions match", async () => {
   const emptySnapshot = {
+    navigation: [],
+    geometry: { sequence: 0, tabs: [], panes: [] },
     epoch: "epoch",
     revision: 1,
     sessions: [],
@@ -1328,7 +1519,7 @@ test("retries status reads until snapshot and health revisions match", async () 
     },
     async health() {
       healthCalls += 1;
-      return { epoch: "epoch", revision: 2, pid: 42 };
+      return { epoch: "epoch", revision: 2, pid: 42, protocol: "work-craft-projection-preview/1" };
     },
   } satisfies Pick<WorkCraftClient, "health" | "snapshot">;
 
@@ -1357,6 +1548,8 @@ test("bounds incoherent status reads", async () => {
       calls += 1;
       return {
         epoch: "old",
+        navigation: [],
+        geometry: { sequence: 0, tabs: [], panes: [] },
         revision: calls,
         sessions: [],
         workspaces: [],
@@ -1370,7 +1563,12 @@ test("bounds incoherent status reads", async () => {
       };
     },
     async health() {
-      return { epoch: "new", revision: calls, pid: 42 };
+      return {
+        epoch: "new",
+        revision: calls,
+        pid: 42,
+        protocol: "work-craft-projection-preview/1",
+      };
     },
   } satisfies Pick<WorkCraftClient, "health" | "snapshot">;
 

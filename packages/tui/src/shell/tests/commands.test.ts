@@ -10,16 +10,255 @@ import {
   executeCommand,
   type ExecuteCommandInput,
   runDurableCommand,
-  submitCreate,
+  submitCreate as submit,
+  type SubmitCreateInput,
 } from "@/shell/commands.ts";
-import { deriveShellModel } from "@/shell/model.ts";
+import { deriveShellModel as derive } from "@/shell/model.ts";
 import {
   createInitialShellState,
   type ShellAction,
   type ShellRegion,
   type ShellState,
 } from "@/shell/state.ts";
-import { snapshotFixture } from "@/tests/support/fixtures.ts";
+import {
+  attachmentFixture,
+  createScopeFixture,
+  snapshotFixture,
+} from "@/tests/support/fixtures.ts";
+
+function deriveShellModel(input: Omit<Parameters<typeof derive>[0], "attachment">) {
+  return derive({ ...input, attachment: attachmentFixture() });
+}
+
+function submitCreate(input: Omit<SubmitCreateInput, "attach">) {
+  return submit({ ...input, attach: async () => {} });
+}
+
+const activation = { sessionId: "session-work", generation: 1 };
+
+for (const order of ["snapshot first", "response first"] as const) {
+  test(`the first workspace's exact normalization completes its draft (${order})`, async () => {
+    const snapshot = snapshotFixture();
+    snapshot.navigation[0] = {
+      ...snapshot.navigation[0]!,
+      generation: 1,
+      workspaceId: null,
+      category: null,
+      itemId: null,
+      tabId: null,
+      paneId: null,
+    };
+    const state = createInitialShellState();
+    const dialog = {
+      kind: "create" as const,
+      createKind: "workspace" as const,
+      returnFocus: { region: "workspace" as const },
+      scope: createScopeFixture(snapshot),
+    };
+    state.dialog = dialog;
+    const before = deriveShellModel({ snapshot, state });
+    const created = {
+      ...snapshot,
+      revision: 5,
+      navigation: [
+        {
+          ...snapshot.navigation[0]!,
+          generation: 2,
+          workspaceId: "new-workspace",
+          category: "inbox" as const,
+        },
+      ],
+    };
+    const after = deriveShellModel({ snapshot: created, state });
+    const result = await runDurableCommand({
+      command: { type: "workspace.create", sessionId: "session-work", name: "First" },
+      region: "workspace",
+      expected: completionContextFor(before, dialog),
+      current: () => ({
+        ...completionContextFor(order === "snapshot first" ? after : before, dialog),
+        snapshot: order === "snapshot first" ? created : snapshot,
+        navigation: order === "snapshot first" ? after.navigation : before.navigation,
+      }),
+      send: async () => ({ ok: true, revision: 5, result: { id: "new-workspace" } }),
+      dispatch() {},
+      source: {
+        key: "workspace:workspace.create",
+        label: "Create",
+        requestId: 1,
+        epoch: snapshot.epoch,
+        isCurrent: () => true,
+      },
+    });
+    expect(result).toEqual({ id: "new-workspace", revision: 5 });
+  });
+}
+
+test("a draft keeps its captured category after remote navigation and cannot activate the old scope", async () => {
+  const fixture = activeItemFixture(true);
+  const actions: ShellAction[] = [];
+  await executeCommand(
+    executionInput("context.create", fixture, actions, async () => undefined, {
+      focus: { region: "navigator" },
+    }),
+  );
+  const opened = actions.find((action) => action.type === "dialog.open");
+  if (opened?.type !== "dialog.open") {
+    throw new Error("missing create dialog");
+  }
+  fixture.state.dialog = opened.dialog;
+  fixture.snapshot.navigation[0] = {
+    ...fixture.snapshot.navigation[0]!,
+    category: "today",
+    itemId: null,
+    tabId: null,
+    paneId: null,
+    generation: 2,
+  };
+  fixture.model = deriveShellModel(fixture);
+  const sent: Command[] = [];
+  let entered = false;
+  actions.length = 0;
+  await submitCreate({
+    ...fixture,
+    value: "Saved draft",
+    getSubmittingDialog: () => null,
+    setSubmittingDialog() {},
+    dispatch: (action) => actions.push(action),
+    run: async (command) => {
+      sent.push(command);
+      return { id: "created", revision: 5 };
+    },
+    onItemCreated: async () => {
+      entered = true;
+    },
+  });
+  expect(sent).toEqual([
+    {
+      type: "item.create",
+      workspaceId: "workspace-shared",
+      category: "design",
+      title: "Saved draft",
+    },
+  ]);
+  expect(entered).toBe(false);
+  expect(actions).toContainEqual({ type: "dialog.close" });
+});
+
+test("a removed captured workspace reports a field error without losing the draft or issuing a command", async () => {
+  const fixture = activeItemFixture(true);
+  const actions: ShellAction[] = [];
+  await executeCommand(
+    executionInput("context.create", fixture, actions, async () => undefined, {
+      focus: { region: "navigator" },
+    }),
+  );
+  const opened = actions.find((action) => action.type === "dialog.open");
+  if (opened?.type !== "dialog.open") {
+    throw new Error("missing create dialog");
+  }
+  fixture.state.dialog = opened.dialog;
+  fixture.state.promptValue = "Keep editing";
+  fixture.snapshot.workspaces = [];
+  fixture.snapshot.sessionWorkspaces = [];
+  actions.length = 0;
+  const sent: Command[] = [];
+  await submitCreate({
+    ...fixture,
+    value: "Keep editing",
+    getSubmittingDialog: () => null,
+    setSubmittingDialog() {},
+    dispatch: (action) => actions.push(action),
+    run: async (command) => {
+      sent.push(command);
+      return { id: "created", revision: 5 };
+    },
+    onItemCreated: async () => {},
+  });
+  expect(sent).toEqual([]);
+  expect(actions).toEqual([
+    { type: "field.error", message: "The create target is no longer available" },
+  ]);
+  expect(fixture.state.promptValue).toBe("Keep editing");
+});
+
+test("relative tab keys always reach the daemon even when the rendered cursor is at an edge", async () => {
+  const fixture = activeItemFixture();
+  const sent: Command[] = [];
+  for (const command of ["tab.next", "tab.previous"] as const) {
+    await executeCommand(
+      executionInput(command, fixture, [], async (command) => {
+        sent.push(command);
+        return undefined;
+      }),
+    );
+  }
+  expect(sent).toEqual([
+    { type: "session.step", sessionId: "session-work", level: "tab", direction: 1 },
+    { type: "session.step", sessionId: "session-work", level: "tab", direction: -1 },
+  ]);
+});
+
+test("relative navigation stays routable at local edges and behind a navigator filter", () => {
+  const fixture = activeItemFixture();
+  fixture.state.navigatorQuery = "no match";
+  fixture.model = deriveShellModel(fixture);
+  const available = availableCommands({
+    ...fixture,
+    focus: { region: "tabs" },
+    focusedPaneId: null,
+  });
+  for (const command of [
+    "category.previous",
+    "category.next",
+    "navigator.previous",
+    "navigator.next",
+    "tab.previous",
+    "tab.next",
+  ] as const) {
+    expect(available.has(command)).toBe(true);
+  }
+});
+
+for (const [epoch, revision, accepted] of [
+  ["epoch-a", 6, true],
+  ["epoch-a", 8, false],
+  ["epoch-b", 6, false],
+] as const) {
+  test(`a future selection receipt waits safely behind snapshot ${epoch}/${revision}`, async () => {
+    const fixture = activeItemFixture();
+    const result = await runDurableCommand({
+      command: {
+        type: "session.navigate",
+        sessionId: "session-work",
+        target: { kind: "tab", tabId: "tab-2" },
+      },
+      region: "tabs",
+      expected: { navigationKey: "old", dialog: null },
+      current: () => ({
+        navigationKey: "intervening selection",
+        dialog: null,
+        snapshot: { epoch, revision },
+      }),
+      source: {
+        key: "navigation",
+        label: "Tabs",
+        requestId: 1,
+        epoch: "epoch-a",
+        isCurrent: () => true,
+      },
+      send: async () => ({
+        ok: true,
+        revision: 7,
+        result: {
+          id: "tab-2",
+          navigation: { ...fixture.snapshot.navigation[0]!, generation: 7, tabId: "tab-2" },
+        },
+      }),
+      dispatch() {},
+    });
+    expect(result !== undefined).toBe(accepted);
+  });
+}
 
 function deferred<T>(): {
   promise: Promise<T>;
@@ -43,6 +282,7 @@ for (const succeeds of [false, true]) {
         ...fixture.state,
         dialog: {
           kind: "create",
+          scope: createScopeFixture(fixture.snapshot),
           createKind: "workspace",
           returnFocus: { region: "workspace" },
         },
@@ -58,11 +298,7 @@ for (const succeeds of [false, true]) {
     });
     expect(actions).toEqual(
       succeeds
-        ? [
-            { type: "dialog.close" },
-            { type: "workspace.activate", id: "new-workspace" },
-            { type: "focus.set", focus: { region: "category" } },
-          ]
+        ? [{ type: "dialog.close" }, { type: "focus.set", focus: { region: "category" } }]
         : [],
     );
   });
@@ -74,7 +310,18 @@ function activeItemFixture(generic = false): {
   model: ReturnType<typeof deriveShellModel>;
 } {
   const snapshot = snapshotFixture({
-    surfaces: [{ id: "surface-1", itemId: "item-1", activeTabId: "tab-1" }],
+    navigation: [
+      {
+        sessionId: "session-work",
+        generation: 1,
+        workspaceId: "workspace-shared",
+        category: generic ? "design" : "implementation",
+        itemId: "item-1",
+        tabId: "tab-1",
+        paneId: "pane-1",
+      },
+    ],
+    surfaces: [{ id: "surface-1", itemId: "item-1" }],
     tabs: [
       {
         id: "tab-1",
@@ -109,14 +356,9 @@ function activeItemFixture(generic = false): {
   }
   const state: ShellState = {
     ...createInitialShellState(),
-    activeSessionId: "session-work",
-    activeWorkspaceId: "workspace-shared",
-    activeCategory: generic ? "design" : "implementation",
-    activeNavigatorKey: "item:item-1",
     navigatorCursorKey: "item:item-1",
     tabCursorId: "tab-1",
     focus: { region: "workbench", paneId: "pane-1" },
-    lastPaneByTab: { "tab-1": "pane-1" },
     expandedRootIds: new Set(["root-1"]),
   };
   return {
@@ -208,6 +450,7 @@ test("Archive pins the unavailable candidate without opening or mutating it", as
         kind: "archive",
         itemId: "item-1",
         title: f.snapshot.items.find((item) => item.id === "item-1")!.title,
+        navigationGeneration: f.snapshot.navigation[0]!.generation,
       }),
     }),
   ]);
@@ -217,7 +460,12 @@ test("Archive pins the unavailable candidate without opening or mutating it", as
 test("server field validation is inline while operational failures keep source identity and epoch", async () => {
   const expected: CompletionContext = {
     navigationKey: "current",
-    dialog: { kind: "create", createKind: "directory", returnFocus: { region: "navigator" } },
+    dialog: {
+      kind: "create",
+      createKind: "directory",
+      scope: createScopeFixture(snapshotFixture()),
+      returnFocus: { region: "navigator" },
+    },
   };
   for (const cause of [new ApiError("Bad path", "path"), new Error("Permission denied")]) {
     const actions: ShellAction[] = [];
@@ -255,40 +503,46 @@ test("server field validation is inline while operational failures keep source i
 });
 
 test("constructs surface and tab commands", () => {
-  expect(durableCommands.openItem("item-1")).toEqual({
-    type: "surface.ensure",
+  expect(durableCommands.openItem("session-work", "item-1")).toEqual({
+    type: "session.openItem",
+    sessionId: "session-work",
     itemId: "item-1",
   });
-  expect(durableCommands.openItem("root-1")).toEqual({
-    type: "surface.ensure",
+  expect(durableCommands.openItem("session-work", "root-1")).toEqual({
+    type: "session.openItem",
+    sessionId: "session-work",
     itemId: "root-1",
   });
-  expect(durableCommands.createTab("surface-1")).toEqual({
+  expect(durableCommands.createTab("surface-1", activation)).toEqual({
     type: "tab.create",
     surfaceId: "surface-1",
     title: "Shell",
+    activation,
   });
-  expect(durableCommands.selectTab("surface-1", "tab-1")).toEqual({
-    type: "surface.selectTab",
-    surfaceId: "surface-1",
-    tabId: "tab-1",
+  expect(durableCommands.selectTab("session-work", "tab-1")).toEqual({
+    type: "session.navigate",
+    sessionId: "session-work",
+    target: { kind: "tab", tabId: "tab-1" },
   });
 });
 
 test("constructs semantic pane commands", () => {
-  expect(durableCommands.splitHorizontal("pane-1")).toEqual({
+  expect(durableCommands.splitHorizontal("pane-1", activation)).toEqual({
     type: "pane.split",
     paneId: "pane-1",
     direction: "horizontal",
+    activation,
   });
-  expect(durableCommands.splitVertical("pane-1")).toEqual({
+  expect(durableCommands.splitVertical("pane-1", activation)).toEqual({
     type: "pane.split",
     paneId: "pane-1",
     direction: "vertical",
+    activation,
   });
-  expect(durableCommands.restartPane("pane-1")).toEqual({
+  expect(durableCommands.restartPane("pane-1", activation)).toEqual({
     type: "process.restart",
     paneId: "pane-1",
+    activation,
   });
 });
 
@@ -325,7 +579,7 @@ for (const focus of [
       );
       expect(events).toEqual([
         ...(focus.region === "workbench" ? [["start", "tab-2"]] : []),
-        { type: "surface.selectTab", surfaceId: "surface-1", tabId: "tab-2" },
+        { type: "session.step", sessionId: "session-work", level: "tab", direction: 1 },
         ...(focus.region === "workbench" && succeeds ? [["complete", 7]] : []),
       ]);
     });
@@ -364,13 +618,13 @@ for (const result of [
     );
     expect(events).toEqual([
       "start",
-      { type: "tab.create", surfaceId: "surface-1", title: "Shell" },
+      { type: "tab.create", surfaceId: "surface-1", title: "Shell", activation },
       ...(result?.paneId ? [["created", "created-pane", 7]] : []),
     ]);
   });
 }
 
-test("tab boundary does not start an entry or send a command", async () => {
+test("a rendered tab boundary captures the current candidate while the daemon resolves the step", async () => {
   const f = activeItemFixture();
   const events: unknown[] = [];
   await executeCommand(
@@ -390,7 +644,10 @@ test("tab boundary does not start an entry or send a command", async () => {
       },
     ),
   );
-  expect(events).toEqual([]);
+  expect(events).toEqual([
+    "start",
+    { type: "session.step", sessionId: "session-work", level: "tab", direction: -1 },
+  ]);
 });
 
 for (const succeeds of [true, false]) {
@@ -410,7 +667,7 @@ for (const succeeds of [true, false]) {
       ),
     );
     expect(events).toEqual([
-      { type: "process.restart", paneId: "pane-1" },
+      { type: "process.restart", paneId: "pane-1", activation },
       ...(succeeds ? [["pane-1", 7]] : []),
     ]);
   });
@@ -421,7 +678,15 @@ test("work-item submission delegates exact identity, parent and revision without
     const fixture = activeItemFixture(createKind !== "directory");
     fixture.state = {
       ...fixture.state,
-      dialog: { kind: "create", createKind, returnFocus: { region: "navigator" } },
+      dialog: {
+        kind: "create",
+        createKind,
+        scope: createScopeFixture(
+          fixture.snapshot,
+          createKind === "generic-child" ? "root-1" : null,
+        ),
+        returnFocus: { region: "navigator" },
+      },
     };
     const sent: Command[] = [];
     const actions: ShellAction[] = [];
@@ -460,13 +725,7 @@ test("work-item submission delegates exact identity, parent and revision without
 
 test("builds completion keys from durable navigation and surface context", () => {
   const { model } = activeItemFixture();
-  const navigationKey = JSON.stringify([
-    "epoch-a",
-    "session-work",
-    "workspace-shared",
-    "implementation",
-    "item:item-1",
-  ]);
+  const navigationKey = JSON.stringify(["epoch-a", "session-work", 1]);
 
   expect(completionContextFor(model, null)).toEqual({
     key: JSON.stringify([navigationKey, "surface-1", "tab-1"]),
@@ -500,6 +759,9 @@ test("reports structural commands without applying connection policy", () => {
       "category.previous",
       "category.next",
       "navigator.previous",
+      "navigator.next",
+      "tab.previous",
+      "tab.next",
       "tab.create",
       "pane.splitHorizontal",
       "pane.splitVertical",
@@ -552,7 +814,9 @@ test("splitting completes its captured entry intent with the returned pane and r
     }),
   );
 
-  expect(sent).toEqual([{ type: "pane.split", paneId: "pane-1", direction: "horizontal" }]);
+  expect(sent).toEqual([
+    { type: "pane.split", paneId: "pane-1", direction: "horizontal", activation },
+  ]);
   expect(entries).toEqual([{ paneId: "pane-2", revision: 5 }]);
 });
 
@@ -635,7 +899,6 @@ test("item creation availability uses the supplied native focus instead of stale
   const fixture = activeItemFixture(true);
   fixture.state = {
     ...fixture.state,
-    activeNavigatorKey: "root:root-1",
     navigatorCursorKey: "root:root-1",
   };
   fixture.model = deriveShellModel({
@@ -653,9 +916,13 @@ test("item submission uses the captured native launch context when semantic focu
   const fixture = activeItemFixture(true);
   fixture.state = {
     ...fixture.state,
-    activeNavigatorKey: "root:root-1",
     navigatorCursorKey: "root:root-1",
-    dialog: { kind: "create", createKind: "generic-child", returnFocus: { region: "navigator" } },
+    dialog: {
+      kind: "create",
+      createKind: "generic-child",
+      scope: createScopeFixture(fixture.snapshot, "root-1"),
+      returnFocus: { region: "navigator" },
+    },
   };
   const sent: Command[] = [];
   await submitCreate({
@@ -716,7 +983,9 @@ test("a late split response cannot focus a pane after changing surfaces", async 
   });
   await pending;
 
-  expect(sent).toEqual([{ type: "pane.split", paneId: "pane-1", direction: "horizontal" }]);
+  expect(sent).toEqual([
+    { type: "pane.split", paneId: "pane-1", direction: "horizontal", activation },
+  ]);
   expect(actions).toEqual([]);
 });
 
@@ -724,7 +993,6 @@ test("opening a collapsed project terminal expands and activates its item", asyn
   const fixture = activeItemFixture();
   fixture.state = {
     ...fixture.state,
-    activeNavigatorKey: "root:root-1",
     navigatorCursorKey: "root:root-1",
     focus: { region: "navigator" },
     expandedRootIds: new Set(),
@@ -747,15 +1015,14 @@ test("opening a collapsed project terminal expands and activates its item", asyn
     }),
   );
 
-  expect(sent).toEqual([{ type: "surface.ensure", itemId: "root-1" }]);
-  expect(actions).toEqual([{ type: "navigator.activate", key: "root:root-1" }]);
+  expect(sent).toEqual([{ type: "session.openItem", sessionId: "session-work", itemId: "root-1" }]);
+  expect(actions).toEqual([{ type: "navigator.cursor", key: "root:root-1" }]);
 });
 
 test("a late root-open response cannot activate an item behind a dialog", async () => {
   const fixture = activeItemFixture();
   fixture.state = {
     ...fixture.state,
-    activeNavigatorKey: "root:root-1",
     navigatorCursorKey: "root:root-1",
     focus: { region: "navigator" },
     expandedRootIds: new Set(),
@@ -800,14 +1067,15 @@ test("a late root-open response cannot activate an item behind a dialog", async 
   });
   await pending;
 
-  expect(sent).toEqual([{ type: "surface.ensure", itemId: "root-1" }]);
-  expect(actions).toEqual([{ type: "navigator.activate", key: "root:root-1" }]);
+  expect(sent).toEqual([{ type: "session.openItem", sessionId: "session-work", itemId: "root-1" }]);
+  expect(actions).toEqual([{ type: "navigator.cursor", key: "root:root-1" }]);
 });
 
 test("a late create response cannot activate an item after cancelling its dialog", async () => {
   const fixture = activeItemFixture(true);
   const dialog = {
     kind: "create" as const,
+    scope: createScopeFixture(fixture.snapshot, "root-1"),
     createKind: "generic-child" as const,
     returnFocus: { region: "navigator" as const },
   };
@@ -879,6 +1147,7 @@ test("a create prompt submits only once while its command is pending", async () 
   const fixture = activeItemFixture(true);
   const dialog = {
     kind: "create" as const,
+    scope: createScopeFixture(fixture.snapshot, "root-1"),
     createKind: "generic-child" as const,
     returnFocus: { region: "navigator" as const },
   };
@@ -932,12 +1201,12 @@ test("creating a child delegates its parent to the shell without closing or expa
   const fixture = activeItemFixture(true);
   const dialog = {
     kind: "create" as const,
+    scope: createScopeFixture(fixture.snapshot, "root-1"),
     createKind: "generic-child" as const,
     returnFocus: { region: "navigator" as const },
   };
   fixture.state = {
     ...fixture.state,
-    activeNavigatorKey: "root:root-1",
     navigatorCursorKey: "root:root-1",
     dialog,
     focus: { region: "navigator" },

@@ -1,10 +1,13 @@
-import type { LayoutNode, Snapshot } from "@work-craft/server/client";
+import {
+  type LayoutNode,
+  type PaneRect,
+  projectPaneLayout,
+  type Snapshot,
+} from "@work-craft/server/client";
 
 import type { FocusNode, Rect } from "@/input/focus.ts";
 import {
   hasRecoveryViewport,
-  type PaneRect,
-  projectPaneLayout,
   reactivateRect,
   TAB_STRIP_HEIGHT,
   terminalRect,

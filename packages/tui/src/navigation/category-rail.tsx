@@ -60,7 +60,7 @@ function Category({ kind, icon }: CategoryProps): ReactNode {
 
 export type CategoryRailProps = {
   categories: Snapshot["categories"];
-  active: CategoryKind;
+  active: CategoryKind | null;
   focused: boolean;
   onActivate(kind: CategoryKind): void;
 };
@@ -76,7 +76,7 @@ export function CategoryRail({
       bg="background"
       id="region:category"
       type="single"
-      value={active}
+      value={active ?? undefined}
       orientation="vertical"
       gap={0}
       width={5}

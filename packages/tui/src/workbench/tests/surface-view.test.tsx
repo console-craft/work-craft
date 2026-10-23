@@ -1,20 +1,91 @@
 import { expect, test } from "bun:test";
 
-import { EmbeddedTerminalRenderable } from "@opentui/core";
+import { KeyEvent, parseKeypress, PasteEvent, type Renderable } from "@opentui/core";
 import { extend } from "@opentui/react";
 import type { LayoutNode, Snapshot } from "@work-craft/server/client";
 import { act, type ReactNode, useState } from "react";
 
-import { snapshotFixture } from "@/tests/support/fixtures.ts";
+import {
+  appendTerminalChunk,
+  snapshotTerminals,
+  type TerminalBuffer,
+} from "@/client/terminal-buffer";
+import { createTerminalOutputs } from "@/client/terminal-output";
+import {
+  snapshotFixture,
+  streamFixture,
+  terminalBufferFixture,
+  terminalSnapshotFixture,
+} from "@/tests/support/fixtures.ts";
+import { materialStreamFixture } from "@/tests/support/material-stream";
 import { flushMeasured } from "@/tests/support/measured-render";
 import { testRender as renderWithoutTheme } from "@/tests/support/render";
 import { Box } from "@/ui/primitives/box.tsx";
 import { ThemeProvider } from "@/ui/theming/theme-provider.tsx";
 import { defaultTheme } from "@/ui/theming/themes/default.ts";
-import { SurfaceView, terminalPaneKey } from "@/workbench/surface-view.tsx";
-import { Workbench } from "@/workbench/workbench.tsx";
+import {
+  SurfaceView as NativeSurfaceView,
+  type SurfaceViewProps,
+} from "@/workbench/surface-view.tsx";
+import { TerminalMaterialRenderable } from "@/workbench/terminal-material";
+import { TerminalPane, terminalPaneKey } from "@/workbench/terminal-pane";
+import { Workbench as NativeWorkbench, type WorkbenchProps } from "@/workbench/workbench.tsx";
 
-extend({ terminal: EmbeddedTerminalRenderable });
+extend({ terminal: TerminalMaterialRenderable });
+
+function SurfaceView(
+  props: Omit<SurfaceViewProps, "activeTabId" | "outputs" | "snapshot"> & {
+    snapshot: Snapshot;
+    activeTabId?: string | null;
+    terminals: ReadonlyMap<string, TerminalBuffer>;
+  },
+) {
+  const snapshot = terminalSnapshotFixture(props.snapshot);
+  const outputs = createTerminalOutputs(snapshotTerminals(snapshot, props.terminals));
+  return (
+    <NativeSurfaceView
+      {...props}
+      snapshot={snapshot}
+      activeTabId={
+        props.activeTabId === undefined
+          ? (snapshot.navigation[0]?.tabId ?? null)
+          : props.activeTabId
+      }
+      outputs={outputs}
+      stream={materialStreamFixture(
+        (paneId) => outputs.pane(paneId).read(),
+        (paneId) =>
+          snapshot.geometry.panes.find((pane) => pane.paneId === paneId)?.size ?? {
+            cols: 80,
+            rows: 24,
+          },
+        props.stream ?? streamFixture(),
+      )}
+    />
+  );
+}
+
+function Workbench({
+  terminals,
+  ...props
+}: Omit<WorkbenchProps, "outputs"> & { terminals: ReadonlyMap<string, TerminalBuffer> }) {
+  const outputs = createTerminalOutputs(terminals);
+  return (
+    <NativeWorkbench
+      {...props}
+      outputs={outputs}
+      stream={materialStreamFixture(
+        (paneId) => outputs.pane(paneId).read(),
+        (paneId) =>
+          props.snapshot?.geometry.panes.find((pane) => pane.paneId === paneId)?.size ?? {
+            cols: 80,
+            rows: 24,
+          },
+        props.stream ?? streamFixture(),
+      )}
+    />
+  );
+}
 
 test("a missing authoritative tab renders empty rather than entering a fallback terminal", async () => {
   const snapshot = surfaceSnapshot();
@@ -22,7 +93,8 @@ test("a missing authoritative tab renders empty rather than entering a fallback 
     <SurfaceView
       {...recoveryProps}
       snapshot={snapshot}
-      surface={{ ...snapshot.surfaces[0]!, activeTabId: "missing" }}
+      surface={snapshot.surfaces[0]!}
+      activeTabId="missing"
       stream={null}
       terminals={new Map()}
       focusedPaneId={null}
@@ -43,6 +115,14 @@ test("a missing authoritative tab renders empty rather than entering a fallback 
 });
 
 const recoveryProps = {
+  stamp: {
+    epoch: "epoch-a",
+    attachmentGeneration: 1,
+    navigationGeneration: 1,
+    geometrySequence: 0,
+  },
+  inputEvent: () => ({ kind: "key" as const }),
+  onMouseInput: () => {},
   connected: true,
   reactivatingPaneIds: new Set<string>(),
   canReactivate: () => true,
@@ -71,7 +151,17 @@ function surfaceSnapshot(): Snapshot {
         position: 0,
       },
     ],
-    surfaces: [{ id: "surface-1", itemId: "item-1", activeTabId: "tab-1" }],
+    navigation: [
+      {
+        ...snapshotFixture().navigation[0]!,
+        generation: 1,
+        category: "implementation",
+        itemId: "item-1",
+        tabId: "tab-1",
+        paneId: "pane-1",
+      },
+    ],
+    surfaces: [{ id: "surface-1", itemId: "item-1" }],
     tabs: [
       {
         id: "tab-1",
@@ -118,11 +208,142 @@ function splitSurfaceSnapshot(direction: "horizontal" | "vertical"): Snapshot {
   };
 }
 
-test("terminal renderer identity includes the daemon epoch and replay cursor", () => {
-  expect(terminalPaneKey("pane-1", undefined)).toBe("pane-1:pending:0");
-  expect(terminalPaneKey("pane-1", { epoch: "epoch-2", historyCursor: 42 })).toBe(
-    "pane-1:epoch-2:42",
+test("terminal renderer identity includes the daemon epoch and runtime/reset generations", () => {
+  expect(terminalPaneKey("pane-1", undefined)).toBe("pane-1:pending:0:0");
+  expect(
+    terminalPaneKey("pane-1", terminalBufferFixture({ epoch: "epoch-2", historyCursor: 42 })),
+  ).toBe("pane-1:epoch-2:0:0");
+});
+
+test("runtime replacement cannot reuse a native input encoder at the same history cursor", () => {
+  const previous = terminalBufferFixture({ epoch: "e", runtimeGeneration: 1 });
+  expect(terminalPaneKey("pane-1", { ...previous, runtimeGeneration: 2 })).not.toBe(
+    terminalPaneKey("pane-1", previous),
   );
+});
+
+test("history baseline advance does not replace the native leaf identity", () => {
+  const previous = terminalBufferFixture({ epoch: "e", runtimeGeneration: 1 });
+  expect(terminalPaneKey("pane-1", { ...previous, historyCursor: 100 })).toBe(
+    terminalPaneKey("pane-1", previous),
+  );
+});
+
+test("baseline advance preserves native state and a genuine reset replaces only its inner viewport", async () => {
+  const initial = terminalBufferFixture({ history: new Uint8Array([65]), historyCursor: 1 });
+  const outputs = createTerminalOutputs(new Map([["pane-1", initial]]));
+  const sent: number[][] = [];
+  const setup = await testRender(
+    <TerminalPane
+      {...recoveryProps}
+      bounds={{ x: 0, y: 0, width: 80, height: 25 }}
+      output={outputs.pane("pane-1")}
+      focused
+      pane={surfaceSnapshot().panes[0]!}
+      size={{ cols: 80, rows: 24 }}
+      stream={materialStreamFixture(
+        (paneId) => outputs.pane(paneId).read(),
+        () => ({ cols: 80, rows: 24 }),
+        streamFixture({ sendInput: (_paneId, bytes) => sent.push([...bytes]) }),
+      )}
+      onFocus={() => {}}
+      onTerminalReady={() => {}}
+    />,
+    { width: 80, height: 28 },
+  );
+  await setup.flush();
+  const native = setup.renderer.root.findDescendantById(
+    "terminal:pane-1",
+  ) as TerminalMaterialRenderable;
+  const outer = native.parent!.parent;
+  const captured = native.handlePaste.bind(native);
+  try {
+    outputs.set("pane-1", { ...initial, history: new Uint8Array([65, 66]), historyCursor: 2 });
+    await act(async () => Bun.sleep(35));
+    await setup.flush();
+    expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBe(native);
+    expect(setup.captureCharFrame()).toContain("AB");
+    act(() => {
+      outputs.set("pane-1", {
+        ...initial,
+        history: new Uint8Array([88]),
+        historyStartCursor: 10,
+        historyCursor: 11,
+        resetGeneration: 1,
+      });
+      captured(new PasteEvent(new Uint8Array([97])));
+      expect(sent).toEqual([]);
+    });
+    await setup.flush();
+    const replacement = setup.renderer.root.findDescendantById(
+      "terminal:pane-1",
+    ) as TerminalMaterialRenderable;
+    expect(replacement).not.toBe(native);
+    expect(replacement.parent!.parent).toBe(outer);
+    expect(setup.captureCharFrame()).toContain("X");
+    await setup.flush();
+    expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBe(replacement);
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
+test("deferred native input keeps its original activity context and drops revoked admission", async () => {
+  const initial = terminalBufferFixture();
+  const outputs = createTerminalOutputs(new Map([["pane-1", initial]]));
+  const contexts: unknown[] = [];
+  let allowed = true;
+  let event = { kind: "paste" as "paste" | "key", activitySequence: 17 };
+  const setup = await testRender(
+    <TerminalPane
+      {...recoveryProps}
+      canReceiveInput={() => allowed}
+      inputEvent={() => event}
+      bounds={{ x: 0, y: 0, width: 80, height: 25 }}
+      output={outputs.pane("pane-1")}
+      focused
+      pane={surfaceSnapshot().panes[0]!}
+      size={{ cols: 80, rows: 24 }}
+      stream={materialStreamFixture(
+        (paneId) => outputs.pane(paneId).read(),
+        () => ({ cols: 80, rows: 24 }),
+        streamFixture({ sendInput: (_paneId, _bytes, context) => contexts.push(context) }),
+      )}
+      onFocus={() => {}}
+      onTerminalReady={() => {}}
+    />,
+    { width: 80, height: 28 },
+  );
+  await setup.flush();
+  const native = setup.renderer.root.findDescendantById(
+    "terminal:pane-1",
+  ) as TerminalMaterialRenderable;
+  try {
+    let current = appendTerminalChunk(initial, 8, new TextEncoder().encode("\x1b[?2004h"), 0);
+    outputs.set("pane-1", current);
+    native.handlePaste(new PasteEvent(new TextEncoder().encode("original")));
+    event = { kind: "key", activitySequence: 99 };
+    await act(async () => Bun.sleep(35));
+    await setup.flush();
+    expect(contexts).toEqual([
+      {
+        ...recoveryProps.stamp,
+        runtimeGeneration: 0,
+        source: "input",
+        kind: "paste",
+        activitySequence: 17,
+      },
+    ]);
+    current = appendTerminalChunk(current, 9, new Uint8Array([120]), 0);
+    outputs.set("pane-1", current);
+    native.handlePaste(new PasteEvent(new Uint8Array([121])));
+    allowed = false;
+    await act(async () => Bun.sleep(35));
+    await setup.flush();
+    expect(contexts).toHaveLength(1);
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
 });
 
 for (const source of ["history", "chunks"] as const) {
@@ -140,6 +361,8 @@ for (const source of ["history", "chunks"] as const) {
         layout: { type: "pane", paneId: "pane-2" },
       });
       snapshot.panes.push({ ...snapshot.panes[0]!, id: "pane-2" });
+      const size = { cols: width, rows: height - 1 };
+      snapshot.geometry.panes = snapshot.panes.map(({ id }) => ({ paneId: id, size }));
       const output = new TextEncoder().encode(
         `\x1b[2J\x1b[${row + 1};1HLEFT\x1b[${width - 10}GRIGHT\r\n$ `,
       );
@@ -154,21 +377,30 @@ for (const source of ["history", "chunks"] as const) {
           <SurfaceView
             {...recoveryProps}
             snapshot={snapshot}
-            surface={{ ...snapshot.surfaces[0]!, activeTabId: tabId }}
+            surface={snapshot.surfaces[0]!}
+            activeTabId={tabId}
             stream={null}
             terminals={
               new Map([
                 [
                   "pane-1",
-                  {
+                  terminalBufferFixture({
                     epoch: snapshot.epoch,
+                    initialSize: size,
                     history: source === "history" ? output : new Uint8Array(),
                     historyCursor: source === "history" ? output.byteLength : 0,
                     chunks:
                       source === "chunks" && delivered
-                        ? [{ cursor: output.byteLength, data: output }]
+                        ? [
+                            {
+                              cursor: output.byteLength,
+                              data: output,
+                              geometrySequence: 0,
+                              origin: "live",
+                            },
+                          ]
                         : [],
-                  },
+                  }),
                 ],
               ])
             }
@@ -182,9 +414,16 @@ for (const source of ["history", "chunks"] as const) {
       }
       const setup = await testRender(<Fixture />, { width, height });
       function screen() {
-        return (
-          setup.renderer.root.findDescendantById("terminal:pane-1") as EmbeddedTerminalRenderable
-        ).screen();
+        const terminal = setup.renderer.root.findDescendantById("terminal:pane-1")!;
+        const cursor = setup.renderer.getCursorState();
+        return {
+          lines: setup
+            .captureCharFrame()
+            .split("\n")
+            .slice(terminal.screenY)
+            .map((line) => line.slice(terminal.screenX)),
+          cursor: { x: cursor.x - terminal.screenX - 1, y: cursor.y - terminal.screenY - 1 },
+        };
       }
       try {
         await setup.flush();
@@ -208,18 +447,18 @@ for (const source of ["history", "chunks"] as const) {
 for (const direction of ["horizontal", "vertical"] as const) {
   test(`${direction}: inserting and equalizing splits retains every existing terminal object`, async () => {
     const snapshot = surfaceSnapshot();
-    const sourceReadyEvents: (EmbeddedTerminalRenderable | null)[] = [];
-    const ready = (id: string, terminal: EmbeddedTerminalRenderable | null) => {
+    const sourceReadyEvents: (Renderable | null)[] = [];
+    const ready = (id: string, terminal: Renderable | null) => {
       if (id === "pane-1") {
         sourceReadyEvents.push(terminal);
       }
     };
-    const buffer = {
+    const buffer = terminalBufferFixture({
       epoch: snapshot.epoch,
       history: new TextEncoder().encode("retained sentinel\r\n"),
       historyCursor: 19,
       chunks: [],
-    };
+    });
     let publish!: (value: Snapshot) => void;
     let present!: (value: {
       width: number;
@@ -245,17 +484,15 @@ for (const direction of ["horizontal", "vertical"] as const) {
             {...recoveryProps}
             snapshot={current}
             surface={current.surfaces[0]!}
-            stream={{
+            stream={streamFixture({
               close() {},
               sendInput: (id) => sent.push(id),
-              resize: (id) => resized.push(id),
-            }}
+            })}
             terminals={new Map([["pane-1", buffer]])}
             focusedPaneId="pane-1"
             workbenchFocused
             undersized={size.undersized}
             canReceiveInput={() => !size.covered}
-            canResize={() => !size.covered}
             onFocusPane={() => {}}
             onTerminalReady={ready}
           />
@@ -268,7 +505,7 @@ for (const direction of ["horizontal", "vertical"] as const) {
       const root = setup.renderer.root;
       const sourceTerminal = root.findDescendantById(
         "terminal:pane-1",
-      ) as EmbeddedTerminalRenderable;
+      ) as TerminalMaterialRenderable;
       const sourceHost = sourceTerminal.parent;
       const split = splitSurfaceSnapshot(direction);
       act(() => publish(split));
@@ -330,25 +567,16 @@ for (const direction of ["horizontal", "vertical"] as const) {
           expect(sourceTerminal.focusable).toBe(false);
           sent.length = 0;
           resized.length = 0;
-          sourceTerminal.onData!(Uint8Array.of(65), "input");
-          sourceTerminal.onData!(Uint8Array.of(66), "response");
-          sourceTerminal.onTerminalResize!(80, 20);
+          sourceTerminal.handlePaste(new PasteEvent(Uint8Array.of(65)));
+          sourceTerminal.handleKeyPress(new KeyEvent(parseKeypress("B")!));
           expect(sent).toEqual([]);
           expect(resized).toEqual([]);
         }
         if (size.width >= 20 && !size.undersized) {
-          expect([sourceTerminal.width, sourceTerminal.height]).toEqual(
-            direction === "vertical"
-              ? size.width === 100
-                ? [59, 11]
-                : [53, 10]
-              : size.width === 100
-                ? [30, 22]
-                : [27, 20],
-          );
+          expect([sourceTerminal.width, sourceTerminal.height]).toEqual([80, 24]);
         }
       }
-      expect(sourceTerminal.screen().text).toContain("retained sentinel");
+      expect(setup.captureCharFrame()).toContain("retained sentinel");
       expect(sourceReadyEvents.filter((value) => value === null)).toHaveLength(0);
       // Hand-derived rectangles for a 90x36 host after both ratios change.
       expect([
@@ -356,22 +584,23 @@ for (const direction of ["horizontal", "vertical"] as const) {
         sourceTerminal.screenY,
         sourceTerminal.width,
         sourceTerminal.height,
-      ]).toEqual(direction === "vertical" ? [0, 1, 53, 10] : [0, 1, 27, 20]);
+      ]).toEqual([0, 1, 80, 24]);
       expect([
         secondTerminal.screenX,
         secondTerminal.screenY,
         secondTerminal.width,
         secondTerminal.height,
-      ]).toEqual(direction === "vertical" ? [54, 1, 36, 35] : [0, 23, 90, 13]);
+      ]).toEqual(direction === "vertical" ? [54, 1, 80, 24] : [0, 23, 80, 24]);
       expect([
         thirdTerminal.screenX,
         thirdTerminal.screenY,
         thirdTerminal.width,
         thirdTerminal.height,
-      ]).toEqual(direction === "vertical" ? [0, 13, 53, 23] : [28, 1, 62, 20]);
+      ]).toEqual(direction === "vertical" ? [0, 13, 80, 24] : [28, 1, 80, 24]);
       expect(sourceTerminal.focusable).toBe(true);
       sent.length = 0;
-      sourceTerminal.onData!(Uint8Array.of(67), "input");
+      sourceTerminal.handlePaste(new PasteEvent(Uint8Array.of(67)));
+      await setup.flush();
       expect(sent).toEqual(["pane-1"]);
     } finally {
       act(() => setup.renderer.destroy());
@@ -428,7 +657,7 @@ for (const [width, height, eligible] of [
         {...recoveryProps}
         snapshot={snapshot}
         surface={snapshot.surfaces[0]!}
-        stream={{ close() {}, sendInput: (id) => sent.push(id), resize: (id) => resized.push(id) }}
+        stream={streamFixture({ sendInput: (id) => sent.push(id) })}
         terminals={new Map()}
         focusedPaneId="pane-1"
         workbenchFocused
@@ -442,16 +671,16 @@ for (const [width, height, eligible] of [
       await setup.flush();
       const terminal = setup.renderer.root.findDescendantById(
         "terminal:pane-1",
-      ) as EmbeddedTerminalRenderable;
-      expect([terminal.screenY, terminal.width, terminal.height]).toEqual([1, width, height - 1]);
+      ) as TerminalMaterialRenderable;
+      expect([terminal.width, terminal.height]).toEqual([80, 24]);
       expect(terminal.focusable).toBe(eligible);
       sent.length = 0;
       resized.length = 0;
-      terminal.onData!(Uint8Array.of(65), "input");
-      terminal.onData!(Uint8Array.of(66), "response");
-      terminal.onTerminalResize!(80, 20);
+      terminal.handlePaste(new PasteEvent(Uint8Array.of(65)));
+      terminal.handleKeyPress(new KeyEvent(parseKeypress("B")!));
+      await setup.flush();
       expect(sent).toEqual(eligible ? ["pane-1", "pane-1"] : []);
-      expect(resized).toEqual(eligible ? ["pane-1"] : []);
+      expect(resized).toEqual([]);
     } finally {
       act(() => setup.renderer.destroy());
     }
@@ -466,12 +695,12 @@ for (const status of ["exited", "failed", "interrupted"] as const) {
     const selected: string[] = [];
     let live = true;
     let publish!: (snapshot: Snapshot) => void;
-    const buffer = {
+    const buffer = terminalBufferFixture({
       epoch: snapshot.epoch,
       history: new TextEncoder().encode("preserved output\r\n"),
       historyCursor: 18,
       chunks: [],
-    };
+    });
     function Fixture() {
       const [current, setCurrent] = useState(snapshot);
       publish = setCurrent;
@@ -479,11 +708,10 @@ for (const status of ["exited", "failed", "interrupted"] as const) {
         <SurfaceView
           {...recoveryProps}
           snapshot={current}
-          stream={{
+          stream={streamFixture({
             close() {},
             sendInput: (_id, data) => sent.push([...data]),
-            resize: (_id, cols, rows) => resized.push([cols, rows]),
-          }}
+          })}
           surface={current.surfaces[0]!}
           terminals={
             new Map([
@@ -494,7 +722,14 @@ for (const status of ["exited", "failed", "interrupted"] as const) {
                   chunks:
                     current.panes[0]!.processStatus === "running"
                       ? []
-                      : [{ cursor: 30, data: new TextEncoder().encode("after exit\r\n") }],
+                      : [
+                          {
+                            cursor: 30,
+                            data: new TextEncoder().encode("after exit\r\n"),
+                            geometrySequence: 0,
+                            origin: "live",
+                          },
+                        ],
                 },
               ],
             ])
@@ -513,15 +748,14 @@ for (const status of ["exited", "failed", "interrupted"] as const) {
       await setup.flush();
       const terminal = setup.renderer.root.findDescendantById(
         "terminal:pane-1",
-      ) as EmbeddedTerminalRenderable;
-      const captured = terminal.onData!;
+      ) as TerminalMaterialRenderable;
+      const captured = terminal.handleKeyPress.bind(terminal);
       sent.length = 0;
       live = false;
       resized.length = 0;
       // These callbacks can already be queued when the authoritative snapshot arrives.
-      for (const source of ["input", "response"] as const) {
-        captured(Uint8Array.of(65), source);
-      }
+      terminal.handlePaste(new PasteEvent(Uint8Array.of(65)));
+      captured(new KeyEvent(parseKeypress("A")!));
       expect(sent).toEqual([]);
       act(() =>
         publish({ ...snapshot, panes: [{ ...snapshot.panes[0]!, processStatus: status }] }),
@@ -537,8 +771,8 @@ for (const status of ["exited", "failed", "interrupted"] as const) {
       expect(selected).toEqual(["pane-1"]);
       expect(terminal.focused).toBe(false);
       live = true;
-      terminal.onData!(Uint8Array.of(66), "input");
-      terminal.onData!(Uint8Array.of(67), "response");
+      terminal.handlePaste(new PasteEvent(Uint8Array.of(66)));
+      terminal.handleKeyPress(new KeyEvent(parseKeypress("C")!));
       expect(sent).toEqual([]);
       act(() => setup.resize(90, 22));
       await setup.flush();
@@ -599,10 +833,15 @@ test("only vertical dividers are visible while horizontal divider spacing is ret
     const first = setup.renderer.root.findDescendantById("terminal:pane-1")!;
     const second = setup.renderer.root.findDescendantById("terminal:pane-2")!;
     if (direction === "vertical") {
-      expect([first.width, second.width]).toEqual([15, 14]);
+      expect([first.parent!.width, second.parent!.width]).toEqual([15, 14]);
     } else {
       expect(frame.split("\n")[4]!.trim()).toBe("");
-      expect([first.screenY, first.height, second.screenY, second.height]).toEqual([1, 3, 6, 2]);
+      expect([
+        first.parent!.screenY,
+        first.parent!.height,
+        second.parent!.screenY,
+        second.parent!.height,
+      ]).toEqual([1, 3, 6, 2]);
     }
     act(() => setup.renderer.destroy());
   }
@@ -738,12 +977,13 @@ test("transparent undimmed output reserves its double top border and bottom reco
       await setup.flush();
       const alert = root.findDescendantById("pane-alert:pane-1")!;
       expect(original.opacity).toBe(1);
-      expect((original as EmbeddedTerminalRenderable).transparentBackground).toBe(true);
-      expect([original.screenY, original.height]).toEqual([1, 8]);
+      expect(original).toBeInstanceOf(TerminalMaterialRenderable);
+      expect([original.screenY, original.parent!.height]).toEqual([1, 8]);
+      expect(original.height).toBe(24);
       expect(alert.height).toBe(3);
       expect(alert.opacity).toBe(1);
       expect(alert.screenY + alert.height).toBe(12);
-      expect(original.screenY + original.height).toBe(alert.screenY);
+      expect(original.parent!.screenY + original.parent!.height).toBe(alert.screenY);
       expect(setup.captureCharFrame()).toContain(title);
       expect(setup.captureCharFrame()).not.toContain("FULL ERROR");
       const button = root.findDescendantById("reactivate:pane-1");
@@ -772,14 +1012,14 @@ test("transparent undimmed output reserves its double top border and bottom reco
       await setup.flush();
       const button = root.findDescendantById("reactivate:pane-1")!;
       expect(button.focusable).toBe(eligible);
-      expect(original.visible).toBe(false);
+      expect(original.parent!.getLayout().height).toBe(0);
       expect(root.findDescendantById("terminal:pane-1")).toBe(original);
       expect(setup.captureCharFrame().split("\n").slice(height).join("\n").trim()).toBe("");
     }
     act(() => present("running", true));
     await setup.flush();
     expect(original.opacity).toBe(1);
-    expect(original.height).toBe(11);
+    expect(original.parent!.height).toBe(11);
     expect(root.findDescendantById("pane-alert:pane-1")).toBeUndefined();
     expect(root.findDescendantById("terminal:pane-1")).toBe(original);
   } finally {

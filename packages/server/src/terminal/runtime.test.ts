@@ -7,6 +7,7 @@ import { join } from "node:path";
 import type { PaneStatus } from "../api/protocol.ts";
 import { openDatabase } from "../persistence/database.ts";
 import { TerminalHistory } from "./history.ts";
+import type { HistoryReplay } from "./history.ts";
 import { resolveShellSpawn, type RuntimePane } from "./restore.ts";
 import { type RuntimeCallbacks, RuntimeRegistry } from "./runtime.ts";
 
@@ -88,6 +89,191 @@ test("runs a shell through Bun.Terminal and emits its lifecycle", async () => {
   expect(registry.isLive("pane-1")).toBe(false);
 });
 
+function coldHistory(): HistoryReplay {
+  const data = new TextEncoder().encode("retained\r\n");
+  return {
+    paneId: "pane-1",
+    data,
+    cursor: data.length,
+    startCursor: 0,
+    prefixBytes: 0,
+    truncated: false,
+    initialSize: { cols: 80, rows: 24 },
+    initialGridSequence: null,
+    resizes: [],
+    starts: [],
+  };
+}
+
+test("a pending cold start owns its pane before native reconstruction yields", async () => {
+  const registry = runtime();
+  const starting = registry.start(shellPane("pane-1", process.cwd()), undefined, coldHistory());
+  try {
+    await expect(
+      registry.start(shellPane("pane-1", process.cwd(), "/bin/sh", ["-c", "exit 0"])),
+    ).rejects.toThrow(/already/);
+    expect(registry.generation("pane-1")).toBe(1);
+  } finally {
+    await starting;
+  }
+});
+
+test("manual preparation is admitted once after spawn validation and owned through shutdown", async () => {
+  const registry = runtime();
+  let preparations = 0;
+  const gate = Promise.withResolvers<void>();
+  const prepare = async () => {
+    preparations++;
+    await gate.promise;
+    return coldHistory();
+  };
+  await expect(
+    registry.start(shellPane("invalid", "/missing-work-craft-cwd"), undefined, prepare),
+  ).rejects.toThrow(/directory/);
+  expect(preparations).toBe(0);
+  const start = registry.start(shellPane("pane-1", process.cwd()), undefined, prepare);
+  await expect(
+    registry.start(shellPane("pane-1", process.cwd()), undefined, prepare),
+  ).rejects.toThrow(/already/);
+  const stop = registry.stopAll();
+  gate.resolve();
+  await Promise.all([start, stop]);
+  expect(preparations).toBe(1);
+  expect(registry.isLive("pane-1")).toBe(false);
+});
+
+test("replacement waits for final old output and cleanup before advancing generation", async () => {
+  const output: string[] = [];
+  const registry = runtime({
+    onOutput: (_id, bytes) => output.push(new TextDecoder().decode(bytes)),
+  });
+  const spawn = spyOn(Bun, "spawn");
+  const sleep = Bun.sleep;
+  const gate = Promise.withResolvers<void>();
+  let held = false;
+  const sleeper = spyOn(Bun, "sleep").mockImplementation((ms) => {
+    if (ms === 0 && !held) {
+      held = true;
+      return gate.promise;
+    }
+    return sleep(ms);
+  });
+  try {
+    await registry.start(shellPane("pane-1", process.cwd(), "/bin/sh", ["-c", "printf OLD"]));
+    while (!held) {
+      await sleep(5);
+    }
+    const options = spawn.mock.calls.at(-1)![1]!;
+    const child = spawn.mock.results.at(-1)!.value as Bun.Subprocess;
+    const data = (options.terminal as Bun.TerminalOptions).data!;
+    let prepared = false;
+    const next = registry.start(
+      shellPane("pane-1", process.cwd(), "/bin/sh", ["-c", "printf NEW"]),
+      undefined,
+      async () => {
+        prepared = true;
+        return undefined;
+      },
+    );
+    expect(registry.generation("pane-1")).toBe(1);
+    expect(prepared).toBe(false);
+    data(child.terminal!, new TextEncoder().encode("FINAL-OLD"));
+    gate.resolve();
+    await next;
+    await registry.waitForExit("pane-1");
+    expect(output.join("")).toContain("FINAL-OLD");
+    expect(output.join("")).toContain("NEW");
+    expect(prepared).toBe(true);
+  } finally {
+    gate.resolve();
+    sleeper.mockRestore();
+    spawn.mockRestore();
+  }
+});
+
+test("shutdown waits for pending cold capture cleanup and prevents a late child spawn", async () => {
+  const statuses: PaneStatus[] = [];
+  const registry = runtime({ onStatus: (_id, status) => statuses.push(status) });
+  const starting = registry.start(shellPane("pane-1", process.cwd()), undefined, coldHistory());
+  const stopping = registry.stopAll({ preserveStatus: true });
+  await expect(
+    registry.start(shellPane("other", process.cwd(), "/bin/sh", ["-c", "exit 0"])),
+  ).rejects.toThrow(/stopping/);
+  await stopping;
+  await starting;
+  expect(registry.isLive("pane-1")).toBe(false);
+  expect(statuses).toEqual(["starting"]);
+  await registry.start(shellPane("pane-1", process.cwd(), "/bin/sh", ["-c", "exit 0"]));
+  await registry.waitForExit("pane-1");
+  expect(registry.generation("pane-1")).toBe(2);
+});
+
+test("runtime generation increments before callbacks and survives exit and failed startup", async () => {
+  const events: { status: PaneStatus; generation: number; current: number }[] = [];
+  const outputs: number[] = [];
+  const registry = runtime({
+    onStatus: (_id, status, generation) =>
+      events.push({ status, generation, current: registry.generation("pane-1") }),
+    onOutput: (_id, _bytes, generation) => outputs.push(generation),
+  });
+  expect(registry.generation("pane-1")).toBe(0);
+  await registry.start(shellPane("pane-1", process.cwd(), "/bin/sh", ["-c", "printf first"]));
+  await registry.waitForExit("pane-1");
+  expect(events).toEqual(
+    (["starting", "running", "exited"] as const).map((status) => ({
+      status,
+      generation: 1,
+      current: 1,
+    })),
+  );
+  expect(outputs.length).toBeGreaterThan(0);
+  expect(outputs.every((generation) => generation === 1)).toBe(true);
+  await expect(registry.start(shellPane("pane-1", "/missing-work-craft-cwd"))).rejects.toThrow();
+  expect(events.slice(-2)).toEqual(
+    (["starting", "failed"] as const).map((status) => ({ status, generation: 2, current: 2 })),
+  );
+  await registry.start(shellPane("pane-1", process.cwd(), "/bin/sh", ["-c", "exit 0"]));
+  await registry.waitForExit("pane-1");
+  expect(registry.generation("pane-1")).toBe(3);
+});
+
+test("a late PTY output callback from a replaced child is rejected instead of relabelled", async () => {
+  const output: string[] = [];
+  const registry = runtime({
+    onOutput: (_id, bytes) => output.push(new TextDecoder().decode(bytes)),
+  });
+  const spawn = spyOn(Bun, "spawn");
+  try {
+    await registry.start(shellPane("pane-1", process.cwd(), "/bin/sh", ["-c", "printf first"]));
+    const options = spawn.mock.calls.at(-1)?.[1];
+    const spawned = spawn.mock.results.at(-1)?.value;
+    if (
+      !options ||
+      typeof options.terminal !== "object" ||
+      !("data" in options.terminal) ||
+      !options.terminal.data ||
+      !spawned ||
+      typeof spawned !== "object" ||
+      !("terminal" in spawned) ||
+      !(spawned.terminal instanceof Bun.Terminal)
+    ) {
+      throw new Error("missing real PTY data callback");
+    }
+    const firstOutput = options.terminal.data;
+    const terminal = spawned.terminal;
+    await registry.waitForExit("pane-1");
+    await registry.start(shellPane("pane-1", process.cwd(), "/bin/sh", ["-c", "printf second"]));
+    firstOutput(terminal, new TextEncoder().encode("STALE"));
+    await registry.waitForExit("pane-1");
+    expect(output.join("")).toContain("first");
+    expect(output.join("")).toContain("second");
+    expect(output.join("")).not.toContain("STALE");
+    expect(registry.generation("pane-1")).toBe(2);
+  } finally {
+    spawn.mockRestore();
+  }
+});
+
 test("live cwd follows shell cd, not foreground child cd", async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), "work-craft-runtime-cwd-")));
   let output = "";
@@ -122,6 +308,36 @@ test("live cwd follows shell cd, not foreground child cd", async () => {
     await registry.stopAll();
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("resizing a shell PTY notifies its nested application without requiring input", async () => {
+  let output = "";
+  const registry = runtime({
+    onOutput: (_id, bytes) => {
+      output += new TextDecoder().decode(bytes);
+    },
+  });
+  const code = `process.on("SIGWINCH", () => {
+    const size = Bun.spawnSync(["stty", "size"], { stdin: "inherit" });
+    console.log("child-resized=" + new TextDecoder().decode(size.stdout).trim());
+  }); console.log("child-ready"); setInterval(() => {}, 1000);`;
+  const quote = (text: string) => `'${text.replaceAll("'", "'\\''")}'`;
+  await registry.start(
+    shellPane("pane-1", process.cwd(), "/bin/sh", [
+      "-c",
+      `${quote(process.execPath)} -e ${quote(code)}; :`,
+    ]),
+  );
+  async function waitFor(text: string): Promise<void> {
+    const deadline = Date.now() + 2000;
+    while (!output.includes(text) && Date.now() < deadline) {
+      await Bun.sleep(10);
+    }
+    expect(output).toContain(text);
+  }
+  await waitFor("child-ready");
+  registry.resize("pane-1", 100, 30);
+  await waitFor("child-resized=30 100");
 });
 
 test("current directory rejects missing and exited runtimes", async () => {
@@ -243,7 +459,7 @@ test("an exiting runtime cannot overwrite its replacement status", async () => {
 test("cleans up and reports a synchronous spawn failure", async () => {
   const statuses: { status: PaneStatus; error?: string }[] = [];
   const registry = runtime({
-    onStatus: (_paneId, status, error) => statuses.push({ status, error }),
+    onStatus: (_paneId, status, _generation, error) => statuses.push({ status, error }),
   });
 
   await expect(
@@ -441,6 +657,8 @@ test("preserving shutdown still publishes a natural exit", async () => {
     }
   ).runtimes;
   runtimes.set("pane-1", {
+    projection: { parser: null, sequence: 0 },
+    pendingBytes: 0,
     process: {
       exitCode: 0,
       kill() {
@@ -473,7 +691,7 @@ test("persists shell output after the process exits", async () => {
     INSERT INTO workspaces VALUES ('workspace-1', 'Work');
     INSERT INTO session_workspaces VALUES ('session-1', 'workspace-1', 0);
     INSERT INTO items VALUES ('item-1', 'workspace-1', 'design', NULL, 'generic', 'Build', 0, 0, '{}');
-    INSERT INTO surfaces VALUES ('surface-1', 'item-1', NULL);
+    INSERT INTO surfaces VALUES ('surface-1', 'item-1');
     INSERT INTO panes VALUES ('pane-1', 'surface-1', 'terminal', 'Shell', '/tmp', '{"type":"shell","executable":"/bin/sh","args":[]}', 'running', NULL, NULL, NULL);
   `);
   const history = new TerminalHistory(db);

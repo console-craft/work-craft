@@ -16,6 +16,9 @@
     },
     "packages/cli": {
       "name": "@work-craft/cli",
+      "bin": {
+        "work-craft": "./src/main.ts",
+      },
       "dependencies": {
         "@work-craft/server": "workspace:*",
       },
@@ -23,6 +26,7 @@
     "packages/server": {
       "name": "@work-craft/server",
       "dependencies": {
+        "@opentui/core": "0.6.6",
         "ws": "^8.18.0",
       },
       "devDependencies": {
@@ -32,10 +36,10 @@
     "packages/tui": {
       "name": "@work-craft/tui",
       "dependencies": {
-        "@opentui/core": "^0.6.6",
-        "@opentui/react": "^0.6.6",
+        "@opentui/core": "0.6.6",
+        "@opentui/react": "0.6.6",
         "@work-craft/server": "workspace:*",
-        "react": "^19.3.0",
+        "react": "19.3.0",
       },
       "devDependencies": {
         "@types/react": "^19.3.0",

@@ -1,12 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
-import type { LayoutNode } from "@work-craft/server/client";
+import { type LayoutNode, projectPaneLayout } from "@work-craft/server/client";
 
 import {
   hasRecoveryViewport,
   hasTerminalViewport,
   paneIds,
-  projectPaneLayout,
   reactivateRect,
   terminalRect,
 } from "@/workbench/layout.ts";

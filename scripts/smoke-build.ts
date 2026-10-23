@@ -7,6 +7,7 @@ import { join, resolve } from "node:path";
 import { defaultTheme } from "@/ui/theming/themes/default.ts";
 
 import { createClient, decodeBytes } from "../packages/server/src/client.ts";
+import { sendTerminalInput } from "./test-support/terminal-input.ts";
 
 if (process.argv.includes("--self-test")) {
   assert.equal(
@@ -21,7 +22,7 @@ if (process.argv.includes("--self-test")) {
   process.exit(0);
 }
 
-function shellPid(output: string, marker: "COMPILED" | "RETAINED"): string | undefined {
+function shellPid(output: string, marker: "COMPILED" | "RETAINED" | "MANUAL"): string | undefined {
   return output.match(new RegExp(`(?:^|\\n)${marker}-PID-([1-9]\\d*)\\r?\\n`))?.[1];
 }
 
@@ -204,9 +205,27 @@ async function smokeCoding(): Promise<void> {
   const opened = JSON.parse(
     await run(["surface", "ensure", "--item", registered.id, "--json"]),
   ) as { surfaceId: string; paneId: string };
-  const stream = await client.stream({ onMessage() {} });
+  const selected = JSON.parse(
+    await run(["session", "open-item", session.id, "--item", registered.id, "--json"]),
+  );
+  assert.equal(selected.paneId, opened.paneId, "compiled Open duplicated the runtime");
+  const selectedPane = JSON.parse(
+    await run(["session", "select", session.id, "--pane", opened.paneId, "--json"]),
+  );
+  assert.equal(selectedPane.navigation.paneId, opened.paneId);
+  const stepped = JSON.parse(
+    await run(["session", "step", session.id, "--level", "tab", "--direction", "next", "--json"]),
+  );
+  assert.deepEqual(
+    stepped.navigation,
+    selectedPane.navigation,
+    "compiled single-tab step changed selection",
+  );
+  let stream = await client.stream({ onMessage() {} });
   try {
-    stream.sendInput(
+    await sendTerminalInput(
+      client,
+      stream,
       opened.paneId,
       new TextEncoder().encode('printf \'COMPILED-CWD-%s\\nCOMPILED-PID-%s\\n\' "$(pwd)" "$$"\r'),
     );
@@ -233,7 +252,9 @@ async function smokeCoding(): Promise<void> {
     console.log("compiled smoke source PID:", originalPid);
     const liveCwd = join(expectedCwd, "live cwd 雪");
     await mkdir(liveCwd);
-    stream.sendInput(
+    await sendTerminalInput(
+      client,
+      stream,
       opened.paneId,
       new TextEncoder().encode(`cd '${liveCwd}'; printf 'LIVE-%s\\n' ready\r`),
     );
@@ -242,7 +263,9 @@ async function smokeCoding(): Promise<void> {
     const split = JSON.parse(
       await run(["pane", "split", opened.paneId, "--direction", "vertical", "--json"]),
     ) as { paneId: string };
-    stream.sendInput(
+    await sendTerminalInput(
+      client,
+      stream,
       split.paneId,
       new TextEncoder().encode("printf 'SPLIT-CWD-%s\\n' \"$(pwd)\"\r"),
     );
@@ -251,7 +274,9 @@ async function smokeCoding(): Promise<void> {
       (text) => text.includes(`SPLIT-CWD-${liveCwd}`),
       "new shell live cwd",
     );
-    stream.sendInput(
+    await sendTerminalInput(
+      client,
+      stream,
       opened.paneId,
       new TextEncoder().encode("printf 'RETAINED-PID-%s\\n' \"$$\"\r"),
     );
@@ -299,6 +324,87 @@ async function smokeCoding(): Promise<void> {
     ) {
       throw new Error("compiled Coding open did not retain its runtime");
     }
+    await sendTerminalInput(
+      client,
+      stream,
+      opened.paneId,
+      Buffer.from(
+        "i=0; while [ $i -lt 80 ]; do printf 'COMPILED-HISTORY-%03d\\n' $i; i=$((i+1)); done; exit\r",
+      ),
+    );
+    await waitForOutput(
+      opened.paneId,
+      () => snapshot.panes.find((pane) => pane.id === opened.paneId)?.processStatus === "exited",
+      "compiled shell exit",
+    );
+
+    async function materialText(scrollOffset: number): Promise<string> {
+      const attachment = await stream.attach(session.id);
+      const current = await client.controlSnapshot();
+      const navigation = current.navigation.find((entry) => entry.sessionId === session.id)!;
+      const material = await stream.requestMaterial(
+        opened.paneId,
+        {
+          epoch: current.epoch,
+          attachmentGeneration: attachment.generation,
+          navigationGeneration: navigation.generation,
+          geometrySequence: current.geometry.tabs.find((tab) => tab.tabId === navigation.tabId)!
+            .generation,
+          runtimeGeneration: current.terminalStates.find((pane) => pane.paneId === opened.paneId)!
+            .runtimeGeneration,
+        },
+        scrollOffset,
+      );
+      return material.frame.rows
+        .map((row) => row.map(([n, value, width]) => (width ? value.repeat(n) : "")).join(""))
+        .join("\n");
+    }
+
+    assert.ok(
+      (await materialText(10000)).includes("COMPILED-HISTORY-000"),
+      "compiled stopped scrollback lost early rows",
+    );
+    await run(["pane", "restart", opened.paneId, "--json"]);
+    await sendTerminalInput(
+      client,
+      stream,
+      opened.paneId,
+      Buffer.from("printf 'MANUAL-PID-%s\\n' \"$$\"\r"),
+    );
+    await waitForOutput(
+      opened.paneId,
+      (text) => shellPid(text, "MANUAL") !== undefined,
+      "compiled manual shell PID",
+    );
+    assert.notEqual(shellPid(output(), "MANUAL"), originalPid);
+    assert.equal(output().split("[work-craft: shell restarted manually]").length, 2);
+    assert.ok(
+      (await materialText(10000)).includes("COMPILED-HISTORY-000"),
+      "compiled manual restart lost old scrollback",
+    );
+    stream.close();
+    await run(["daemon", "stop", "--json"]);
+    await waitForSocketRemoval();
+    await run(["daemon", "status", "--json"]);
+    stream = await client.stream({ onMessage() {} });
+    // sendTerminalInput establishes fresh epoch/attachment/navigation/geometry stamps.
+    await sendTerminalInput(
+      client,
+      stream,
+      opened.paneId,
+      Buffer.from("printf 'COMPILED-RECOVERED-%s\\n' \"$((6*7))\"\r"),
+    );
+    await waitForOutput(
+      opened.paneId,
+      (text) => text.includes("COMPILED-RECOVERED-42"),
+      "compiled cold recovery after manual restart",
+    );
+    assert.ok(
+      (await materialText(10000)).includes("COMPILED-HISTORY-000"),
+      "compiled cold recovery lost manual history",
+    );
+    assert.equal(output().split("[work-craft: shell restarted manually]").length, 2);
+    assert.ok(output().includes("[work-craft: daemon restarted; shell restored]"));
     await run(["session", "delete", session.id]);
   } finally {
     stream.close();
