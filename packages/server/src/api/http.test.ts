@@ -106,10 +106,17 @@ test("control synchronization never serializes hidden histories", async () => {
       },
       attachment.generation,
     );
+    expect(reads).not.toHaveBeenCalled();
+    await stream.command({ type: "process.restart", paneId: "pane-1" }, attachment.generation);
+    // Explicit restart reads history once for inert restoration, not control serialization.
+    expect(reads.mock.calls).toEqual([["pane-1"]]);
+    reads.mockClear();
+    await fixture.client.controlSnapshot();
     await stream.command({ type: "process.restart", paneId: "pane-1" }, attachment.generation);
     expect(reads).not.toHaveBeenCalled();
     expect(received.some((message) => message.type === "control.snapshot")).toBe(true);
     expect(received.some((message) => message.type === "snapshot")).toBe(false);
+    expect(JSON.stringify(received)).not.toContain("private history");
     const full = await fixture.client.snapshot();
     expect(full.terminalHistories[0]).toMatchObject({
       paneId: "pane-1",

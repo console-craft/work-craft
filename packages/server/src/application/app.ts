@@ -185,6 +185,9 @@ export function createApp(options: {
       return;
     }
     const resizes = decision.resizes.flatMap(({ paneId, size }) => {
+      if (!runtime.isLive(paneId)) {
+        return [];
+      }
       const marker = history.recordGrid(paneId, size);
       return marker ? [{ paneId, marker, runtimeGeneration: runtime.generation(paneId) }] : [];
     });
@@ -413,13 +416,19 @@ export function createApp(options: {
     publishChange(true);
   }
 
-  const runtime = new RuntimeRegistry({ onOutput, onStatus });
+  const runtime = new RuntimeRegistry({
+    onOutput,
+    onStatus,
+    historyState: (paneId) => history.displayState(paneId),
+    readHistory: (paneId) => history.readForRecovery(paneId),
+  });
   const connections = createConnections({
     epoch,
     snapshot: () => readSnapshotState(options.db, epoch, revision, sizing.current()),
     execute,
     runtimeGeneration: (paneId) => runtime.generation(paneId),
-    onMaterial: (paneId, scrollOffset) => runtime.material(paneId, scrollOffset),
+    onMaterial: (paneId, scrollOffset, isCurrent) =>
+      runtime.readMaterial(paneId, scrollOffset, isCurrent),
     onSemantic: (paneId, input) => runtime.writeSemantic(paneId, input),
     inputPending: (paneId) => runtime.inputPending(paneId),
     onViewer: (id, report) => applyGeometry(sizing.report(id, report)),
@@ -463,7 +472,9 @@ export function createApp(options: {
     for (const { id } of interrupted) {
       const pane = panes.get(id)!;
       try {
-        await runtime.start(pane, { cols: 80, rows: 24 }, history.readForRecovery(pane.id));
+        await runtime.start(pane, { cols: 80, rows: 24 }, async () =>
+          history.readForRecovery(pane.id),
+        );
       } catch (cause) {
         const failed = options.db
           .query<{ status: PaneStatus }, [string]>(
@@ -560,12 +571,20 @@ export function createApp(options: {
         throw new Error(`Pane not found after commit: ${effect.paneId}`);
       }
       try {
-        const size = sizing.current().panes.find(({ paneId }) => paneId === pane.id)?.size ?? {
-          cols: 80,
-          rows: 24,
-        };
-        history.recordGrid(pane.id, size, "fresh");
-        await runtime.start(pane, size);
+        const size = sizing.spawnSize(pane.id);
+        await runtime.start(pane, size, async () => {
+          if (command.type === "process.restart") {
+            history.recordGrid(pane.id, size, "restored");
+            history.append(
+              pane.id,
+              new TextEncoder().encode("\r\n[work-craft: shell restarted manually]\r\n"),
+            );
+            await history.flush(pane.id);
+            return history.readForRecovery(pane.id);
+          }
+          history.recordGrid(pane.id, size, "fresh");
+          return undefined;
+        });
       } catch {
         // RuntimeRegistry has already persisted and broadcast the failed status.
       }

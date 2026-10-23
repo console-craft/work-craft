@@ -59,7 +59,10 @@ type ConnectionOptions = {
   onMaterial?(
     paneId: string,
     scrollOffset: number,
-  ): { sequence: number; frame: CompactMaterialFrame };
+    isCurrent: () => boolean,
+  ):
+    | { sequence: number; frame: CompactMaterialFrame }
+    | Promise<{ sequence: number; frame: CompactMaterialFrame }>;
   onSemantic?(paneId: string, input: SemanticTerminalInput | Uint8Array): Promise<boolean>;
   inputPending?(paneId: string): boolean;
 };
@@ -262,13 +265,39 @@ export function createConnections(options: ConnectionOptions): ConnectionRegistr
       if (!options.onMaterial) {
         throw new ProtocolError("Terminal material is unavailable");
       }
+      const isCurrent = (): boolean => {
+        if (connections.get(socket) !== connection) {
+          return false;
+        }
+        try {
+          const scope = projectionScope(connection, message.paneId, message.context, false);
+          const status = scope.snapshot.panes.find(
+            ({ id }) => id === message.paneId,
+          )?.processStatus;
+          return (
+            status === "running" ||
+            status === "exited" ||
+            status === "failed" ||
+            status === "interrupted"
+          );
+        } catch {
+          return false;
+        }
+      };
+      if (!isCurrent()) {
+        throw new ProtocolError("Stale or starting terminal material scope");
+      }
+      const material = await options.onMaterial(message.paneId, message.scrollOffset, isCurrent);
+      if (!isCurrent()) {
+        throw new ProtocolError("Terminal material scope changed during read");
+      }
       reply = {
         type: "terminal.material.result",
         requestId: message.requestId,
         material: {
           paneId: message.paneId,
           context: message.context,
-          ...options.onMaterial(message.paneId, message.scrollOffset),
+          ...material,
         },
       };
     } else {

@@ -118,6 +118,79 @@ test("a pending cold start owns its pane before native reconstruction yields", a
   }
 });
 
+test("manual preparation is admitted once after spawn validation and owned through shutdown", async () => {
+  const registry = runtime();
+  let preparations = 0;
+  const gate = Promise.withResolvers<void>();
+  const prepare = async () => {
+    preparations++;
+    await gate.promise;
+    return coldHistory();
+  };
+  await expect(
+    registry.start(shellPane("invalid", "/missing-work-craft-cwd"), undefined, prepare),
+  ).rejects.toThrow(/directory/);
+  expect(preparations).toBe(0);
+  const start = registry.start(shellPane("pane-1", process.cwd()), undefined, prepare);
+  await expect(
+    registry.start(shellPane("pane-1", process.cwd()), undefined, prepare),
+  ).rejects.toThrow(/already/);
+  const stop = registry.stopAll();
+  gate.resolve();
+  await Promise.all([start, stop]);
+  expect(preparations).toBe(1);
+  expect(registry.isLive("pane-1")).toBe(false);
+});
+
+test("replacement waits for final old output and cleanup before advancing generation", async () => {
+  const output: string[] = [];
+  const registry = runtime({
+    onOutput: (_id, bytes) => output.push(new TextDecoder().decode(bytes)),
+  });
+  const spawn = spyOn(Bun, "spawn");
+  const sleep = Bun.sleep;
+  const gate = Promise.withResolvers<void>();
+  let held = false;
+  const sleeper = spyOn(Bun, "sleep").mockImplementation((ms) => {
+    if (ms === 0 && !held) {
+      held = true;
+      return gate.promise;
+    }
+    return sleep(ms);
+  });
+  try {
+    await registry.start(shellPane("pane-1", process.cwd(), "/bin/sh", ["-c", "printf OLD"]));
+    while (!held) {
+      await sleep(5);
+    }
+    const options = spawn.mock.calls.at(-1)![1]!;
+    const child = spawn.mock.results.at(-1)!.value as Bun.Subprocess;
+    const data = (options.terminal as Bun.TerminalOptions).data!;
+    let prepared = false;
+    const next = registry.start(
+      shellPane("pane-1", process.cwd(), "/bin/sh", ["-c", "printf NEW"]),
+      undefined,
+      async () => {
+        prepared = true;
+        return undefined;
+      },
+    );
+    expect(registry.generation("pane-1")).toBe(1);
+    expect(prepared).toBe(false);
+    data(child.terminal!, new TextEncoder().encode("FINAL-OLD"));
+    gate.resolve();
+    await next;
+    await registry.waitForExit("pane-1");
+    expect(output.join("")).toContain("FINAL-OLD");
+    expect(output.join("")).toContain("NEW");
+    expect(prepared).toBe(true);
+  } finally {
+    gate.resolve();
+    sleeper.mockRestore();
+    spawn.mockRestore();
+  }
+});
+
 test("shutdown waits for pending cold capture cleanup and prevents a late child spawn", async () => {
   const statuses: PaneStatus[] = [];
   const registry = runtime({ onStatus: (_id, status) => statuses.push(status) });

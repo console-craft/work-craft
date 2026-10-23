@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 
 import {
   CliRenderEvents,
@@ -44,6 +44,45 @@ function splitResponse(revision: number, paneId = "pane-2", generation = 2) {
       navigation: { ...surfaceSnapshot().navigation[0]!, generation, paneId },
     },
   };
+}
+
+for (const coverage of ["dialog", "guard", "archive"] as const) {
+  test(`stopped wheel never claims child activity and closes immediately under ${coverage}`, async () => {
+    const initial = surfaceSnapshot();
+    initial.panes[0]!.processStatus = "exited";
+    const setup = await liveInputFixture(initial);
+    const activity = spyOn(setup.store.getState().stream!, "activity");
+    try {
+      const terminal = setup.renderer.root.findDescendantById(
+        "terminal:pane-1",
+      ) as TerminalMaterialRenderable;
+      const wheel = `\x1b[<64;${terminal.screenX + 3};${terminal.screenY + 3}M`;
+      await act(async () => setup.mockInput.pressKeys([wheel]));
+      await setup.flush();
+      expect(terminal.scrollOffset).toBe(1);
+      expect(activity.mock.calls).toHaveLength(0);
+      expect(setup.sent).toEqual([]);
+      if (coverage === "archive") {
+        const archived = structuredClone(initial);
+        archived.revision++;
+        archived.items.find((item) => item.id === archived.surfaces[0]!.itemId)!.archived = true;
+        await setup.publish(archived, false);
+      } else {
+        act(() =>
+          coverage === "guard"
+            ? setup.resize(79, 40)
+            : setup.mockInput.pressKey("s", { hyper: true }),
+        );
+      }
+      await act(async () => setup.mockInput.pressKeys([wheel]));
+      expect(terminal.scrollOffset).toBe(1);
+      expect(setup.commands.filter((command) => command.type === "process.restart")).toEqual([]);
+    } finally {
+      activity.mockRestore();
+      act(() => setup.renderer.destroy());
+      setup.store.stop();
+    }
+  });
 }
 
 test("a shell first rendered detached uses its current attachment for native restart handoff", async () => {

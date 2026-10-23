@@ -74,8 +74,14 @@ test("cold daemon recovery restores ordinary scrollback independently in two nor
       .map(Number);
     await fixture.crashDaemon();
     await sharedWait(
-      () => [a, b].every((tui) => tui.frame().includes("daemon restarted; shell restored")),
-      "both clients render the recovered separator",
+      () =>
+        [a, b].every((tui) => {
+          const frame = tui.frame();
+          return (
+            frame.includes("daemon restarted; shell restored") && frame.includes("COLD-179-42")
+          );
+        }),
+      "both clients render the recovered output and separator",
       () => a.frame() + "\n" + b.frame(),
     );
     expect(a.frame()).toContain("COLD-179-42");

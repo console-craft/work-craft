@@ -3,6 +3,7 @@ import { expect, spyOn, test } from "bun:test";
 import { extend } from "@opentui/react";
 import type {
   CompactMaterialFrame,
+  Snapshot,
   StreamConnection,
   TerminalMaterialResult,
   TerminalProjectionContext,
@@ -20,22 +21,26 @@ import { TerminalMaterialRenderable } from "@/workbench/terminal-material";
 import { TerminalViewport } from "@/workbench/terminal-viewport";
 
 extend({ terminal: TerminalMaterialRenderable });
+type PaneStatus = Snapshot["panes"][number]["processStatus"];
 
-function picture(text: string): CompactMaterialFrame {
+function picture(text: string, size = { cols: 80, rows: 24 }): CompactMaterialFrame {
   return {
-    size: { cols: 80, rows: 24 },
+    size,
     cursor: { x: text.length, y: 0, visible: true, style: "bar", blinking: false },
     styles: [{ fg: [1, 1, 1, 1], bg: [0, 0, 0, 1], attributes: 0 }],
     rows: [
       [...text]
         .map((char) => [1, char, 1, 0] as [number, string, 1, number])
-        .concat([[80 - text.length, " ", 1, 0]]),
-      ...Array.from({ length: 23 }, () => [[80, " ", 1, 0] as [number, string, 1, number]]),
+        .concat([[size.cols - text.length, " ", 1, 0]]),
+      ...Array.from({ length: size.rows - 1 }, () => [
+        [size.cols, " ", 1, 0] as [number, string, 1, number],
+      ]),
     ],
   };
 }
 
-async function viewport() {
+async function viewport(initialStatus: PaneStatus = "running") {
+  let browseAllowed = true;
   const context: TerminalProjectionContext = {
     epoch: "e",
     attachmentGeneration: 1,
@@ -46,6 +51,7 @@ async function viewport() {
   const requests: {
     context: TerminalProjectionContext;
     signal?: AbortSignal;
+    scrollOffset: number;
     resolve(value: TerminalMaterialResult): void;
     reject(error: Error): void;
   }[] = [];
@@ -56,9 +62,9 @@ async function viewport() {
   );
   function connection(): StreamConnection {
     return streamFixture({
-      requestMaterial: async (_paneId, captured, _scrollOffset, signal) =>
+      requestMaterial: async (_paneId, captured, scrollOffset, signal) =>
         new Promise((resolve, reject) => {
-          requests.push({ context: { ...captured }, signal, resolve, reject });
+          requests.push({ context: { ...captured }, scrollOffset, signal, resolve, reject });
         }),
       sendSemantic: async (_paneId, input) => {
         inputs.push(input.kind);
@@ -68,11 +74,14 @@ async function viewport() {
   }
   let setConnection!: (connection: StreamConnection) => void;
   let setContext!: (context: TerminalProjectionContext) => void;
+  let setStatus!: (status: PaneStatus) => void;
   let renders = 0;
   function Fixture() {
     renders++;
     const [stream, updateConnection] = useState(connection);
     const [scope, updateContext] = useState(context);
+    const [status, updateStatus] = useState(initialStatus);
+    setStatus = updateStatus;
     setConnection = updateConnection;
     setContext = updateContext;
     return (
@@ -86,7 +95,9 @@ async function viewport() {
             context={scope}
             inputEnabled
             focused
-            canInput={() => true}
+            processStatus={status}
+            canBrowse={() => browseAllowed}
+            canInput={() => status === "running"}
             captureInput={() => ({
               valid: () => true,
               send: (input, signal) =>
@@ -114,14 +125,18 @@ async function viewport() {
   function node(): TerminalMaterialRenderable {
     return setup.renderer.root.findDescendantById("terminal:p") as TerminalMaterialRenderable;
   }
-  async function respond(index: number, text: string): Promise<void> {
+  async function respond(
+    index: number,
+    text: string,
+    size?: { cols: number; rows: number },
+  ): Promise<void> {
     const request = requests[index]!;
     await act(async () =>
       request.resolve({
         paneId: "p",
         context: request.context,
         sequence: index + 1,
-        frame: picture(text),
+        frame: picture(text, size),
       }),
     );
     await flush();
@@ -139,9 +154,77 @@ async function viewport() {
     connection,
     setConnection,
     setContext,
+    setStatus,
+    setBrowse: (allowed: boolean) => {
+      browseAllowed = allowed;
+    },
     renders: () => renders,
   };
 }
+
+test("stopped wheel requests historical-grid material locally and preserves offsets across reconnect", async () => {
+  const setup = await viewport("exited");
+  try {
+    await setup.respond(0, "STOPPED", { cols: 40, rows: 8 });
+    expect(setup.errors).toEqual([]);
+    expect(setup.node().focusable).toBe(false);
+    await act(async () => setup.mockInput.pressKeys(["\x1b[<64;10;4M"]));
+    await Bun.sleep(40);
+    expect(setup.node().scrollOffset).toBe(1);
+    expect(setup.requests.at(-1)!.scrollOffset).toBe(1);
+    expect(setup.inputs).toEqual([]);
+    await setup.respond(1, "EARLIER", { cols: 40, rows: 8 });
+    act(() => setup.setConnection(setup.connection()));
+    await setup.flush();
+    expect(setup.requests.at(-1)!.scrollOffset).toBe(1);
+    await setup.respond(2, "EARLIER", { cols: 40, rows: 8 });
+    setup.setBrowse(false);
+    await act(async () => setup.mockInput.pressKeys(["\x1b[<64;10;4M"]));
+    expect(setup.node().scrollOffset).toBe(1);
+    act(() => {
+      setup.setStatus("running");
+      setup.setContext({ ...setup.context, runtimeGeneration: 5 });
+    });
+    await setup.flush();
+    expect(setup.requests.at(-1)!.scrollOffset).toBe(0);
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
+test("status changes refresh idle material without granting starting or stopped child input", async () => {
+  const setup = await viewport("starting");
+  try {
+    expect(setup.requests).toHaveLength(0);
+    act(() => setup.setStatus("running"));
+    await setup.flush();
+    expect(setup.requests).toHaveLength(1);
+    await setup.respond(0, "READY");
+    act(() => setup.setStatus("exited"));
+    await setup.flush();
+    expect(setup.requests).toHaveLength(2);
+    expect(setup.node().focusable).toBe(false);
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
+
+test("stopped scrolling covers enlarged viewport background without double-counting terminal events", async () => {
+  const setup = await viewport("exited");
+  try {
+    await setup.respond(0, "SMALL", { cols: 20, rows: 5 });
+    await act(async () => setup.mockInput.pressKeys(["\x1b[<64;50;12M"]));
+    expect(setup.node().scrollOffset).toBe(1);
+    await act(async () => setup.mockInput.pressKeys(["\x1b[<64;10;4M"]));
+    expect(setup.node().scrollOffset).toBe(2);
+    setup.setBrowse(false);
+    await act(async () => setup.mockInput.pressKeys(["\x1b[<64;50;12M"]));
+    expect(setup.node().scrollOffset).toBe(2);
+    expect(setup.inputs).toEqual([]);
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+});
 
 test("idle material mount requests a current picture and becomes ready only after a rendered frame", async () => {
   const setup = await viewport();

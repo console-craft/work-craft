@@ -254,7 +254,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
       }),
     };
   }
-  function canReceiveWorkbenchInput(paneId?: string): boolean {
+  function canReceiveWorkbenchInput(paneId?: string, readOnly = false): boolean {
     const live = workCraftRef.current.getState();
     if (live.status !== "connected" || live.attachment === null) {
       return false;
@@ -308,7 +308,7 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
       viewport !== undefined &&
       hasTerminalViewport(viewport) &&
       stamp !== null &&
-      workCraft.canSendInput(paneId, stamp)
+      (readOnly ? live.canReadMaterial(paneId, stamp) : live.canSendInput(paneId, stamp))
     );
   }
   function canReactivate(paneId: string): boolean {
@@ -748,6 +748,8 @@ export function WorkCraftShell({ workCraft }: WorkCraftShellProps): ReactNode {
     inputEnabled: !resizeBlocked && navigatorMode !== "drawer" && state.dialog === null,
     canReceiveInput: canReceiveWorkbenchInput,
     stamp,
+    canBrowse: (paneId: string) =>
+      canReceiveWorkbenchInput(paneId, true) && !commands.isReactivating(paneId),
     inputEvent: () => physicalInput.current,
     onMouseInput: (event: MouseEvent) =>
       captureInput("mouse", event.type === "down" && event.button === 0),

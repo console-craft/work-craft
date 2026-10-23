@@ -31,6 +31,37 @@ const context = {
   kind: "mouse" as const,
 };
 
+test("read-only wheel bypasses child input and obeys the current browse gate", async () => {
+  const setup = await createTestRenderer({ width: 30, height: 4 });
+  const input: string[] = [];
+  const scroll: number[] = [];
+  let allowed = true;
+  const view = new TerminalMaterialRenderable(setup.renderer, {
+    frame,
+    position: "absolute",
+    left: 5,
+    top: 1,
+    canInput: () => false,
+    canBrowse: () => allowed,
+    onInput: (event) => input.push(event.kind),
+    onScroll: (lines) => scroll.push(lines),
+  });
+  setup.renderer.root.add(view);
+  try {
+    await setup.flush();
+    await setup.mockInput.pressKeys(["\x1b[<64;7;2M", "\x1b[<65;7;2M"]);
+    expect(scroll).toEqual([1, -1]);
+    allowed = false;
+    await setup.mockInput.pressKeys(["\x1b[<64;7;2M"]);
+    expect(scroll).toEqual([1, -1]);
+    view.focus();
+    await setup.mockInput.pressKey("x");
+    expect(input).toEqual([]);
+  } finally {
+    await setup.dispose();
+  }
+});
+
 test("raw SGR hover, drag and release retain their actual button state in child mouse reports", async () => {
   const setup = await createTestRenderer({ width: 30, height: 4 });
   const encoded: string[] = [];

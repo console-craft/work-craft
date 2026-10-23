@@ -31,6 +31,7 @@ export type WorkbenchProps = Pick<TerminalPaneProps, "stamp" | "inputEvent" | "o
   inputEnabled?: boolean;
   entryEnabled?: boolean;
   canReceiveInput?(paneId?: string): boolean;
+  canBrowse?(paneId: string): boolean;
   onSourceFailure?: SurfaceViewProps["onSourceFailure"];
   onFocusTab(id: string): void;
   onActivateTab(id: string): void;
@@ -52,6 +53,7 @@ export function Workbench({
   inputEnabled,
   entryEnabled,
   canReceiveInput,
+  canBrowse,
   activeTabId,
   focusedPaneId,
   snapshot,
@@ -104,6 +106,7 @@ export function Workbench({
             focusedPaneId={focusedPaneId}
             inputEnabled={inputEnabled}
             canReceiveInput={canReceiveInput}
+            canBrowse={canBrowse}
             activeTabId={activeTabId}
             stamp={stamp}
             inputEvent={inputEvent}

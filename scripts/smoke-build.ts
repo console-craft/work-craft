@@ -22,7 +22,7 @@ if (process.argv.includes("--self-test")) {
   process.exit(0);
 }
 
-function shellPid(output: string, marker: "COMPILED" | "RETAINED"): string | undefined {
+function shellPid(output: string, marker: "COMPILED" | "RETAINED" | "MANUAL"): string | undefined {
   return output.match(new RegExp(`(?:^|\\n)${marker}-PID-([1-9]\\d*)\\r?\\n`))?.[1];
 }
 
@@ -221,7 +221,7 @@ async function smokeCoding(): Promise<void> {
     selectedPane.navigation,
     "compiled single-tab step changed selection",
   );
-  const stream = await client.stream({ onMessage() {} });
+  let stream = await client.stream({ onMessage() {} });
   try {
     await sendTerminalInput(
       client,
@@ -324,6 +324,87 @@ async function smokeCoding(): Promise<void> {
     ) {
       throw new Error("compiled Coding open did not retain its runtime");
     }
+    await sendTerminalInput(
+      client,
+      stream,
+      opened.paneId,
+      Buffer.from(
+        "i=0; while [ $i -lt 80 ]; do printf 'COMPILED-HISTORY-%03d\\n' $i; i=$((i+1)); done; exit\r",
+      ),
+    );
+    await waitForOutput(
+      opened.paneId,
+      () => snapshot.panes.find((pane) => pane.id === opened.paneId)?.processStatus === "exited",
+      "compiled shell exit",
+    );
+
+    async function materialText(scrollOffset: number): Promise<string> {
+      const attachment = await stream.attach(session.id);
+      const current = await client.controlSnapshot();
+      const navigation = current.navigation.find((entry) => entry.sessionId === session.id)!;
+      const material = await stream.requestMaterial(
+        opened.paneId,
+        {
+          epoch: current.epoch,
+          attachmentGeneration: attachment.generation,
+          navigationGeneration: navigation.generation,
+          geometrySequence: current.geometry.tabs.find((tab) => tab.tabId === navigation.tabId)!
+            .generation,
+          runtimeGeneration: current.terminalStates.find((pane) => pane.paneId === opened.paneId)!
+            .runtimeGeneration,
+        },
+        scrollOffset,
+      );
+      return material.frame.rows
+        .map((row) => row.map(([n, value, width]) => (width ? value.repeat(n) : "")).join(""))
+        .join("\n");
+    }
+
+    assert.ok(
+      (await materialText(10000)).includes("COMPILED-HISTORY-000"),
+      "compiled stopped scrollback lost early rows",
+    );
+    await run(["pane", "restart", opened.paneId, "--json"]);
+    await sendTerminalInput(
+      client,
+      stream,
+      opened.paneId,
+      Buffer.from("printf 'MANUAL-PID-%s\\n' \"$$\"\r"),
+    );
+    await waitForOutput(
+      opened.paneId,
+      (text) => shellPid(text, "MANUAL") !== undefined,
+      "compiled manual shell PID",
+    );
+    assert.notEqual(shellPid(output(), "MANUAL"), originalPid);
+    assert.equal(output().split("[work-craft: shell restarted manually]").length, 2);
+    assert.ok(
+      (await materialText(10000)).includes("COMPILED-HISTORY-000"),
+      "compiled manual restart lost old scrollback",
+    );
+    stream.close();
+    await run(["daemon", "stop", "--json"]);
+    await waitForSocketRemoval();
+    await run(["daemon", "status", "--json"]);
+    stream = await client.stream({ onMessage() {} });
+    // sendTerminalInput establishes fresh epoch/attachment/navigation/geometry stamps.
+    await sendTerminalInput(
+      client,
+      stream,
+      opened.paneId,
+      Buffer.from("printf 'COMPILED-RECOVERED-%s\\n' \"$((6*7))\"\r"),
+    );
+    await waitForOutput(
+      opened.paneId,
+      (text) => text.includes("COMPILED-RECOVERED-42"),
+      "compiled cold recovery after manual restart",
+    );
+    assert.ok(
+      (await materialText(10000)).includes("COMPILED-HISTORY-000"),
+      "compiled cold recovery lost manual history",
+    );
+    assert.equal(output().split("[work-craft: shell restarted manually]").length, 2);
+    assert.ok(output().includes("[work-craft: daemon restarted; shell restored]"));
     await run(["session", "delete", session.id]);
   } finally {
     stream.close();

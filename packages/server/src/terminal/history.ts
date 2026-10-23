@@ -23,6 +23,11 @@ export type HistoryRead = {
 };
 
 export type HistoryReplay = HistoryRead & { starts: RuntimeStartMarker[] };
+export type HistoryDisplayState = {
+  cursor: number;
+  size: TerminalSize | null;
+  gridSequence: number | null;
+};
 
 type Chunk = { cursorStart: number; cursorEnd: number; data: Uint8Array };
 type PaneHistory = {
@@ -88,6 +93,11 @@ export class TerminalHistory {
       ...retained,
       starts: this.geometry.starts(paneId, retained.startCursor, retained.cursor),
     };
+  }
+
+  /** Identity/last actual grid only; cache hits must not copy the retained byte stream. */
+  displayState(paneId: string): HistoryDisplayState {
+    return { cursor: this.pane(paneId).cursor, ...this.geometry.current(paneId) };
   }
 
   append(paneId: string, bytes: Uint8Array): number {

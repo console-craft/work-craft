@@ -91,6 +91,7 @@ function fixture() {
   const semanticInputs: string[] = [];
   const semanticEvents: unknown[] = [];
   let pendingInput = false;
+  let materialGate: Promise<void> | undefined;
   let runtimeGeneration = 1;
   let execute = async (_value: unknown, _origin: CommandOrigin): Promise<CommandResponse> => ({
     ok: true,
@@ -125,8 +126,9 @@ function fixture() {
         owner: sizing.current().tabs[0]?.ownerConnectionId ?? null,
       });
     },
-    onMaterial(paneId) {
+    async onMaterial(paneId) {
       materialReads.push(paneId);
+      await materialGate;
       return {
         sequence: 1,
         frame: {
@@ -204,10 +206,74 @@ function fixture() {
     setRuntimeGeneration(generation: number) {
       runtimeGeneration = generation;
     },
+    holdMaterial(gate: Promise<void>) {
+      materialGate = gate;
+    },
     setExecute(next: typeof execute) {
       execute = next;
     },
   };
+}
+
+for (const change of [
+  "epoch",
+  "attachment",
+  "navigation",
+  "geometry",
+  "runtime",
+  "archive",
+  "layout",
+  "socket",
+  "starting",
+] as const) {
+  test(`awaited material rejects ${change} replacement without input activity`, async () => {
+    const f = fixture();
+    const a = socketFixture();
+    f.registry.open(a.socket);
+    await f.attach(a.socket);
+    await f.report(a.socket);
+    const gate = Promise.withResolvers<void>();
+    f.holdMaterial(gate.promise);
+    const request = f.registry.receive(a.socket, {
+      type: "terminal.material",
+      requestId: 2,
+      paneId: "pane-1",
+      context: { ...f.stamp(a.socket), runtimeGeneration: 1 },
+      scrollOffset: 4,
+    });
+    if (change === "epoch") {
+      f.data.epoch = "new";
+    }
+    if (change === "attachment") {
+      await f.attach(a.socket, "other", 3);
+    }
+    if (change === "navigation") {
+      f.data.navigation[0]!.generation++;
+    }
+    if (change === "geometry") {
+      await f.report(a.socket, 110);
+    }
+    if (change === "runtime") {
+      f.setRuntimeGeneration(2);
+    }
+    if (change === "archive") {
+      f.data.items[0]!.archived = true;
+    }
+    if (change === "layout") {
+      f.data.tabs[0]!.layout = { type: "pane", paneId: "pane-2" };
+    }
+    if (change === "socket") {
+      f.registry.close(a.socket);
+    }
+    if (change === "starting") {
+      f.data.panes[0]!.processStatus = "starting";
+    }
+    gate.resolve();
+    await request;
+    expect(a.messages.filter((m) => m.type === "terminal.material.result")).toEqual([]);
+    expect(f.inputs).toEqual([]);
+    expect(f.semanticInputs).toEqual([]);
+  });
 }
 
 test("raw external input cannot overtake semantic bytes awaiting native PTY drain", async () => {

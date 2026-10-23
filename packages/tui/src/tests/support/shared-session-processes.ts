@@ -78,6 +78,36 @@ export function sharedWrite(tui: SharedTuiProcess, text: string): void {
   tui.terminal.write(new TextEncoder().encode(text));
 }
 
+/** Only confirmed group absence makes failed fixture cleanup harmless. */
+export async function killSharedProcessGroup(pid: number): Promise<void> {
+  try {
+    process.kill(-pid, "SIGKILL");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") {
+      return;
+    }
+    if ((error as NodeJS.ErrnoException).code === "EPERM") {
+      // A dying macOS group can briefly reject even an existence probe.
+      const deadline = Date.now() + 250;
+      while (Date.now() < deadline) {
+        try {
+          process.kill(-pid, 0);
+          break;
+        } catch (probe) {
+          if ((probe as NodeJS.ErrnoException).code === "ESRCH") {
+            return;
+          }
+          if ((probe as NodeJS.ErrnoException).code !== "EPERM") {
+            break;
+          }
+        }
+        await Bun.sleep(10);
+      }
+    }
+    throw error;
+  }
+}
+
 export async function waitForSharedTerminalInput(
   tui: SharedTuiProcess,
   afterBytes: number,
@@ -225,13 +255,7 @@ export async function startSharedSessionFixture(
       daemon.kill("SIGKILL");
       await daemon.exited;
       for (const pid of pids) {
-        try {
-          process.kill(-pid, "SIGKILL");
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ESRCH") {
-            throw error;
-          }
-        }
+        await killSharedProcessGroup(pid);
       }
       await sharedWait(
         () =>

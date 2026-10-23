@@ -24,6 +24,8 @@ export type TerminalMaterialOptions = RenderableOptions & {
   frame: CompactMaterialFrame;
   onInput?(input: SemanticTerminalInput): void;
   canInput?(): boolean;
+  canBrowse?(): boolean;
+  onScroll?(lines: number): void;
 };
 
 /** Preview picture, not an ANSI parser. Single regional indicators remain visibly narrow. */
@@ -32,6 +34,8 @@ export class TerminalMaterialRenderable extends Renderable {
   private renderedFrame?: CompactMaterialFrame;
   private readonly send?: TerminalMaterialOptions["onInput"];
   private readonly canInput: () => boolean;
+  private readonly canBrowse?: () => boolean;
+  private readonly onScroll?: (lines: number) => void;
   private anchor?: { x: number; y: number };
   private end?: { x: number; y: number };
   private selecting = false;
@@ -43,12 +47,14 @@ export class TerminalMaterialRenderable extends Renderable {
   };
 
   constructor(context: RenderContext, options: TerminalMaterialOptions) {
-    const { frame, onInput, canInput, ...layout } = options;
+    const { frame, onInput, canInput, canBrowse, onScroll, ...layout } = options;
     validateCompactFrame(frame);
     super(context, { ...layout, width: frame.size.cols, height: frame.size.rows });
     this.picture = frame;
     this.send = onInput;
     this.canInput = canInput ?? (() => true);
+    this.canBrowse = canBrowse;
+    this.onScroll = onScroll;
     this.focusable = true;
     this.selectable = true;
     context.keyInput.on("keyrelease", this.release);
@@ -91,6 +97,16 @@ export class TerminalMaterialRenderable extends Renderable {
   }
 
   protected onMouseEvent(event: MouseEvent): void {
+    if (!this.isDestroyed && event.type === "scroll" && this.onScroll && this.canBrowse?.()) {
+      if (event.scroll?.direction === "up" || event.scroll?.direction === "down") {
+        const count = Math.max(1, Math.ceil(Math.abs(event.scroll.delta ?? 1)));
+        if (!Number.isSafeInteger(count) || count > 65536) {
+          throw new Error("Pointer event limit");
+        }
+        this.onScroll(count * (event.scroll.direction === "up" ? 1 : -1));
+      }
+      return;
+    }
     if (!this.canInput() || !["down", "up", "move", "drag", "scroll"].includes(event.type)) {
       return;
     }

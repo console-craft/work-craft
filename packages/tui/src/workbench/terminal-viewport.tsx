@@ -8,6 +8,7 @@ import { useRenderer } from "@opentui/react";
 import type {
   CompactMaterialFrame,
   SemanticTerminalInput,
+  Snapshot,
   StreamConnection,
   TerminalProjectionContext,
   TerminalSize,
@@ -31,6 +32,8 @@ export type TerminalViewportProps = {
   stream: StreamConnection | null;
   context: TerminalProjectionContext | null;
   inputEnabled: boolean;
+  processStatus: Snapshot["panes"][number]["processStatus"];
+  canBrowse(): boolean;
   focused: boolean;
   preservePresentation?: boolean;
   canInput(): boolean;
@@ -87,6 +90,32 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
   const [ready, setReady] = useState(false);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [measured, setMeasured] = useState({ width: 0, height: 0 });
+  const runtimeScope = useRef("");
+
+  function stopped(): boolean {
+    return ["exited", "failed", "interrupted"].includes(latest.current.processStatus);
+  }
+  const browse = useRef(
+    () =>
+      stopped() &&
+      latest.current.inputEnabled &&
+      latest.current.canBrowse() &&
+      viewport.current.width >= 20 &&
+      viewport.current.height >= 5 &&
+      presentedVersion.current >= 0,
+  ).current;
+  const scroll = useRef((lines: number) => {
+    const target = terminal.current;
+    if (!target || !browse()) {
+      return;
+    }
+    const previous = target.scrollOffset;
+    target.scrollOffset = Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, previous + lines));
+    if (previous !== target.scrollOffset) {
+      failed.current = false;
+      schedule();
+    }
+  }).current;
 
   function readiness(value: boolean): void {
     if (inputReady.current !== value) {
@@ -98,6 +127,7 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
     const current = latest.current;
     return (
       !failed.current &&
+      current.processStatus === "running" &&
       current.inputEnabled &&
       current.canInput() &&
       viewport.current.width >= 20 &&
@@ -109,6 +139,9 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
   }).current;
   const accepts = useRef(() => canAdmit()).current;
   const onMouse = useRef((event: MouseEvent) => {
+    if (stopped() && event.type === "scroll") {
+      return;
+    }
     latest.current.onMouseInput?.(event);
     if (event.type === "down" && event.button === 0) {
       latest.current.onFocus();
@@ -148,6 +181,7 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
       !refresh.current ||
       !current.stream ||
       !current.context ||
+      current.processStatus === "starting" ||
       current.canConsume?.() === false
     ) {
       return;
@@ -182,8 +216,9 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
         if (
           material.paneId !== next.paneId ||
           scope(material.context) !== capturedScope ||
-          material.frame.size.cols !== next.size.cols ||
-          material.frame.size.rows !== next.size.rows
+          (!stopped() &&
+            (material.frame.size.cols !== next.size.cols ||
+              material.frame.size.rows !== next.size.rows))
         ) {
           throw new Error("Material response scope/geometry mismatch");
         }
@@ -293,12 +328,19 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
     timer.current = undefined;
     lastRequest.current = -Infinity;
     refresh.current = true;
+    if (props.context) {
+      const nextRuntime = `${props.context.epoch}:${props.context.runtimeGeneration}`;
+      if (runtimeScope.current !== nextRuntime) {
+        terminal.current!.scrollOffset = 0;
+      }
+      runtimeScope.current = nextRuntime;
+    }
     fetchFrame();
     return () => {
       request.current?.abort();
       clearTimeout(timer.current);
     };
-  }, [props.stream, identity]);
+  }, [props.stream, identity, props.processStatus]);
 
   useLayoutEffect(
     () =>
@@ -325,6 +367,7 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
     ready,
     props.focused,
     props.inputEnabled,
+    props.processStatus,
     props.canInput,
     props.preservePresentation,
     measured.width,
@@ -342,6 +385,21 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
       minWidth={0}
       minHeight={0}
       overflow="hidden"
+      onMouse={(event) => {
+        // The historical grid may cover only part of this client's viewport.
+        if (
+          event.type === "scroll" &&
+          event.target !== terminal.current &&
+          browse() &&
+          (event.scroll?.direction === "up" || event.scroll?.direction === "down")
+        ) {
+          const count = Math.max(1, Math.ceil(Math.abs(event.scroll.delta ?? 1)));
+          if (!Number.isSafeInteger(count) || count > 65536) {
+            throw new Error("Pointer event limit");
+          }
+          scroll(count * (event.scroll.direction === "up" ? 1 : -1));
+        }
+      }}
       onSizeChange={function (this: BoxRenderable) {
         const { width, height } = this.getLayout();
         viewport.current = { width, height };
@@ -356,6 +414,8 @@ export function TerminalViewport(props: TerminalViewportProps): ReactNode {
         frame={bootstrap}
         onInput={admit}
         canInput={accepts}
+        canBrowse={browse}
+        onScroll={scroll}
         position="absolute"
         left={-offset.x}
         top={-offset.y}

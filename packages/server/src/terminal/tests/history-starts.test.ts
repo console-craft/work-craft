@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 
 import { openDatabase } from "../../persistence/database";
 import { TerminalHistory } from "../history";
@@ -15,6 +15,26 @@ function fixture(maxMarkers = 1024) {
   `);
   return { db, history: new TerminalHistory(db, { maxMarkers, flushIntervalMs: 60_000 }) };
 }
+
+test("display identity includes pending grids without copying retained bytes", async () => {
+  const { db, history } = fixture(1);
+  const read = spyOn(history, "read");
+  try {
+    expect(history.displayState("pane-1")).toEqual({ cursor: 0, size: null, gridSequence: null });
+    history.recordGrid("pane-1", { cols: 20, rows: 5 }, "fresh");
+    history.append("pane-1", new TextEncoder().encode("old"));
+    history.recordGrid("pane-1", { cols: 30, rows: 6 }, "restored");
+    const expected = { cursor: 3, size: { cols: 30, rows: 6 }, gridSequence: 2 };
+    expect(history.displayState("pane-1")).toEqual(expected);
+    expect(read.mock.calls).toHaveLength(0);
+    await history.flush();
+    expect(new TerminalHistory(db).displayState("pane-1")).toEqual(expected);
+  } finally {
+    read.mockRestore();
+    await history.close();
+    db.close();
+  }
+});
 
 test("unchanged-grid starts persist in exact same-cursor sequence order", async () => {
   const { db, history } = fixture();

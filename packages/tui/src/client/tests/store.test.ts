@@ -326,6 +326,7 @@ for (const change of [
   "exited",
   "failed",
   "interrupted",
+  "starting",
   "epoch",
   "disconnect",
   "active tab",
@@ -387,6 +388,7 @@ for (const change of [
     const capturedState = store.getState();
     expect(typeof capturedState.canSendInput).toBe("function");
     expect(capturedState.canSendInput("pane-1", stamp)).toBe(true);
+    expect(capturedState.canReadMaterial("pane-1", stamp)).toBe(true);
     expect(capturedState.canSendInput("missing", stamp)).toBe(false);
     expect(capturedState.canSendInput("pane-1", { ...stamp, epoch: "old-epoch" })).toBe(false);
     const next = structuredClone(snapshot);
@@ -413,6 +415,9 @@ for (const change of [
     }
     expect(capturedState.canSendInput).toBe(store.getState().canSendInput);
     expect(capturedState.canSendInput("pane-1", stamp)).toBe(false);
+    expect(capturedState.canReadMaterial("pane-1", stamp)).toBe(
+      ["exited", "failed", "interrupted"].includes(change),
+    );
     store.stop();
   });
 }

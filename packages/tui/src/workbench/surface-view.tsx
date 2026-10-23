@@ -41,6 +41,7 @@ export type SurfaceViewProps = Pick<TerminalPaneProps, "stamp" | "inputEvent" | 
   }): void;
   inputEnabled?: boolean;
   canReceiveInput?(paneId?: string): boolean;
+  canBrowse?(paneId: string): boolean;
 };
 
 export function SurfaceView({
@@ -55,6 +56,7 @@ export function SurfaceView({
   onMouseInput,
   inputEnabled = true,
   canReceiveInput,
+  canBrowse,
   focusedPaneId,
   onFocusPane,
   onTerminalReady,
@@ -156,6 +158,7 @@ export function SurfaceView({
                     stream={stream}
                     inputEnabled={inputEnabled && usable}
                     canReceiveInput={canReceiveInput}
+                    canBrowse={canBrowse}
                     onFocus={() => onFocusPane(paneId)}
                     onTerminalReady={onTerminalReady}
                   />

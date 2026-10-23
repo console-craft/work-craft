@@ -39,6 +39,8 @@ export type WorkCraftState = {
   attach(sessionId: string | null): Promise<void>;
   /** Reads current authoritative state even from callbacks captured before a React commit. */
   canSendInput(paneId: string, stamp: InputStamp): boolean;
+  /** Current read scope only; stopped display never grants child input authority. */
+  canReadMaterial(paneId: string, stamp: InputStamp): boolean;
   canRespond(paneId: string, stamp: InputStamp): boolean;
   /** Live exited-action readiness; never grants terminal input eligibility. */
   canReactivate(paneId: string, stamp: InputStamp): boolean;
@@ -104,6 +106,7 @@ export function createWorkCraftStore(
     geometry: { sequence: 0, tabs: [], panes: [] },
     attach,
     canSendInput: (paneId, stamp) => canUsePane(paneId, stamp, "running", false),
+    canReadMaterial: (paneId, stamp) => canUsePane(paneId, stamp, "material", false),
     canRespond: (paneId, stamp) => canUsePane(paneId, stamp, "running", true),
     canReactivate: (paneId, stamp) => canUsePane(paneId, stamp, "exited", false),
     command: async (command) => {
@@ -281,7 +284,7 @@ export function createWorkCraftStore(
   function canUsePane(
     paneId: string,
     stamp: InputStamp,
-    status: "running" | "exited",
+    status: "running" | "exited" | "material",
     response: boolean,
   ): boolean {
     const snapshot = state.snapshot;
@@ -332,7 +335,7 @@ export function createWorkCraftStore(
       pane?.kind === "terminal" &&
       outputs.buffers().get(paneId)?.runtimeGeneration ===
         snapshot.terminalStates.find((entry) => entry.paneId === paneId)?.runtimeGeneration &&
-      pane.processStatus === status &&
+      (status === "material" ? pane.processStatus !== "starting" : pane.processStatus === status) &&
       containsPane(tab?.layout ?? null, paneId)
     );
   }

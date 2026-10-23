@@ -3,14 +3,20 @@ import { STREAM_BACKPRESSURE_LIMIT } from "../api/protocol.ts";
 import type { CompactMaterialFrame, SemanticTerminalInput } from "../api/terminal-material";
 import { restoreColdProjection } from "./cold-history";
 import { readProcessCwd, validateSplitCwd } from "./cwd.ts";
-import type { HistoryReplay } from "./history";
+import type { HistoryDisplayState, HistoryReplay } from "./history";
 import { observeOutput, outputProbeEnabled } from "./output-probe.ts";
 import { createTerminalProjection, type TerminalProjection } from "./projection";
 import { resolveShellSpawn, type RuntimePane } from "./restore.ts";
+import { StoppedDisplay } from "./stopped-display";
+
+export type RuntimeHistoryPreparation = () => Promise<HistoryReplay | undefined>;
+export type RuntimeMaterial = { sequence: number; frame: CompactMaterialFrame };
 
 export type RuntimeCallbacks = {
   onOutput(paneId: string, bytes: Uint8Array, runtimeGeneration: number): void;
   onStatus(paneId: string, status: PaneStatus, runtimeGeneration: number, error?: string): void;
+  historyState?(paneId: string): HistoryDisplayState;
+  readHistory?(paneId: string): HistoryReplay;
 };
 
 type LiveRuntime = {
@@ -108,6 +114,7 @@ export class RuntimeRegistry {
   private readonly runtimes = new Map<string, LiveRuntime>();
   private readonly generations = new Map<string, number>();
   private readonly starts = new Map<string, { cancelled: boolean; done: Promise<void> }>();
+  private readonly stoppedDisplay = new StoppedDisplay();
   private stopping = 0;
 
   constructor(private readonly callbacks: RuntimeCallbacks) {}
@@ -119,7 +126,7 @@ export class RuntimeRegistry {
   async start(
     pane: RuntimePane,
     size: TerminalSize = { cols: 80, rows: 24 },
-    coldHistory?: HistoryReplay,
+    coldHistory?: HistoryReplay | RuntimeHistoryPreparation,
   ): Promise<void> {
     if (this.stopping) {
       throw new Error("Runtime registry is stopping");
@@ -131,17 +138,38 @@ export class RuntimeRegistry {
     const completion = Promise.withResolvers<void>();
     const start = { cancelled: false, done: completion.promise };
     this.starts.set(pane.id, start);
-    const generation = this.generation(pane.id) + 1;
-    this.generations.set(pane.id, generation);
+    this.stoppedDisplay.invalidate(pane.id);
+    const previous = this.runtimes.get(pane.id);
+    let generation = this.generation(pane.id);
     let terminal: Bun.Terminal | undefined;
     let runtime: LiveRuntime | undefined;
     let projection: LiveRuntime["projection"] | undefined;
     try {
+      if (previous) {
+        // Process exit can precede its final PTY bytes and parser cleanup.
+        await previous.exited;
+      }
+      if (start.cancelled) {
+        return;
+      }
+      generation++;
+      this.generations.set(pane.id, generation);
       this.callbacks.onStatus(pane.id, "starting", generation);
       const spec = resolveShellSpawn(pane);
       projection = {
         parser: coldHistory
-          ? await restoreColdProjection(coldHistory, size)
+          ? await this.stoppedDisplay.prepare(async () => {
+              if (start.cancelled) {
+                return null;
+              }
+              const history = typeof coldHistory === "function" ? await coldHistory() : coldHistory;
+              if (start.cancelled) {
+                return null;
+              }
+              return history
+                ? restoreColdProjection(history, size)
+                : createTerminalProjection(size);
+            })
           : createTerminalProjection(size),
         sequence: 0,
       };
@@ -241,7 +269,14 @@ export class RuntimeRegistry {
         }
         await runtime.exited;
       }
-      this.runtimes.delete(pane.id);
+      if (previous) {
+        this.runtimes.set(pane.id, previous);
+      } else {
+        this.runtimes.delete(pane.id);
+      }
+      if (start.cancelled) {
+        return;
+      }
       const error = cause instanceof Error ? cause.message : String(cause);
       this.callbacks.onStatus(pane.id, "failed", generation, error);
       throw cause;
@@ -273,10 +308,7 @@ export class RuntimeRegistry {
     runtime.terminal.resize(cols, rows);
   }
 
-  material(
-    paneId: string,
-    scrollOffset: number,
-  ): { sequence: number; frame: CompactMaterialFrame } {
+  material(paneId: string, scrollOffset: number): RuntimeMaterial {
     const runtime = this.runtimes.get(paneId);
     if (!runtime) {
       throw new Error("Pane has no material");
@@ -290,6 +322,58 @@ export class RuntimeRegistry {
       throw new Error("Pane has no material");
     }
     return { sequence: picture.sequence, frame };
+  }
+
+  async readMaterial(
+    paneId: string,
+    scrollOffset: number,
+    isCurrent: () => boolean,
+  ): Promise<RuntimeMaterial> {
+    if (this.stopping || this.starts.has(paneId) || !isCurrent()) {
+      throw new Error("Obsolete or starting terminal material scope");
+    }
+    const picture = this.runtimes.get(paneId)?.projection;
+    if (picture?.parser) {
+      return this.material(paneId, scrollOffset);
+    }
+    if (scrollOffset === 0 && picture?.frame) {
+      const material = this.material(paneId, 0);
+      return {
+        ...material,
+        frame: { ...material.frame, cursor: { ...material.frame.cursor, visible: false } },
+      };
+    }
+    const state = this.callbacks.historyState?.(paneId);
+    if (!state || !this.callbacks.readHistory) {
+      throw new Error("Pane has no retained material");
+    }
+    const generation = this.generation(paneId);
+    const size = state.size ?? { cols: 80, rows: 24 };
+    const current = () => {
+      if (
+        this.stopping ||
+        this.starts.has(paneId) ||
+        this.generation(paneId) !== generation ||
+        !isCurrent()
+      ) {
+        return false;
+      }
+      const next = this.callbacks.historyState!(paneId);
+      return next.cursor === state.cursor && next.gridSequence === state.gridSequence;
+    };
+    const frame = await this.stoppedDisplay.read(
+      {
+        paneId,
+        runtimeGeneration: generation,
+        cursor: state.cursor,
+        gridSequence: state.gridSequence,
+        size,
+      },
+      scrollOffset,
+      () => restoreColdProjection(this.callbacks.readHistory!(paneId), size),
+      current,
+    );
+    return { sequence: picture?.sequence ?? 0, frame };
   }
 
   inputPending(paneId: string): boolean {
@@ -353,6 +437,7 @@ export class RuntimeRegistry {
       for (const start of starts) {
         start.cancelled = true;
       }
+      await this.stoppedDisplay.clear();
       await Promise.all(starts.map(({ done }) => done));
       const runtimes = [...this.runtimes.values()];
       const processTrees = new Map<LiveRuntime, ProcessInfo[]>();

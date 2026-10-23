@@ -21,6 +21,7 @@ export type TerminalSizing = {
   remove(connectionId: string): GeometryDecision;
   reconcile(catalog: SizingCatalog): GeometryDecision;
   current(): TerminalGeometry;
+  spawnSize(paneId: string): TerminalSize;
 };
 type Viewer = { report: ViewerReport | null; order: number; sequence: number };
 
@@ -42,7 +43,7 @@ function validateCanvas(size: TerminalSize): void {
   }
 }
 
-function projectedGrids(catalog: SizingCatalog, report: ViewerReport) {
+function projectedGrids(catalog: SizingCatalog, report: ViewerReport, startingPaneId?: string) {
   const tab = catalog.tabs.find(({ id }) => id === report.tabId);
   return projectPaneLayout(tab?.layout ?? null, {
     x: 0,
@@ -56,7 +57,7 @@ function projectedGrids(catalog: SizingCatalog, report: ViewerReport) {
           (pane) =>
             pane.id === paneId &&
             pane.surfaceId === tab?.surfaceId &&
-            pane.processStatus === "running",
+            (pane.processStatus === "running" || pane.id === startingPaneId),
         ) &&
         rect.width >= 20 &&
         rect.height - 1 >= 5,
@@ -153,6 +154,24 @@ export function createTerminalSizing(initial: SizingCatalog): TerminalSizing {
   }
 
   return {
+    spawnSize(paneId) {
+      const candidates = [...viewers.values()]
+        .filter(
+          ({ report, order }) =>
+            order > 0 &&
+            report?.eligible &&
+            report.canvas.cols >= 60 &&
+            report.canvas.rows >= 6 &&
+            projectedGrids(catalog, report, paneId).some((pane) => pane.paneId === paneId),
+        )
+        .sort((a, b) => b.order - a.order);
+      const report = candidates[0]?.report;
+      return (
+        (report &&
+          projectedGrids(catalog, report, paneId).find((pane) => pane.paneId === paneId)?.size) ||
+        geometry.panes.find((pane) => pane.paneId === paneId)?.size || { cols: 80, rows: 24 }
+      );
+    },
     report(connectionId, report) {
       if (report !== null) {
         validateCanvas(report.canvas);

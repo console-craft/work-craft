@@ -93,6 +93,15 @@ export class HistoryGeometry {
     return this.pane(paneId).end;
   }
 
+  current(paneId: string): { size: TerminalSize | null; gridSequence: number | null } {
+    const pane = this.pane(paneId);
+    const last = pane.markers.at(-1);
+    return {
+      size: last ? { cols: last.cols, rows: last.rows } : pane.baseline,
+      gridSequence: last?.sequence ?? pane.baselineSequence,
+    };
+  }
+
   retentionStart(paneId: string, byteStart: number): number {
     const pane = this.pane(paneId);
     if (!validCursor(byteStart)) {

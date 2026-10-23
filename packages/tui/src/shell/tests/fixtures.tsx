@@ -124,6 +124,23 @@ export function workCraftStateFixture(
       fixture.requestedSessionId = sessionId;
     },
     canRespond: () => false,
+    canReadMaterial: (paneId, stamp) => {
+      const current = fixture.snapshot;
+      const pane = current?.panes.find((pane) => pane.id === paneId);
+      const navigation = current?.navigation.find(
+        ({ sessionId }) => sessionId === fixture.attachment?.sessionId,
+      );
+      const tab = current?.tabs.find(
+        (tab) => tab.id === navigation?.tabId && tab.surfaceId === pane?.surfaceId,
+      );
+      return (
+        fixture.status === "connected" &&
+        current?.epoch === stamp.epoch &&
+        navigation?.generation === stamp.navigationGeneration &&
+        pane?.processStatus !== "starting" &&
+        paneIds(tab?.layout ?? null).includes(paneId)
+      );
+    },
     canSendInput: (paneId, stamp) => {
       const current = fixture.snapshot;
       const pane = current?.panes.find((pane) => pane.id === paneId);

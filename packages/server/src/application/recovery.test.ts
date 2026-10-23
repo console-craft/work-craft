@@ -334,49 +334,131 @@ test("cold recovery displays several screens across an explicit start and a seco
       decodeHistory(second.app.snapshot(), paneId).split("daemon restarted; shell restored"),
     ).toHaveLength(3);
     const starts = second.app.history.readForRecovery(paneId).starts;
-    expect(starts.map((start) => start.runtimeStart)).toEqual(["restored", "fresh", "restored"]);
-    expect(starts[1]!.cursor).toBe(starts[2]!.cursor);
+    expect(starts.map((start) => start.runtimeStart)).toEqual(["restored", "restored", "restored"]);
+    expect(starts[1]!.cursor).toBeLessThan(starts[2]!.cursor);
     await fixture.waitForStartCount(3);
   } finally {
     await fixture.close();
   }
 });
 
-test("a recovered real child gets fresh input encodings and only its own query reply", async () => {
+test("manual restart preserves multi-screen history and adds one durable boundary per admitted attempt", async () => {
   const fixture = await persistentAppFixture();
-  const writes = spyOn(Bun.Terminal.prototype, "write");
   try {
     const paneId = await fixture.openShellAndWrite(
-      "stty raw -echo; printf 'before-restart\\033[?1h\\033[?2004h\\033[?1000h\\033[?1004h\\033[5n'",
+      "printf 'before-restart\\n'; i=0; while [ \"$i\" -lt 80 ]; do printf 'MANUAL-%03d\\n' \"$i\"; i=$((i+1)); done",
     );
-    await waitForHistory(fixture.app, paneId, "\x1b[?2004h");
-    fixture.setPaneRestore(paneId, {
-      executable: "/bin/sh",
-      args: [
-        "-c",
-        "stty raw -echo; printf READY; dd bs=1 count=3 2>/dev/null | od -An -tx1; dd bs=1 count=1 2>/dev/null | od -An -tx1; printf '\\033[5n'; dd bs=1 count=4 2>/dev/null | od -An -tx1; read -r ignored",
-      ],
+    await waitForHistory(fixture.app, paneId, "MANUAL-079");
+    await fixture.app.runtime.stopAll();
+    const before = fixture.app.history.readForRecovery(paneId).cursor;
+    await Promise.all([
+      fixture.app.execute({ type: "process.restart", paneId }),
+      fixture.app.execute({ type: "process.restart", paneId }),
+    ]);
+    await fixture.waitForStartCount(1);
+    const raw = decodeHistory(fixture.app.snapshot(), paneId);
+    expect(raw.slice(before)).toStartWith("\r\n[work-craft: shell restarted manually]\r\n");
+    expect(raw.split("[work-craft: shell restarted manually]")).toHaveLength(2);
+    expect(fixture.app.history.readForRecovery(paneId).starts.at(-1)).toMatchObject({
+      cursor: before,
+      runtimeStart: "restored",
     });
-    await fixture.crash();
-    writes.mockClear();
-    const restarted = await fixture.restart();
-    await waitForHistory(restarted.app, paneId, "READY");
-    expect(materialText(restarted.app, paneId)).toContain("before-restart");
-    await restarted.app.runtime.writeSemantic(paneId, { kind: "key", key: { key: "arrow_up" } });
-    await waitForHistory(restarted.app, paneId, /1b\s+5b\s+41/);
-    await restarted.app.runtime.writeSemantic(paneId, { kind: "paste", bytes: [120] });
-    await waitForHistory(restarted.app, paneId, /1b\s+5b\s+30\s+6e/);
-    expect(decodeHistory(restarted.app.snapshot(), paneId)).toContain(" 78");
+    const pages = Array.from({ length: 5 }, (_, i) =>
+      materialText(fixture.app, paneId, i * 24),
+    ).join("\n");
+    for (const marker of ["MANUAL-000", "MANUAL-040", "MANUAL-079"]) {
+      expect(pages).toContain(marker);
+    }
+    await fixture.app.execute({ type: "process.restart", paneId });
+    expect(decodeHistory(fixture.app.snapshot(), paneId)).toBe(raw);
+    await fixture.app.runtime.stopAll();
+    await fixture.app.execute({ type: "process.restart", paneId });
+    await fixture.waitForStartCount(2);
     expect(
-      writes.mock.calls.map(([bytes]) =>
-        typeof bytes === "string" ? bytes : new TextDecoder().decode(bytes),
-      ),
-    ).toEqual(["\x1b[A", "x", "\x1b[0n"]);
+      decodeHistory(fixture.app.snapshot(), paneId).split("[work-craft: shell restarted manually]"),
+    ).toHaveLength(3);
   } finally {
-    writes.mockRestore();
     await fixture.close();
   }
 });
+
+test("manual flush failure preserves old bytes, reports failure and permits an explicit retry", async () => {
+  const fixture = await persistentAppFixture();
+  try {
+    const paneId = await fixture.openShellAndWrite("printf before-restart");
+    await fixture.app.runtime.stopAll();
+    const flush = spyOn(fixture.app.history, "flush");
+    flush.mockImplementationOnce(async () => {
+      throw new Error("forced manual flush");
+    });
+    await fixture.app.execute({ type: "process.restart", paneId });
+    flush.mockRestore();
+    expect(fixture.app.snapshot().panes.find((pane) => pane.id === paneId)).toMatchObject({
+      processStatus: "failed",
+      errorText: expect.stringContaining("forced manual flush"),
+    });
+    expect(decodeHistory(fixture.app.snapshot(), paneId)).toContain("before-restart");
+    expect(await fixture.startCount()).toBe(0);
+    await fixture.app.execute({ type: "process.restart", paneId });
+    await fixture.waitForStartCount(1);
+  } finally {
+    await fixture.close();
+  }
+});
+
+for (const manual of [false, true]) {
+  test(`a ${manual ? "manually restarted" : "recovered"} real child gets fresh input encodings and only its own query reply`, async () => {
+    const fixture = await persistentAppFixture();
+    const writes = spyOn(Bun.Terminal.prototype, "write");
+    try {
+      const paneId = await fixture.openShellAndWrite(
+        "stty raw -echo; printf 'before-restart\\033[?1h\\033[?2004h\\033[?1000h\\033[?1004h\\033[5n\\033['",
+      );
+      await waitForHistory(fixture.app, paneId, "\x1b[?2004h");
+      fixture.setPaneRestore(paneId, {
+        executable: "/bin/sh",
+        args: [
+          "-c",
+          "stty raw -echo; printf READY; dd bs=1 count=3 2>/dev/null | od -An -tx1; dd bs=1 count=1 2>/dev/null | od -An -tx1; printf '\\033[5n'; dd bs=1 count=4 2>/dev/null | od -An -tx1; read -r ignored",
+        ],
+      });
+      if (manual) {
+        await fixture.app.runtime.stopAll();
+      } else {
+        await fixture.crash();
+      }
+      writes.mockClear();
+      const restarted = manual ? { app: fixture.app } : await fixture.restart();
+      if (manual) {
+        await restarted.app.execute({ type: "process.restart", paneId });
+      }
+      await waitForHistory(restarted.app, paneId, "READY");
+      expect(materialText(restarted.app, paneId)).toContain("before-restart");
+      expect(
+        await restarted.app.runtime.writeSemantic(paneId, { kind: "focus", focused: true }),
+      ).toBe(false);
+      expect(
+        await restarted.app.runtime.writeSemantic(paneId, {
+          kind: "mouse",
+          mouse: { action: "press", button: "left", x: 0, y: 0 },
+        }),
+      ).toBe(false);
+      await restarted.app.runtime.writeSemantic(paneId, { kind: "key", key: { key: "arrow_up" } });
+      await waitForHistory(restarted.app, paneId, /1b\s+5b\s+41/);
+      await restarted.app.runtime.writeSemantic(paneId, { kind: "paste", bytes: [120] });
+      await waitForHistory(restarted.app, paneId, /1b\s+5b\s+30\s+6e/);
+      expect(decodeHistory(restarted.app.snapshot(), paneId)).toContain(" 78");
+      expect(
+        writes.mock.calls.map(([bytes]) =>
+          typeof bytes === "string" ? bytes : new TextDecoder().decode(bytes),
+        ),
+      ).toEqual(["\x1b[A", "x", "\x1b[0n"]);
+    } finally {
+      writes.mockRestore();
+      await fixture.close();
+    }
+  });
+}
 
 test("cold capture failure preserves bytes and continues other panes without retrying", async () => {
   const fixture = await persistentAppFixture();

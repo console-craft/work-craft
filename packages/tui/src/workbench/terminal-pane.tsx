@@ -47,6 +47,7 @@ export type TerminalPaneProps = {
   stream: StreamConnection | null;
   inputEnabled?: boolean;
   canReceiveInput?(paneId?: string): boolean;
+  canBrowse?(paneId: string): boolean;
   onFocus(): void;
   onTerminalReady(paneId: string, terminal: Renderable | null): void;
 };
@@ -72,6 +73,7 @@ export function TerminalPane({
   onTerminalReady,
   inputEnabled = true,
   canReceiveInput = () => true,
+  canBrowse = () => false,
 }: TerminalPaneProps) {
   const renderedIdentity = useRef(terminalPaneKey(pane.id, output.read()));
   // Runtime changes wait for their control commit; reset-only changes stay pane-local.
@@ -138,6 +140,16 @@ export function TerminalPane({
           stream={stream}
           context={stamp ? { ...stamp, runtimeGeneration } : null}
           focused={focused}
+          processStatus={pane.processStatus}
+          canBrowse={() =>
+            connected &&
+            inputEnabled &&
+            !reactivatingPaneIds.has(pane.id) &&
+            terminalPaneKey(pane.id, output.read()) === identity &&
+            !output.read()?.recovering &&
+            hasTerminalViewport(viewport) &&
+            canBrowse(pane.id)
+          }
           preservePresentation={preservePresentation}
           inputEnabled={inputEnabled}
           canInput={acceptsInput}

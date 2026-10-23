@@ -137,6 +137,17 @@ test("layout and process changes reevaluate eligibility without restarting or in
   expect(sizing.reconcile(data).changed).toBe(false);
 });
 
+test("spawn size elects a prospective viewer grid without resizing stopped history", () => {
+  const data = catalog();
+  data.panes[0]!.processStatus = "exited";
+  const sizing = createTerminalSizing(data);
+  sizing.report("A", report(100, 30));
+  sizing.attachmentActivity("A");
+  expect(sizing.spawnSize("pane")).toEqual({ cols: 100, rows: 29 });
+  expect(sizing.current().panes[0]!.size).toEqual({ cols: 80, rows: 24 });
+  expect(sizing.current().tabs[0]!.ownerConnectionId).toBeNull();
+});
+
 test("only eligible viewers of the same tab compete across sessions", () => {
   const data = catalog();
   data.tabs.push({
