@@ -37,7 +37,11 @@ export function semanticTerminalKey(event: KeyEvent): SemanticTerminalInput {
     ? String.fromCodePoint(...associated.split(":").map(Number))
     : printable
       ? event.sequence
-      : undefined;
+      : event.name === "space"
+        ? " "
+        : /^[^\p{Cc}]$/u.test(event.name)
+          ? event.name
+          : undefined;
   const physical = event.baseCode === undefined ? event.name : String.fromCodePoint(event.baseCode);
   const keypad = event.name.startsWith("kp")
     ? `numpad_${event.name.slice(2).replace("pageup", "page_up").replace("pagedown", "page_down")}`

@@ -304,37 +304,49 @@ export function createConnections(options: ConnectionOptions): ConnectionRegistr
       if (!eligible(snapshot, connection, navigation, message.paneId)) {
         throw new ProtocolError("Terminal is not eligible for input");
       }
-      if (
-        message.context.kind !== "focus" &&
-        message.context.activitySequence !== undefined &&
-        (message.type === "terminal.semantic" || message.transfer.operation === "begin")
-      ) {
-        options.onActivity(connection.attachment.connectionId, message.context.activitySequence);
-        for (const entry of connections.values()) {
-          clearObsoletePaste(entry);
-        }
-      }
-      const current = projectionScope(connection, message.paneId, message.context, true);
-      if (!eligible(current.snapshot, connection, current.navigation, message.paneId)) {
-        throw new ProtocolError("Terminal input scope changed during activity");
-      }
       if (!options.onSemantic) {
         throw new ProtocolError("Semantic input is unavailable");
       }
       if (options.inputPending?.(message.paneId)) {
         throw new ProtocolError("Terminal input in flight");
       }
+      if (message.type === "terminal.semantic" && connection.paste.bytes) {
+        throw new ProtocolError("Paste pending; input cannot overtake it");
+      }
+      const input =
+        message.type === "terminal.paste" ? receivePaste(connection, message) : message.input;
       let forwarded = false;
-      if (message.type === "terminal.paste") {
-        const complete = receivePaste(connection, message);
-        if (complete) {
-          forwarded = await options.onSemantic(message.paneId, complete);
+      if (input) {
+        // Elect only for complete input; a paste must not invalidate its own assembly stamps.
+        if (message.context.kind !== "focus" && message.context.activitySequence !== undefined) {
+          options.onActivity(connection.attachment.connectionId, message.context.activitySequence);
+          for (const entry of connections.values()) {
+            clearObsoletePaste(entry);
+          }
         }
-      } else {
-        if (connection.paste.bytes) {
-          throw new ProtocolError("Paste pending; input cannot overtake it");
+        const current = options.snapshot();
+        const selected = context(current, connection, message.context);
+        // Our synchronous sizing election may change geometry, never the other input authority.
+        if (
+          !selected ||
+          message.context.runtimeGeneration !== options.runtimeGeneration?.(message.paneId) ||
+          !validPane(current, selected, message.paneId) ||
+          !eligible(current, connection, selected, message.paneId)
+        ) {
+          throw new ProtocolError("Terminal input scope changed during activity");
         }
-        forwarded = await options.onSemantic(message.paneId, message.input);
+        const previousSize = snapshot.geometry.panes.find(
+          ({ paneId }) => paneId === message.paneId,
+        )?.size;
+        const currentSize = current.geometry.panes.find(
+          ({ paneId }) => paneId === message.paneId,
+        )?.size;
+        if (
+          message.context.kind !== "mouse" ||
+          (previousSize?.cols === currentSize?.cols && previousSize?.rows === currentSize?.rows)
+        ) {
+          forwarded = await options.onSemantic(message.paneId, input);
+        }
       }
       reply = { type: "terminal.input.result", requestId: message.requestId, forwarded };
     }

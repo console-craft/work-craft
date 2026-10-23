@@ -90,6 +90,7 @@ function fixture() {
   const materialReads: string[] = [];
   const semanticInputs: string[] = [];
   const semanticEvents: unknown[] = [];
+  const semanticOwners: (string | null)[] = [];
   let pendingInput = false;
   let materialGate: Promise<void> | undefined;
   let runtimeGeneration = 1;
@@ -142,6 +143,7 @@ function fixture() {
     async onSemantic(paneId, input) {
       semanticInputs.push(paneId);
       semanticEvents.push(input);
+      semanticOwners.push(sizing.current().tabs[0]?.ownerConnectionId ?? null);
       return true;
     },
     inputPending: () => pendingInput,
@@ -195,6 +197,7 @@ function fixture() {
     materialReads,
     semanticInputs,
     semanticEvents,
+    semanticOwners,
     holdInput() {
       pendingInput = true;
     },
@@ -482,6 +485,129 @@ test("sizing handoff applies before the first accepted key without dropping it",
   expect(setup.inputs).toEqual([{ paneId: "pane-1", data: "x", source: "input", owner: idA }]);
   expect(setup.sizing.current().panes[0]?.size).toEqual({ cols: 100, rows: 29 });
 });
+
+for (const cols of [70, 100]) {
+  test(`semantic handoff forwards the first key once from a ${cols}-column peer`, async () => {
+    const f = fixture();
+    const a = socketFixture();
+    const b = socketFixture();
+    const idA = f.registry.open(a.socket);
+    f.registry.open(b.socket);
+    await f.attach(a.socket);
+    await f.report(a.socket);
+    await f.attach(b.socket);
+    await f.report(b.socket, cols);
+    const context = {
+      ...f.stamp(a.socket),
+      runtimeGeneration: 1,
+      source: "input",
+      kind: "key",
+      activitySequence: 1,
+    };
+    const event = { kind: "key", key: { text: "x" } };
+    await f.registry.receive(a.socket, {
+      type: "terminal.semantic",
+      requestId: 2,
+      paneId: "pane-1",
+      context,
+      input: event,
+    });
+    expect(a.messages.at(-1)).toMatchObject({ type: "terminal.input.result", forwarded: true });
+    expect(f.semanticEvents).toEqual([event]);
+    expect(f.semanticOwners).toEqual([idA]);
+    expect(f.sizing.current().panes[0]?.size).toEqual({ cols: 100, rows: 29 });
+    await f.registry.receive(a.socket, {
+      type: "terminal.semantic",
+      requestId: 3,
+      paneId: "pane-1",
+      context,
+      input: event,
+    });
+    expect(a.messages.at(-1)).toMatchObject({ type: "terminal.error" });
+    expect(f.semanticEvents).toHaveLength(1);
+  });
+}
+
+test("chunked paste elects its viewer only when its complete payload can be forwarded", async () => {
+  const f = fixture();
+  const a = socketFixture();
+  const b = socketFixture();
+  const idA = f.registry.open(a.socket);
+  const idB = f.registry.open(b.socket);
+  await f.attach(a.socket);
+  await f.report(a.socket);
+  await f.attach(b.socket);
+  await f.report(b.socket, 70, 20);
+  const context = {
+    ...f.stamp(a.socket),
+    runtimeGeneration: 1,
+    source: "input",
+    kind: "paste",
+    activitySequence: 1,
+  };
+  let requestId = 1;
+  for (const transfer of [
+    { id: "handoff", operation: "begin", total: 3 },
+    { id: "handoff", operation: "chunk", offset: 0, data: "YQ==" },
+    { id: "handoff", operation: "chunk", offset: 1, data: "YmM=" },
+  ]) {
+    await f.registry.receive(a.socket, {
+      type: "terminal.paste",
+      requestId: ++requestId,
+      paneId: "pane-1",
+      context,
+      transfer,
+    });
+    expect(a.messages.at(-1)).toMatchObject({ type: "terminal.input.result", forwarded: false });
+    expect(f.sizing.current().tabs[0]?.ownerConnectionId).toBe(idB);
+    expect(f.semanticEvents).toEqual([]);
+  }
+  await f.registry.receive(a.socket, {
+    type: "terminal.paste",
+    requestId: ++requestId,
+    paneId: "pane-1",
+    context,
+    transfer: { id: "handoff", operation: "commit" },
+  });
+  expect(a.messages.at(-1)).toMatchObject({ type: "terminal.input.result", forwarded: true });
+  expect(f.semanticEvents).toEqual([Buffer.from("abc")]);
+  expect(f.semanticOwners).toEqual([idA]);
+  expect(f.sizing.current().panes[0]?.size).toEqual({ cols: 100, rows: 29 });
+});
+
+for (const cols of [70, 100]) {
+  test(`semantic mouse handoff from a ${cols}-column peer forwards only unchanged coordinates`, async () => {
+    const f = fixture();
+    const a = socketFixture();
+    const b = socketFixture();
+    const idA = f.registry.open(a.socket);
+    f.registry.open(b.socket);
+    await f.attach(a.socket);
+    await f.report(a.socket);
+    await f.attach(b.socket);
+    await f.report(b.socket, cols);
+    const event = { kind: "mouse", mouse: { action: "press", button: "left", x: 2, y: 1 } };
+    await f.registry.receive(a.socket, {
+      type: "terminal.semantic",
+      requestId: 2,
+      paneId: "pane-1",
+      context: {
+        ...f.stamp(a.socket),
+        runtimeGeneration: 1,
+        source: "input",
+        kind: "mouse",
+        activitySequence: 1,
+      },
+      input: event,
+    });
+    expect(a.messages.at(-1)).toMatchObject({
+      type: "terminal.input.result",
+      forwarded: cols === 100,
+    });
+    expect(f.semanticEvents).toEqual(cols === 100 ? [event] : []);
+    expect(f.sizing.current().tabs[0]?.ownerConnectionId).toBe(idA);
+  });
+}
 
 test("only the current owner can answer terminal queries, including an unselected sibling", async () => {
   const setup = fixture();
