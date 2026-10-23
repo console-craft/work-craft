@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 
 import { act, type Dispatch, type ReactNode, type SetStateAction, useState } from "react";
 
+import { flushMeasured } from "@/tests/support/measured-render";
 import { testRender } from "@/tests/support/render";
 import { Dialog, DialogContent } from "@/ui/components/dialog";
 import {
@@ -312,7 +313,20 @@ for (const rich of [false, true]) {
         </MenuFixture>,
       );
       try {
-        await act(async () => setup.flush());
+        // Wait for anchored layout, not coordinates from a transient portal frame.
+        await flushMeasured(setup);
+        const menu = setup.renderer.root.findDescendantById("menu")!;
+        const trigger = setup.renderer.root.findDescendantById("trigger")!;
+        for (
+          let frame = 0;
+          frame < 10 &&
+          (menu.screenX !== trigger.screenX || menu.screenY !== trigger.screenY + trigger.height);
+          frame++
+        ) {
+          await flushMeasured(setup);
+        }
+        expect(menu.screenX).toBe(trigger.screenX);
+        expect(menu.screenY).toBe(trigger.screenY + trigger.height);
         const row = setup.renderer.root.findDescendantById("item")!;
         const label = row.getChildren()[0]!;
         const y = row.screenY;
@@ -330,6 +344,7 @@ for (const rich of [false, true]) {
         expect(selected).toBe(0);
         expect(setup.renderer.root.findDescendantById("menu")).toBeDefined();
 
+        await flushMeasured(setup);
         await act(async () => setup.mockMouse.moveTo(startX, y));
         await act(async () => setup.mockMouse.pressDown(startX, y));
         await act(async () => setup.mockMouse.moveTo(endX, y));
