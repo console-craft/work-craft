@@ -8,7 +8,6 @@ import {
 } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 
-const characterize = test.skipIf(!process.env.WORK_CRAFT_OUTPUT_PROFILE_DIR);
 const encode = (text: string) => new TextEncoder().encode(text);
 
 for (const [name, prefix, suffix] of [
@@ -26,7 +25,7 @@ for (const [name, prefix, suffix] of [
     "ready\x1b[6n",
   ],
 ] as const) {
-  characterize(`native continuation preserves ${name} across byte boundaries`, async () => {
+  test(`native continuation preserves ${name} across byte boundaries`, async () => {
     const bytes = encode(prefix);
     const uninterrupted = await runContinuation([bytes], [encode(suffix)], []);
     const split = await runContinuation(
@@ -38,7 +37,7 @@ for (const [name, prefix, suffix] of [
   });
 }
 
-characterize("native parser survives two ordered resizes at the same byte boundary", async () => {
+test("native parser survives two ordered resizes at the same byte boundary", async () => {
   const prefix = encode("\x1b[2;");
   const suffix = [encode("3Hmarker\x1b[6n")];
   const sizes = [
@@ -58,22 +57,19 @@ characterize("native parser survives two ordered resizes at the same byte bounda
   expect(split).toEqual(whole);
 });
 
-characterize(
-  "reset-plus-tail is not a checkpoint when an old mode has rolled out of history",
-  async () => {
-    const tail = encode("\x1b[H".repeat(400000) + "same visible screen");
-    const full = await runContinuation([encode("\x1b[?2004h"), tail], [], []);
-    const resetTail = await runContinuation(
-      [encode("\x1bc"), tail.subarray(tail.byteLength - 1048576)],
-      [],
-      [],
-    );
-    expect(full.text).toBe(resetTail.text);
-    expect(full.encodedInputs[1]).not.toEqual(resetTail.encodedInputs[1]);
-  },
-);
+test("reset-plus-tail is not a checkpoint when an old mode has rolled out of history", async () => {
+  const tail = encode("\x1b[H".repeat(400000) + "same visible screen");
+  const full = await runContinuation([encode("\x1b[?2004h"), tail], [], []);
+  const resetTail = await runContinuation(
+    [encode("\x1bc"), tail.subarray(tail.byteLength - 1048576)],
+    [],
+    [],
+  );
+  expect(full.text).toBe(resetTail.text);
+  expect(full.encodedInputs[1]).not.toEqual(resetTail.encodedInputs[1]);
+});
 
-characterize("headless mouse encoding preserves enabled modes across split instructions", () => {
+test("headless mouse encoding preserves enabled modes across split instructions", () => {
   const lib = resolveRenderLib();
   const context = lib.createContext({ objectCapacity: 32, renderCellsMax: 2000 });
   const terminal = lib.createContextEmbeddedTerminal(context, {
@@ -96,61 +92,55 @@ characterize("headless mouse encoding preserves enabled modes across split instr
   }
 });
 
-characterize(
-  "headless public buffer leases resolve Unicode text without exporting parser handles",
-  () => {
-    const lib = resolveRenderLib();
-    const context = lib.createContext({ objectCapacity: 32, renderCellsMax: 2000 });
-    const terminal = lib.createContextEmbeddedTerminal(context, { cols: 20, rows: 6 });
-    const target = lib.createContextBuffer(context, { width: 20, height: 6 });
+test("headless public buffer leases resolve Unicode text without exporting parser handles", () => {
+  const lib = resolveRenderLib();
+  const context = lib.createContext({ objectCapacity: 32, renderCellsMax: 2000 });
+  const terminal = lib.createContextEmbeddedTerminal(context, { cols: 20, rows: 6 });
+  const target = lib.createContextBuffer(context, { width: 20, height: 6 });
+  try {
+    lib.contextEmbeddedTerminalWrite(context, terminal, encode("\x1b[31mλ🙂\x1b[0m"));
+    lib.contextEmbeddedTerminalCompose({ context, target, frame: null }, terminal, 0, 0);
+    const lease = lib.contextAcquireBufferLease(context, target);
     try {
-      lib.contextEmbeddedTerminalWrite(context, terminal, encode("\x1b[31mλ🙂\x1b[0m"));
-      lib.contextEmbeddedTerminalCompose({ context, target, frame: null }, terminal, 0, 0);
-      const lease = lib.contextAcquireBufferLease(context, target);
-      try {
-        const size = lib.contextBufferLeaseGetRealCharSize(context, lease.handle, true);
-        const bytes = new Uint8Array(size);
-        const lengths = new Uint8Array(20 * 6);
-        expect(
-          lib.contextBufferLeaseWriteResolvedChars(context, lease.handle, bytes, true, lengths),
-        ).toBe(size);
-        expect(new TextDecoder().decode(bytes)).toContain("λ🙂");
-      } finally {
-        lib.contextReleaseBufferLease(context, lease.handle);
-      }
-    } finally {
-      lib.destroyContextBuffer(context, target);
-      lib.destroyContextEmbeddedTerminal(context, terminal);
-      lib.destroyContext(context);
-    }
-  },
-);
-
-characterize(
-  "public native context can parse and answer a query without a terminal renderer",
-  () => {
-    const lib = resolveRenderLib();
-    const context = lib.createContext({ objectCapacity: 32, renderCellsMax: 2000 });
-    const terminal = lib.createContextEmbeddedTerminal(context, {
-      cols: 20,
-      rows: 6,
-      maxScrollback: 0,
-    });
-    const target = lib.createContextBuffer(context, { width: 20, height: 6 });
-    try {
-      lib.contextEmbeddedTerminalWrite(context, terminal, encode("\x1b[2;3H\x1b[6n"));
+      const size = lib.contextBufferLeaseGetRealCharSize(context, lease.handle, true);
+      const bytes = new Uint8Array(size);
+      const lengths = new Uint8Array(20 * 6);
       expect(
-        new TextDecoder().decode(lib.contextEmbeddedTerminalDrainResponses(context, terminal)),
-      ).toBe("\x1b[2;3R");
-      lib.contextEmbeddedTerminalCompose({ context, target, frame: null }, terminal, 0, 0);
-      expect(lib.contextEmbeddedTerminalCursor(context, terminal)).toMatchObject({ x: 2, y: 1 });
+        lib.contextBufferLeaseWriteResolvedChars(context, lease.handle, bytes, true, lengths),
+      ).toBe(size);
+      expect(new TextDecoder().decode(bytes)).toContain("λ🙂");
     } finally {
-      lib.destroyContextBuffer(context, target);
-      lib.destroyContextEmbeddedTerminal(context, terminal);
-      lib.destroyContext(context);
+      lib.contextReleaseBufferLease(context, lease.handle);
     }
-  },
-);
+  } finally {
+    lib.destroyContextBuffer(context, target);
+    lib.destroyContextEmbeddedTerminal(context, terminal);
+    lib.destroyContext(context);
+  }
+});
+
+test("public native context can parse and answer a query without a terminal renderer", () => {
+  const lib = resolveRenderLib();
+  const context = lib.createContext({ objectCapacity: 32, renderCellsMax: 2000 });
+  const terminal = lib.createContextEmbeddedTerminal(context, {
+    cols: 20,
+    rows: 6,
+    maxScrollback: 0,
+  });
+  const target = lib.createContextBuffer(context, { width: 20, height: 6 });
+  try {
+    lib.contextEmbeddedTerminalWrite(context, terminal, encode("\x1b[2;3H\x1b[6n"));
+    expect(
+      new TextDecoder().decode(lib.contextEmbeddedTerminalDrainResponses(context, terminal)),
+    ).toBe("\x1b[2;3R");
+    lib.contextEmbeddedTerminalCompose({ context, target, frame: null }, terminal, 0, 0);
+    expect(lib.contextEmbeddedTerminalCursor(context, terminal)).toMatchObject({ x: 2, y: 1 });
+  } finally {
+    lib.destroyContextBuffer(context, target);
+    lib.destroyContextEmbeddedTerminal(context, terminal);
+    lib.destroyContext(context);
+  }
+});
 
 async function runContinuation(
   prefix: Uint8Array[],

@@ -179,7 +179,24 @@ Run the full gate before completing changes:
 bun run check
 ```
 
-It runs lint, formatting checks, typechecking, all tests, a current-host standalone build, and compiled CLI/TUI/daemon smoke coverage. Individual commands are `bun run lint`, `bun run format:check`, `bun run typecheck`, and `bun run test`.
+It runs lint, formatting checks, typechecking, ordinary correctness tests, a current-host standalone build, and compiled CLI/TUI/daemon smoke coverage. Individual commands are `bun run lint`, `bun run format:check`, `bun run typecheck`, and `bun run test`. Native parser continuation checks run by default; manual benchmarks and known-failing fidelity reproducers are separate commands, not skipped tests.
+
+Output benchmarks require a fresh directory for their artifacts. The full run includes repeated PTY/native/application comparisons, fifty panes and a ten-minute soak; it is intentionally outside the normal check:
+
+```sh
+PROFILE_DIR="$(mktemp -d)"
+WORK_CRAFT_OUTPUT_PROFILE_DIR="$PROFILE_DIR" bun run benchmark:output
+```
+
+Use `-t 'output profile comparison'` or `-t 'fifty-pane capacity'` after the benchmark command to select a subset.
+
+Run the three OSC8 hyperlink/hidden-wide-cell reproducers explicitly:
+
+```sh
+bun run diagnose:hyperlinks
+```
+
+These diagnostics preserve their original assertions and currently fail against stock OpenTUI 0.6.6, exiting nonzero. They document unsupported fidelity, not a passing acceptance guarantee. Neither manual command requires an opt-in skip flag; `.benchmark.ts` and `.diagnostic.ts(x)` files run only when explicitly selected.
 
 Build without installing, or build and install to `~/.local/bin`:
 

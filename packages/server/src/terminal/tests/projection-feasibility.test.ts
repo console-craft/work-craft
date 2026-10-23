@@ -64,17 +64,3 @@ test("one viewer scrolls without changing another viewer or parser input modes",
     fixture.destroy();
   }
 });
-
-const hyperlinkTest = process.env.WORK_CRAFT_FORK_LINK_DIAGNOSTICS === "1" ? test : test.skip;
-hyperlinkTest("OSC8 hyperlink cells expose a resolved URL rather than a native link ID", () => {
-  const fixture = createProjectionFixture({ cols: 12, rows: 3 });
-  try {
-    fixture.write(encode("\x1b]8;;https://example.test/λ\x1b\\L\x1b]8;;\x1b\\"));
-    expect(fixture.frame(0).rows[0]![0]).toMatchObject({
-      text: "L",
-      link: "https://example.test/λ",
-    });
-  } finally {
-    fixture.destroy();
-  }
-});

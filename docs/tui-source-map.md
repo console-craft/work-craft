@@ -87,11 +87,12 @@ frontier. Scope replacement/unmount cancels retained work. An authorized focused
 leaf keeps physical focus during synchronization without forwarding early.
 
 `terminal-pane.tsx` retains pane/epoch/runtime/reset keys, live eligibility and
-stopped-pane actions. Recovery/output publication remains client-owned and bounded,
-but `terminal-consumer.ts`/`terminal-drain.ts` are no longer on the live material
-path. Structural updates use the root control subscription; ordinary material
-refreshes do not. Only the daemon sends emulator replies, including the retained
-unsupported-mode-2048 response workaround. Transient pictures grant no authority.
+stopped-pane actions. Recovery/output publication remains client-owned and bounded.
+`terminal-consumer.ts` remains in the output registry, outside the live material
+path; the unused renderer drain has been removed. Structural updates use the root
+control subscription; ordinary material refreshes do not. Only the daemon sends
+emulator replies, including the retained unsupported-mode-2048 response workaround.
+Transient pictures grant no authority.
 
 Cold durable history is retained but is not restored into a new live parser;
 exited panes retain one picture, not browsable exited scrollback. These are preview
@@ -155,9 +156,15 @@ captured semantic key/paste calls. Client-query tests now assert no client repli
 `server/src/terminal/tests/projection-runtime.test.ts` checks exact single daemon
 replies. Queue/viewport tests cover finite picture readiness and cancellation.
 The Buffer-paste snapshot regression moved from fork admission to material admission.
-Original hidden-wide/link diagnostics remain opt-in with
-`WORK_CRAFT_FORK_LINK_DIAGNOSTICS=1` in native-contract and projection-feasibility
-tests; stock failures are expected evidence, not an accepted fidelity repair.
+The ten native continuation characterizations run in the ordinary suite without
+profiling flags. Original hidden-wide/link reproducers live in capability-local
+`tests/*.diagnostic.ts(x)` files, outside automatic test discovery. Run all three
+with `bun run diagnose:hyperlinks`; they have no skip gates and currently exit
+nonzero against stock OpenTUI. The TUI projection checks share the test-only
+`workbench/tests/material-projection.ts` drawing fixture. Output benchmarks live
+in `tests/output-profile.benchmark.ts`; run `bun run benchmark:output` with a fresh
+`WORK_CRAFT_OUTPUT_PROFILE_DIR`. These manual commands preserve assertions and
+cleanup, not an accepted fidelity repair or a certified performance baseline.
 The original native-admission implementation is preserved in Git at `583a70e`.
 Explicit-position regional-indicator fidelity probes also remain red opt-in evidence.
 
