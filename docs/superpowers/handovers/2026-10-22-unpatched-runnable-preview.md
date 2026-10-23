@@ -11,6 +11,30 @@ not the current authorization. No installed command replacement, preview reset,
 additional benchmark campaign, rendering research or history implementation is
 part of this integration.
 
+### Cold-history follow-up accepted (2026-10-23)
+
+The user manually accepted ordinary in-pane cold-history restoration and its
+reconnect-console fix, then authorized committing/pushing this step to #41's
+branch. Cleanup is already complete at `ecfe5f2`; follow-up 2 below is now complete.
+
+- Retained output survives daemon restart as scrollback above the separator and
+  fresh shell. Historical terminal modes and query replies never become authority
+  for the new child. Schema 6 adds internal starts to the existing bounded resize
+  timeline without changing public history/material DTOs.
+- Keeping the TUI open during daemon restart is supported. A persistent WebSocket
+  error listener fixes Bun's unhandled-error console popup during reconnect;
+  subprocess and real-TUI graceful/abrupt restart regressions cover it.
+- Fresh local `bun run check` passed 1,858 tests, zero skips/failures, formatting,
+  types, build and compiled smoke. Registry-verified scratch preview build and
+  relocated cold-recovery smoke also passed. Independent feature review's two
+  Important capture findings were fixed with RED→GREEN coverage before acceptance.
+  Existing lint/React warnings and native `LayoutLimit` diagnostics remain; Linux
+  CI for this commit must still confirm after push.
+- The remaining shell-behavior/scrollback decision in follow-up 3 is deliberately
+  deferred to a separate future commit. This step does not change exited-pane
+  admission/retention or arbitrary process restoration. Keep #41 open and unmerged
+  into `main`; this is not combined-branch merge-readiness certification.
+
 ### Follow-up on #41 before considering the combined work ready for main
 
 1. **Start with obsolete fork/experiment cleanup.** Remove unused code and tests

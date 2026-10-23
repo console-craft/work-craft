@@ -455,6 +455,7 @@ export function createApp(options: {
       "\r\n[work-craft: daemon restarted; shell restored]\r\n",
     );
     for (const { id } of interrupted) {
+      history.recordGrid(id, { cols: 80, rows: 24 }, "restored");
       history.append(id, separator);
     }
     await history.flush();
@@ -462,8 +463,7 @@ export function createApp(options: {
     for (const { id } of interrupted) {
       const pane = panes.get(id)!;
       try {
-        history.recordGrid(pane.id, { cols: 80, rows: 24 });
-        await runtime.start(pane);
+        await runtime.start(pane, { cols: 80, rows: 24 }, history.readForRecovery(pane.id));
       } catch (cause) {
         const failed = options.db
           .query<{ status: PaneStatus }, [string]>(
@@ -564,7 +564,7 @@ export function createApp(options: {
           cols: 80,
           rows: 24,
         };
-        history.recordGrid(pane.id, size);
+        history.recordGrid(pane.id, size, "fresh");
         await runtime.start(pane, size);
       } catch {
         // RuntimeRegistry has already persisted and broadcast the failed status.

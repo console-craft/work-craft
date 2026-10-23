@@ -2,6 +2,10 @@ import type { Database } from "bun:sqlite";
 
 import { type GridMarker, ProtocolError, type TerminalSize } from "../api/protocol.ts";
 
+export type RuntimeStart = "fresh" | "restored";
+export type RuntimeStartMarker = GridMarker & { runtimeStart: RuntimeStart };
+type StoredMarker = GridMarker & { runtimeStart?: RuntimeStart };
+
 type SavedGrid = {
   startCursor: number;
   endCursor: number;
@@ -16,13 +20,17 @@ type PaneGeometry = {
   baseline: TerminalSize | null;
   baselineSequence: number | null;
   truncated: boolean;
-  markers: GridMarker[];
-  pending: GridMarker[];
+  markers: StoredMarker[];
+  pending: StoredMarker[];
   sequence: number;
 };
 
 function validCursor(value: number): boolean {
   return Number.isSafeInteger(value) && value >= 0;
+}
+
+function publicMarker({ cursor, sequence, cols, rows }: GridMarker): GridMarker {
+  return { cursor, sequence, cols, rows };
 }
 
 function validSize(size: TerminalSize): boolean {
@@ -46,16 +54,26 @@ export class HistoryGeometry {
     }
   }
 
-  record(paneId: string, cursor: number, size: TerminalSize): GridMarker | undefined {
+  record(
+    paneId: string,
+    cursor: number,
+    size: TerminalSize,
+    runtimeStart?: RuntimeStart,
+  ): GridMarker | undefined {
     const pane = this.pane(paneId);
     if (!validCursor(cursor) || cursor < pane.end || !validSize(size)) {
       throw new ProtocolError("Invalid terminal resize cursor or dimensions");
     }
     const last = pane.markers.at(-1) ?? pane.baseline;
-    if (last?.cols === size.cols && last?.rows === size.rows) {
+    if (!runtimeStart && last?.cols === size.cols && last?.rows === size.rows) {
       return undefined;
     }
-    const marker = { ...size, cursor, sequence: ++pane.sequence };
+    const marker: StoredMarker = {
+      ...size,
+      cursor,
+      sequence: ++pane.sequence,
+      ...(runtimeStart ? { runtimeStart } : {}),
+    };
     pane.markers.push(marker);
     pane.pending.push(marker);
     pane.end = cursor;
@@ -68,7 +86,7 @@ export class HistoryGeometry {
       pane.truncated = true;
       pane.pending = pane.pending.filter(({ sequence }) => sequence > baseline.sequence);
     }
-    return marker;
+    return publicMarker(marker);
   }
 
   endCursor(paneId: string): number {
@@ -114,9 +132,23 @@ export class HistoryGeometry {
     return {
       initialSize: preceding ? { cols: preceding.cols, rows: preceding.rows } : pane.baseline,
       initialGridSequence: preceding?.sequence ?? pane.baselineSequence,
-      resizes: pane.markers.filter(({ cursor }) => cursor >= start && cursor <= endCursor),
+      resizes: pane.markers
+        .filter(({ cursor }) => cursor >= start && cursor <= endCursor)
+        .map(publicMarker),
       truncated: pane.truncated,
     };
+  }
+
+  /** Internal boundaries share resize sequence order and retention, never the public DTO. */
+  starts(paneId: string, startCursor: number, endCursor: number): RuntimeStartMarker[] {
+    this.read(paneId, startCursor, endCursor);
+    const pane = this.pane(paneId);
+    const start = Math.max(startCursor, pane.start);
+    return pane.markers.flatMap((marker) =>
+      marker.runtimeStart && marker.cursor >= start && marker.cursor <= endCursor
+        ? [{ ...publicMarker(marker), runtimeStart: marker.runtimeStart }]
+        : [],
+    );
   }
 
   /** Call committed only after the enclosing byte+marker transaction succeeds. */
@@ -145,10 +177,17 @@ export class HistoryGeometry {
       [paneId, start, pane.baselineSequence ?? 0],
     );
     const insert = this.db.query(
-      "INSERT OR IGNORE INTO terminal_resizes (pane_id,sequence,cursor,cols,rows) VALUES (?,?,?,?,?)",
+      "INSERT OR IGNORE INTO terminal_resizes (pane_id,sequence,cursor,cols,rows,runtime_start) VALUES (?,?,?,?,?,?)",
     );
     for (const marker of pane.pending) {
-      insert.run(paneId, marker.sequence, marker.cursor, marker.cols, marker.rows);
+      insert.run(
+        paneId,
+        marker.sequence,
+        marker.cursor,
+        marker.cols,
+        marker.rows,
+        marker.runtimeStart ?? null,
+      );
     }
   }
 
@@ -177,8 +216,8 @@ export class HistoryGeometry {
       )
       .get(paneId);
     const markers = this.db
-      .query<GridMarker, [string]>(
-        "SELECT cursor,sequence,cols,rows FROM terminal_resizes WHERE pane_id = ? ORDER BY sequence",
+      .query<GridMarker & { runtimeStart: RuntimeStart | null }, [string]>(
+        "SELECT cursor,sequence,cols,rows,runtime_start AS runtimeStart FROM terminal_resizes WHERE pane_id = ? ORDER BY sequence",
       )
       .all(paneId);
     const baseline =
@@ -208,7 +247,8 @@ export class HistoryGeometry {
         marker.cursor > saved.endCursor ||
         !validCursor(marker.sequence) ||
         marker.sequence <= previousSequence ||
-        !validSize(marker)
+        !validSize(marker) ||
+        (marker.runtimeStart !== null && !["fresh", "restored"].includes(marker.runtimeStart))
       ) {
         throw new ProtocolError("Invalid persisted terminal resize markers");
       }
@@ -221,7 +261,10 @@ export class HistoryGeometry {
       baseline,
       baselineSequence: saved?.sequence ?? null,
       truncated: saved?.truncated === 1,
-      markers,
+      markers: markers.map((marker) => ({
+        ...publicMarker(marker),
+        ...(marker.runtimeStart === null ? {} : { runtimeStart: marker.runtimeStart }),
+      })),
       pending: [],
       sequence: markers.at(-1)?.sequence ?? saved?.sequence ?? 0,
     };

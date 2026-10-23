@@ -661,7 +661,8 @@ export function createClient(options: { socketPath?: string } = {}): WorkCraftCl
           sendSemantic,
         });
       }
-      socket.once("error", (error) => {
+      // Bun's ws error dispatch needs the listener to remain registered through close.
+      socket.on("error", (error) => {
         closeError = error;
         if (!opened) {
           reject(error);

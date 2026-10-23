@@ -1,8 +1,10 @@
 import type { Database } from "bun:sqlite";
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { resolveRenderLib } from "@opentui/core";
 
 import { decodeBytes, type Snapshot } from "../api/protocol.ts";
 import { openDatabase } from "../persistence/database.ts";
@@ -16,14 +18,21 @@ function decodeHistory(snapshot: Snapshot, paneId: string): string {
   return history === undefined ? "" : new TextDecoder().decode(decodeBytes(history.data));
 }
 
-async function waitForHistory(app: WorkCraftApp, paneId: string, text: string): Promise<void> {
+async function waitForHistory(
+  app: WorkCraftApp,
+  paneId: string,
+  text: string | RegExp,
+): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (decodeHistory(app.snapshot(), paneId).includes(text)) {
+    const output = decodeHistory(app.snapshot(), paneId);
+    if (typeof text === "string" ? output.includes(text) : text.test(output)) {
       return;
     }
     await Bun.sleep(10);
   }
-  throw new Error(`Timed out waiting for pane history: ${text}`);
+  throw new Error(
+    `Timed out waiting for pane history: ${text}\n${JSON.stringify(decodeHistory(app.snapshot(), paneId).slice(-4096))}`,
+  );
 }
 
 async function persistentAppFixture() {
@@ -33,7 +42,7 @@ async function persistentAppFixture() {
   const shellPath = join(directory, "shell");
   await writeFile(
     shellPath,
-    '#!/bin/sh\nprintf x >> "$1"\ntrap "exit 0" TERM\nwhile :; do sleep 0.1; done\n',
+    '#!/bin/sh\nexec 2>/dev/null\nprintf x >> "$1"\ntrap "exit 0" TERM\nwhile :; do sleep 0.1; done\n',
   );
   await chmod(shellPath, 0o755);
   let owner: AppOwner | undefined = {
@@ -99,7 +108,7 @@ async function persistentAppFixture() {
           executable: "/bin/sh",
           args: [
             "-c",
-            'read command; eval "$command"; trap "exit 0" TERM; while :; do sleep 0.1; done',
+            'read -r command; eval "$command"; trap "exit 0" TERM; while :; do sleep 0.1; done',
           ],
         }),
         paneId,
@@ -281,6 +290,127 @@ test("restores hierarchy, history, layout, and one shell after restart", async (
     await restarted.app.recover();
     expect(await fixture.startCount()).toBe(1);
   } finally {
+    await fixture.close();
+  }
+});
+
+function materialText(app: WorkCraftApp, paneId: string, scrollOffset = 0): string {
+  return app.runtime
+    .material(paneId, scrollOffset)
+    .frame.rows.map((row) =>
+      row.map(([count, value, width]) => (width ? value.repeat(count) : "")).join(""),
+    )
+    .join("\n");
+}
+
+test("cold recovery displays several screens across an explicit start and a second daemon restart", async () => {
+  const fixture = await persistentAppFixture();
+  try {
+    const paneId = await fixture.openShellAndWrite(
+      "printf 'before-restart\\n'; i=0; while [ \"$i\" -lt 80 ]; do printf 'COLD-%03d\\n' \"$i\"; i=$((i+1)); done",
+    );
+    await waitForHistory(fixture.app, paneId, "COLD-079");
+    await fixture.crash();
+    const first = await fixture.restart();
+    expect(materialText(first.app, paneId)).toContain("COLD-079");
+    expect(materialText(first.app, paneId)).toContain("daemon restarted; shell restored");
+    await fixture.waitForStartCount(1);
+    expect(first.app.recover()).toBe(first.app.recover());
+    await first.app.recover();
+    expect(await fixture.startCount()).toBe(1);
+    await first.app.runtime.stopAll();
+    await first.app.execute({ type: "process.restart", paneId });
+    await fixture.waitForStartCount(2);
+    await fixture.crash();
+    const second = await fixture.restart();
+    const pages = Array.from({ length: 8 }, (_, i) =>
+      materialText(second.app, paneId, i * 24),
+    ).join("\n");
+    for (const marker of ["COLD-000", "COLD-040", "COLD-079"]) {
+      expect(pages).toContain(marker);
+    }
+    expect(pages.split("daemon restarted; shell restored")).toHaveLength(3);
+    expect(
+      decodeHistory(second.app.snapshot(), paneId).split("daemon restarted; shell restored"),
+    ).toHaveLength(3);
+    const starts = second.app.history.readForRecovery(paneId).starts;
+    expect(starts.map((start) => start.runtimeStart)).toEqual(["restored", "fresh", "restored"]);
+    expect(starts[1]!.cursor).toBe(starts[2]!.cursor);
+    await fixture.waitForStartCount(3);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("a recovered real child gets fresh input encodings and only its own query reply", async () => {
+  const fixture = await persistentAppFixture();
+  const writes = spyOn(Bun.Terminal.prototype, "write");
+  try {
+    const paneId = await fixture.openShellAndWrite(
+      "stty raw -echo; printf 'before-restart\\033[?1h\\033[?2004h\\033[?1000h\\033[?1004h\\033[5n'",
+    );
+    await waitForHistory(fixture.app, paneId, "\x1b[?2004h");
+    fixture.setPaneRestore(paneId, {
+      executable: "/bin/sh",
+      args: [
+        "-c",
+        "stty raw -echo; printf READY; dd bs=1 count=3 2>/dev/null | od -An -tx1; dd bs=1 count=1 2>/dev/null | od -An -tx1; printf '\\033[5n'; dd bs=1 count=4 2>/dev/null | od -An -tx1; read -r ignored",
+      ],
+    });
+    await fixture.crash();
+    writes.mockClear();
+    const restarted = await fixture.restart();
+    await waitForHistory(restarted.app, paneId, "READY");
+    expect(materialText(restarted.app, paneId)).toContain("before-restart");
+    await restarted.app.runtime.writeSemantic(paneId, { kind: "key", key: { key: "arrow_up" } });
+    await waitForHistory(restarted.app, paneId, /1b\s+5b\s+41/);
+    await restarted.app.runtime.writeSemantic(paneId, { kind: "paste", bytes: [120] });
+    await waitForHistory(restarted.app, paneId, /1b\s+5b\s+30\s+6e/);
+    expect(decodeHistory(restarted.app.snapshot(), paneId)).toContain(" 78");
+    expect(
+      writes.mock.calls.map(([bytes]) =>
+        typeof bytes === "string" ? bytes : new TextDecoder().decode(bytes),
+      ),
+    ).toEqual(["\x1b[A", "x", "\x1b[0n"]);
+  } finally {
+    writes.mockRestore();
+    await fixture.close();
+  }
+});
+
+test("cold capture failure preserves bytes and continues other panes without retrying", async () => {
+  const fixture = await persistentAppFixture();
+  const lib = resolveRenderLib();
+  const lease = spyOn(lib, "contextAcquireBufferLease");
+  const create = spyOn(lib, "createContext");
+  const destroy = spyOn(lib, "destroyContext");
+  try {
+    const paneId = await fixture.openShellAndWrite("printf before-restart");
+    const other = fixture.addRunningPaneAfter(paneId);
+    await fixture.crash();
+    create.mockClear();
+    destroy.mockClear();
+    lease.mockImplementationOnce(() => {
+      throw new Error("forced cold native lease failure");
+    });
+    const restarted = await fixture.restart();
+    expect(restarted.app.snapshot().panes.find((pane) => pane.id === paneId)).toMatchObject({
+      processStatus: "failed",
+      errorText: expect.stringContaining("forced cold native lease failure"),
+    });
+    expect(decodeHistory(restarted.app.snapshot(), paneId)).toContain("before-restart");
+    expect(restarted.app.snapshot().panes.find((pane) => pane.id === other)?.processStatus).toBe(
+      "running",
+    );
+    await fixture.waitForStartCount(1);
+    await restarted.app.recover();
+    expect(await fixture.startCount()).toBe(1);
+    await restarted.app.runtime.stopAll();
+    expect(create.mock.calls.length).toBe(destroy.mock.calls.length);
+  } finally {
+    lease.mockRestore();
+    create.mockRestore();
+    destroy.mockRestore();
     await fixture.close();
   }
 });

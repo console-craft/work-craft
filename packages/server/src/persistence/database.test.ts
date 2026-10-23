@@ -45,7 +45,7 @@ function seedSnapshot(db: ReturnType<typeof openDatabase>): void {
 
 test("migrates an empty database and exposes six fixed categories", () => {
   const db = openDatabase(":memory:");
-  expect(db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(5);
+  expect(db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(6);
   expect(CATEGORIES.map((category) => category.kind)).toEqual([
     "inbox",
     "today",

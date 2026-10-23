@@ -94,10 +94,16 @@ control subscription; ordinary material refreshes do not. Only the daemon sends
 emulator replies, including the retained unsupported-mode-2048 response workaround.
 Transient pictures grant no authority.
 
-Cold durable history is retained but is not restored into a new live parser;
-exited panes retain one picture, not browsable exited scrollback. These are preview
-limitations, not restoration parity. Regional indicators retain the waived narrow
-glyph defect. Hyperlink destinations/invisible-wide fidelity remain research-only.
+Cold recovery is daemon-owned: `terminal/cold-history.ts` replays retained bytes
+across persisted runtime boundaries in disposable parsers; `projection-transcript.ts`
+captures inert styled display before a distinct fresh live parser and child start.
+Schema 6 adds internal starts to the bounded resize timeline without changing public
+history/material DTOs. Unsupported/over-budget capture fails only that pane and
+preserves durable bytes. The ordinary viewport supplies client-local wheel scrolling;
+reconnect neither reconstructs the parser nor duplicates restart separators.
+Exited panes still retain one picture, not browsable exited scrollback. Regional
+indicators retain the waived narrow glyph defect. Hyperlink destinations/invisible-wide
+fidelity remain research-only.
 Leaves do not directly resize daemon PTYs: the shell reports its available canvas/eligibility
 and physical activity, then the daemon elects the latest-active eligible viewer.
 Attachment is activity; idle resize and emulator replies are not. Owner resize
@@ -144,7 +150,8 @@ owners (`ui/tests/`, `ui/interaction/tests/`, `ui/theming/tests/`,
 live in `demos/component-demos/`, while showcase integration stays in
 `demos/tests/`. Do not make a wrapper directory for each source/test pair.
 Fixtures live with their narrowest consumer, such as `shell/tests/fixtures.tsx`.
-Package-wide acceptance is `tests/entrypoint.test.ts` and `tests/shared-session.test.ts`;
+Package-wide acceptance is `tests/entrypoint.test.ts`, `tests/shared-session.test.ts`
+and `tests/cold-history.test.ts`;
 genuinely shared rendering and snapshot support live in `tests/support/`. The latter
 acceptance launches two normal TUIs plus a deterministic terminal program and,
 when installed, one Neovim editor session; its process/program fixtures are test-only.

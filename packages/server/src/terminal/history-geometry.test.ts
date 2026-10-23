@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 
+import { migrateColdHistory } from "../persistence/cold-history-migration.ts";
 import { migrateStage2 } from "../persistence/stage-2-migration.ts";
 import { stage2Fixture } from "../persistence/stage-2.test-support.ts";
 import { HistoryGeometry } from "./history-geometry.ts";
@@ -27,6 +28,7 @@ test("marker-only truncation preserves the next byte cursor after reopen", async
 function fixture(maxMarkers = 1024) {
   const db = stage2Fixture();
   migrateStage2(db);
+  migrateColdHistory(db);
   return { db, geometry: new HistoryGeometry(db, maxMarkers) };
 }
 
@@ -200,7 +202,9 @@ for (const corrupt of ["partial baseline", "marker beyond tail"] as const) {
           "PRAGMA ignore_check_constraints=ON; UPDATE terminal_grids SET baseline_cols=NULL,baseline_rows=24,baseline_sequence=1 WHERE pane_id='pane-2'",
         );
       } else {
-        db.exec("INSERT INTO terminal_resizes VALUES ('pane-2',1,2,80,24)");
+        db.exec(
+          "INSERT INTO terminal_resizes (pane_id,sequence,cursor,cols,rows) VALUES ('pane-2',1,2,80,24)",
+        );
       }
       expect(() => new HistoryGeometry(db).read("pane-2", 0, 2)).toThrow(/persisted terminal/);
     } finally {

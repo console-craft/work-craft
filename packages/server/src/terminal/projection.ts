@@ -9,6 +9,11 @@ import type {
   SemanticTerminalInput,
 } from "../api/terminal-material";
 import { createCompactFrameBuilder } from "../api/terminal-material-codec";
+import {
+  captureDisplayTranscript,
+  PROJECTION_CELL_LIMIT,
+  PROJECTION_SCROLLBACK_LIMIT,
+} from "./projection-transcript";
 
 export type TerminalProjection = {
   write(bytes: Uint8Array): void;
@@ -17,13 +22,15 @@ export type TerminalProjection = {
   encode(input: SemanticTerminalInput): Uint8Array;
   encodePaste(bytes: Uint8Array): Uint8Array;
   replies(): Uint8Array;
+  /** Consumes this isolated parser; returned bytes contain generated display commands only. */
+  takeDisplayTranscript(placement: "after-content" | "preserve"): Promise<Uint8Array>;
   destroy(): void;
 };
 
 /** Owns checked public native resources; neither glyph IDs nor borrowed planes escape. */
 export function createTerminalProjection(initialSize: TerminalSize): TerminalProjection {
   const lib = resolveRenderLib();
-  const context = lib.createContext({ objectCapacity: 32, renderCellsMax: 2 * 1_048_576 });
+  const context = lib.createContext({ objectCapacity: 32, renderCellsMax: PROJECTION_CELL_LIMIT });
   let terminal: ReturnType<typeof lib.createContextEmbeddedTerminal> | undefined;
   let target: ReturnType<typeof lib.createContextBuffer> | undefined;
   let size = { ...initialSize };
@@ -48,7 +55,10 @@ export function createTerminalProjection(initialSize: TerminalSize): TerminalPro
     }
   }
   try {
-    terminal = lib.createContextEmbeddedTerminal(context, { ...size, maxScrollback: 10000 });
+    terminal = lib.createContextEmbeddedTerminal(context, {
+      ...size,
+      maxScrollback: PROJECTION_SCROLLBACK_LIMIT,
+    });
     lib.contextEmbeddedTerminalSetTransparentBackground(context, terminal, true);
     target = lib.createContextBuffer(context, { width: size.cols, height: size.rows });
   } catch (error) {
@@ -129,6 +139,13 @@ export function createTerminalProjection(initialSize: TerminalSize): TerminalPro
   return {
     destroy,
     frame,
+    async takeDisplayTranscript(placement) {
+      try {
+        return await captureDisplayTranscript(lib, context, terminal!, target!, size, placement);
+      } finally {
+        destroy();
+      }
+    },
     write(bytes) {
       for (let offset = 0; offset < bytes.length; offset += 8192) {
         lib.contextEmbeddedTerminalWrite(context, terminal!, bytes.subarray(offset, offset + 8192));

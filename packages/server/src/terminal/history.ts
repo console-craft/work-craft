@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 
 import type { GridMarker, TerminalSize } from "../api/protocol.ts";
-import { HistoryGeometry } from "./history-geometry.ts";
+import { HistoryGeometry, type RuntimeStart, type RuntimeStartMarker } from "./history-geometry.ts";
 
 export type HistoryOptions = {
   maxBytesPerPane?: number;
@@ -21,6 +21,8 @@ export type HistoryRead = {
   initialGridSequence: number | null;
   resizes: GridMarker[];
 };
+
+export type HistoryReplay = HistoryRead & { starts: RuntimeStartMarker[] };
 
 type Chunk = { cursorStart: number; cursorEnd: number; data: Uint8Array };
 type PaneHistory = {
@@ -62,9 +64,13 @@ export class TerminalHistory {
     this.geometry = new HistoryGeometry(db, options.maxMarkers);
   }
 
-  recordGrid(paneId: string, size: TerminalSize): GridMarker | undefined {
+  recordGrid(
+    paneId: string,
+    size: TerminalSize,
+    runtimeStart?: RuntimeStart,
+  ): GridMarker | undefined {
     const pane = this.pane(paneId);
-    const marker = this.geometry.record(paneId, pane.cursor, size);
+    const marker = this.geometry.record(paneId, pane.cursor, size, runtimeStart);
     if (marker) {
       pane.dirty = true;
       pane.timer ??= setTimeout(
@@ -73,6 +79,15 @@ export class TerminalHistory {
       );
     }
     return marker;
+  }
+
+  /** Daemon-only replay metadata; normal history responses retain their original shape. */
+  readForRecovery(paneId: string): HistoryReplay {
+    const retained = this.read(paneId);
+    return {
+      ...retained,
+      starts: this.geometry.starts(paneId, retained.startCursor, retained.cursor),
+    };
   }
 
   append(paneId: string, bytes: Uint8Array): number {

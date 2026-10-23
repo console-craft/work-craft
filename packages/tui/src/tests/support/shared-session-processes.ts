@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -33,6 +33,7 @@ export type SharedSessionFixture = {
   stopTui(tui: SharedTuiProcess): Promise<void>;
   resizeTui(tui: SharedTuiProcess, cols: number, rows: number): Promise<void>;
   restartDaemon(): Promise<void>;
+  crashDaemon(): Promise<void>;
   pauseDaemon(): () => void;
   cli(args: string[]): Promise<Record<string, unknown>>;
   flushDiagnostics(): Promise<void>;
@@ -213,6 +214,37 @@ export async function startSharedSessionFixture(
     async restartDaemon(): Promise<void> {
       await client.command({ type: "daemon.stop" });
       await daemon.exited;
+      daemon = spawnDaemon();
+      await ready();
+    },
+    async crashDaemon(): Promise<void> {
+      const pids = (await readFile(join(home, "shell-pids"), "utf8"))
+        .trim()
+        .split("\n")
+        .map(Number);
+      daemon.kill("SIGKILL");
+      await daemon.exited;
+      for (const pid of pids) {
+        try {
+          process.kill(-pid, "SIGKILL");
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ESRCH") {
+            throw error;
+          }
+        }
+      }
+      await sharedWait(
+        () =>
+          pids.every((pid) => {
+            try {
+              process.kill(pid, 0);
+              return false;
+            } catch {
+              return true;
+            }
+          }),
+        "owned pre-crash shells reaped",
+      );
       daemon = spawnDaemon();
       await ready();
     },

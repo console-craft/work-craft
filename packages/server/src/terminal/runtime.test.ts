@@ -7,6 +7,7 @@ import { join } from "node:path";
 import type { PaneStatus } from "../api/protocol.ts";
 import { openDatabase } from "../persistence/database.ts";
 import { TerminalHistory } from "./history.ts";
+import type { HistoryReplay } from "./history.ts";
 import { resolveShellSpawn, type RuntimePane } from "./restore.ts";
 import { type RuntimeCallbacks, RuntimeRegistry } from "./runtime.ts";
 
@@ -86,6 +87,52 @@ test("runs a shell through Bun.Terminal and emits its lifecycle", async () => {
   expect(new TextDecoder().decode(Buffer.concat(output))).toContain("work-craft-pty");
   expect(statuses).toEqual(["starting", "running", "exited"]);
   expect(registry.isLive("pane-1")).toBe(false);
+});
+
+function coldHistory(): HistoryReplay {
+  const data = new TextEncoder().encode("retained\r\n");
+  return {
+    paneId: "pane-1",
+    data,
+    cursor: data.length,
+    startCursor: 0,
+    prefixBytes: 0,
+    truncated: false,
+    initialSize: { cols: 80, rows: 24 },
+    initialGridSequence: null,
+    resizes: [],
+    starts: [],
+  };
+}
+
+test("a pending cold start owns its pane before native reconstruction yields", async () => {
+  const registry = runtime();
+  const starting = registry.start(shellPane("pane-1", process.cwd()), undefined, coldHistory());
+  try {
+    await expect(
+      registry.start(shellPane("pane-1", process.cwd(), "/bin/sh", ["-c", "exit 0"])),
+    ).rejects.toThrow(/already/);
+    expect(registry.generation("pane-1")).toBe(1);
+  } finally {
+    await starting;
+  }
+});
+
+test("shutdown waits for pending cold capture cleanup and prevents a late child spawn", async () => {
+  const statuses: PaneStatus[] = [];
+  const registry = runtime({ onStatus: (_id, status) => statuses.push(status) });
+  const starting = registry.start(shellPane("pane-1", process.cwd()), undefined, coldHistory());
+  const stopping = registry.stopAll({ preserveStatus: true });
+  await expect(
+    registry.start(shellPane("other", process.cwd(), "/bin/sh", ["-c", "exit 0"])),
+  ).rejects.toThrow(/stopping/);
+  await stopping;
+  await starting;
+  expect(registry.isLive("pane-1")).toBe(false);
+  expect(statuses).toEqual(["starting"]);
+  await registry.start(shellPane("pane-1", process.cwd(), "/bin/sh", ["-c", "exit 0"]));
+  await registry.waitForExit("pane-1");
+  expect(registry.generation("pane-1")).toBe(2);
 });
 
 test("runtime generation increments before callbacks and survives exit and failed startup", async () => {

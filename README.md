@@ -119,11 +119,11 @@ Closing a client does not stop the daemon or its terminals. For a clean shutdown
 work-craft daemon stop
 ```
 
-After a daemon or machine restart, Work Craft reloads SQLite state, retains bounded output, inserts a restart separator, and starts one fresh shell per eligible pane. It restores shells, not arbitrary Unix process memory.
+After a daemon or machine restart, Work Craft reloads SQLite state and restores retained output into ordinary pane scrollback above a restart separator and one fresh shell per eligible pane. Wheel scrolling stays local to each client. Old output contributes display only: terminal input modes and query replies belong exclusively to the fresh shell. Reconnecting a client does not restart that shell or add another separator. Work Craft restores shells, not arbitrary Unix process memory.
 
 ### Compatibility And Destructive Reset
 
-Schema 5 migrates schema 4 non-destructively in one transaction, preserving IDs, resources, layouts, policies and output. Each session receives its own cursor and accessible legacy tab memories. Earlier incompatible development schemas remain rejected without deletion; migration failure rolls back. Stop the old daemon and restart every client on the same version: mixed-version operation is unsupported. Prefer a fresh `WORK_CRAFT_HOME` for experiments; startup never silently resets data.
+Schema 6 migrates schemas 4 and 5 non-destructively in one transaction, preserving IDs, resources, layouts, policies and output. Schema 4 gains per-session cursors/tab memories; schema 5 gains internal runtime boundaries in the bounded resize timeline. Earlier incompatible development schemas remain rejected without deletion; migration failure rolls back. Stop the old daemon and restart every client on the same version: mixed-version operation is unsupported. Prefer a fresh `WORK_CRAFT_HOME` for experiments; startup never silently resets data.
 
 **`daemon destroy --force` stops all managed runtimes and deletes persisted Work Craft state for the selected home.** Only use it after deciding to discard those records:
 
@@ -137,7 +137,8 @@ Destroy stops/reaps managed terminals before removing the database/sidecars; it 
 ### Current Limitations
 
 - Specialized non-Coding category screens, `gh`/`az` views, Neovim/OpenCode restore metadata, remote access, agent automation and further Stage 3/4 pane operations are not implemented.
-- History is bounded to 1 MiB and 1,024 resize markers per pane by default. Exceeding either budget explicitly truncates earlier replay with a reset marker. Legacy bytes without geometry are preserved, but their unknown past dimensions cannot be reconstructed.
+- History is bounded to 1 MiB and 1,024 resize/runtime-start markers per pane by default. Exceeding either budget explicitly truncates earlier replay with a reset marker. Legacy bytes without geometry are preserved, but their unknown past dimensions cannot be reconstructed.
+- Cold display reconstruction keeps the native 10,000-line scrollback, 2,097,152-cell drawing budget and 8-MiB transcript ceiling. Unsupported or over-budget capture fails that pane explicitly while preserving durable bytes; it does not silently drop display or retry. Exited panes retain one picture, not browsable exited scrollback. Regional-indicator spacing and hyperlink/invisible-wide fidelity remain unsupported limitations.
 - The native viewport reports in-band resize mode 2048 as unsupported until its emulator can deliver those reports; applications such as Neovim use ordinary terminal resize signals instead.
 - Repository identity is path-based: replacing a repository at the same paths is not detected as a new incarnation. Moved worktrees can leave an unavailable old entry. Registration/discovery never retargets, merges, or restarts existing terminals.
 - Bare repositories are plain-directory targets. Linked worktrees with only a bare backing repository, and separate-git-dir layouts without a registered primary checkout, are rejected rather than guessed.

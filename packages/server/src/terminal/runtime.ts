@@ -1,7 +1,9 @@
 import type { PaneStatus, TerminalSize } from "../api/protocol.ts";
 import { STREAM_BACKPRESSURE_LIMIT } from "../api/protocol.ts";
 import type { CompactMaterialFrame, SemanticTerminalInput } from "../api/terminal-material";
+import { restoreColdProjection } from "./cold-history";
 import { readProcessCwd, validateSplitCwd } from "./cwd.ts";
+import type { HistoryReplay } from "./history";
 import { observeOutput, outputProbeEnabled } from "./output-probe.ts";
 import { createTerminalProjection, type TerminalProjection } from "./projection";
 import { resolveShellSpawn, type RuntimePane } from "./restore.ts";
@@ -105,6 +107,8 @@ function signalProcesses(expected: ProcessInfo[], signal: NodeJS.Signals): void 
 export class RuntimeRegistry {
   private readonly runtimes = new Map<string, LiveRuntime>();
   private readonly generations = new Map<string, number>();
+  private readonly starts = new Map<string, { cancelled: boolean; done: Promise<void> }>();
+  private stopping = 0;
 
   constructor(private readonly callbacks: RuntimeCallbacks) {}
 
@@ -112,20 +116,39 @@ export class RuntimeRegistry {
     return this.generations.get(paneId) ?? 0;
   }
 
-  async start(pane: RuntimePane, size: TerminalSize = { cols: 80, rows: 24 }): Promise<void> {
-    if (this.isLive(pane.id)) {
+  async start(
+    pane: RuntimePane,
+    size: TerminalSize = { cols: 80, rows: 24 },
+    coldHistory?: HistoryReplay,
+  ): Promise<void> {
+    if (this.stopping) {
+      throw new Error("Runtime registry is stopping");
+    }
+    if (this.isLive(pane.id) || this.starts.has(pane.id)) {
       throw new Error(`Pane already has a live runtime: ${pane.id}`);
     }
 
+    const completion = Promise.withResolvers<void>();
+    const start = { cancelled: false, done: completion.promise };
+    this.starts.set(pane.id, start);
     const generation = this.generation(pane.id) + 1;
     this.generations.set(pane.id, generation);
-    this.callbacks.onStatus(pane.id, "starting", generation);
     let terminal: Bun.Terminal | undefined;
     let runtime: LiveRuntime | undefined;
     let projection: LiveRuntime["projection"] | undefined;
     try {
+      this.callbacks.onStatus(pane.id, "starting", generation);
       const spec = resolveShellSpawn(pane);
-      projection = { parser: createTerminalProjection(size), sequence: 0 };
+      projection = {
+        parser: coldHistory
+          ? await restoreColdProjection(coldHistory, size)
+          : createTerminalProjection(size),
+        sequence: 0,
+      };
+      if (start.cancelled) {
+        projection.parser?.destroy();
+        return;
+      }
       const picture = projection;
       let resolveTerminalExit!: () => void;
       const terminalExit = new Promise<void>((resolve) => {
@@ -222,6 +245,9 @@ export class RuntimeRegistry {
       const error = cause instanceof Error ? cause.message : String(cause);
       this.callbacks.onStatus(pane.id, "failed", generation, error);
       throw cause;
+    } finally {
+      this.starts.delete(pane.id);
+      completion.resolve();
     }
   }
 
@@ -321,24 +347,34 @@ export class RuntimeRegistry {
   }
 
   async stopAll(options: { preserveStatus?: boolean } = {}): Promise<void> {
-    const runtimes = [...this.runtimes.values()];
-    const processTrees = new Map<LiveRuntime, ProcessInfo[]>();
-    for (const runtime of runtimes) {
-      if (runtime.process.exitCode === null) {
-        processTrees.set(runtime, processTree(runtime.process.pid));
-        if (options.preserveStatus) {
-          runtime.preserveStatus();
-        }
-        signalProcesses(processTrees.get(runtime)!, "SIGTERM");
+    this.stopping++;
+    try {
+      const starts = [...this.starts.values()];
+      for (const start of starts) {
+        start.cancelled = true;
       }
+      await Promise.all(starts.map(({ done }) => done));
+      const runtimes = [...this.runtimes.values()];
+      const processTrees = new Map<LiveRuntime, ProcessInfo[]>();
+      for (const runtime of runtimes) {
+        if (runtime.process.exitCode === null) {
+          processTrees.set(runtime, processTree(runtime.process.pid));
+          if (options.preserveStatus) {
+            runtime.preserveStatus();
+          }
+          signalProcesses(processTrees.get(runtime)!, "SIGTERM");
+        }
+      }
+      const survivors = await waitForProcesses([...processTrees.values()].flat());
+      signalProcesses(survivors, "SIGKILL");
+      await Promise.all(runtimes.map(({ exited }) => exited));
+      for (const runtime of runtimes) {
+        runtime.projection.parser?.destroy();
+      }
+      this.runtimes.clear();
+    } finally {
+      this.stopping--;
     }
-    const survivors = await waitForProcesses([...processTrees.values()].flat());
-    signalProcesses(survivors, "SIGKILL");
-    await Promise.all(runtimes.map(({ exited }) => exited));
-    for (const runtime of runtimes) {
-      runtime.projection.parser?.destroy();
-    }
-    this.runtimes.clear();
   }
 
   private liveRuntime(paneId: string): LiveRuntime {
