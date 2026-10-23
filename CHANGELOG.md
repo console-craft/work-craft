@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/console-craft/work-craft/compare/v1.0.0...v1.1.0) (2026-10-23)
+
+
+### Features
+
+* share session navigation and stabilize terminal streaming ([#41](https://github.com/console-craft/work-craft/issues/41)) ([715973b](https://github.com/console-craft/work-craft/commit/715973b7b6c54eda87dc7cd5ed707acd19f63b9d))
+
 ## [1.0.0](https://github.com/console-craft/work-craft/compare/v0.9.0...v1.0.0) (2026-10-19)
 
 
