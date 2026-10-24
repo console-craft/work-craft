@@ -11,8 +11,10 @@ export function testProcessEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEn
 }
 
 function processTable(environment = false): Map<number, ObservedProcess> {
+  // procps rejects eww with dashed -axo; BSD ps requires the dash.
+  const columns = process.platform === "linux" ? "axo" : "-axo";
   const result = Bun.spawnSync(
-    ["ps", ...(environment ? ["eww"] : []), "-axo", "pid=,ppid=,lstart=,command="],
+    ["ps", ...(environment ? ["eww"] : []), columns, "pid=,ppid=,lstart=,command="],
     { env: { ...process.env, LC_ALL: "C" }, timeout: 1000, maxBuffer: 16 * 1024 * 1024 },
   );
   if (result.exitCode !== 0) {
