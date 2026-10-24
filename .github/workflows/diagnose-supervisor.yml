@@ -33,7 +33,11 @@ jobs:
       - name: Exercise existing supervisor contracts
         run: bun test ./scripts/run-bounded.test.ts
 
-  lifecycle:
+  acceptance-comparison:
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [direct, supervised]
     runs-on: macos-14
     timeout-minutes: 5
     steps:
@@ -53,8 +57,19 @@ jobs:
           };
           console.error("test-process started", process.pid);
           EOF
-      - name: Direct lifecycle execution
-        run: /usr/bin/time -l bun test --preload ./.superpowers/trace-kill.ts ./packages/server/src/daemon/lifecycle.test.ts
-      - name: Supervised lifecycle execution
-        if: always()
-        run: /usr/bin/time -l bun scripts/run-bounded.ts 60000 bun test --preload ./.superpowers/trace-kill.ts ./packages/server/src/daemon/lifecycle.test.ts
+      - name: Prepare exact acceptance selection
+        run: |
+          cat > .superpowers/compare-acceptance.ts <<'EOF'
+          import { discoverTests, partitionTests } from "../scripts/test-gates.ts";
+          import { runBounded } from "../scripts/run-bounded.ts";
+          const paths = partitionTests(await discoverTests()).acceptance.map(path => `./${path}`);
+          const command = [process.execPath, "test", "--preload", "./.superpowers/trace-kill.ts", ...paths];
+          console.error("acceptance comparison", process.argv[2], JSON.stringify(paths));
+          const code = process.argv[2] === "supervised"
+            ? await runBounded(command, 300000)
+            : await Bun.spawn(command, { stdin: "inherit", stdout: "inherit", stderr: "inherit" }).exited;
+          console.error("acceptance comparison exit", code);
+          process.exitCode = code;
+          EOF
+      - name: Execute acceptance comparison
+        run: /usr/bin/time -l bun .superpowers/compare-acceptance.ts ${{ matrix.mode }}
