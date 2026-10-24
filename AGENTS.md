@@ -2,11 +2,11 @@
 
 - Use Bun for dependencies and scripts.
 - Keep changes focused and follow existing project conventions.
-- Read `docs/superpowers/specs/2026-09-16-work-craft-architecture-design.md` before planning features or changing architectural boundaries.
-- Read `docs/superpowers/specs/2026-09-21-tui-source-organization-design.md` before changing TUI ownership or source organization.
-- Use `docs/tui-source-map.md` as the current TUI ownership and file-location reference; its linked amendments supersede historical source trees and test locations.
-- Keep TUI tests in their capability owner's `tests/` directory; reserve `packages/tui/src/tests/` for package-wide acceptance and genuinely shared support. Follow the enforced import boundaries described in the source map.
-- Keep README focused on current usage and development. Preserve dated specifications as decision history rather than rewriting their old checkpoints to match current code.
+- Read `docs/architecture/overview.md` before planning features or changing architectural boundaries; it and its references describe the current implementation.
+- Read `docs/architecture/references/ownership.md` before changing source organization or TUI ownership, and `docs/architecture/references/terminal-lifecycle.md` before changing terminal behavior, input authority or recovery.
+- Keep TUI tests in their capability owner's `tests/` directory; reserve `packages/tui/src/tests/` for package-wide acceptance and genuinely shared support. Follow the enforced import boundaries in the ownership reference and the current verification workflow in `docs/architecture/references/development.md`.
+- Keep README user/feature-focused with installation, short onboarding and essential caveats. Put technical/current developer guidance in `docs/architecture/`, not dated specs; update the owning reference when behavior changes.
+- Save Superpowers design specs and open investigation briefs in `docs/specs/`, and local implementation plans in the ignored `docs/superpowers/plans/` directory; these repository locations override skill defaults. Specs track unfinished work, not current implementation authority. Preserve active requirements and unresolved issue evidence before retiring documents; completed history belongs in Git, not a separate handovers directory.
 - Optimize for a small codebase that one person can maintain.
 - Preserve the local-first, single-daemon architecture: the server owns durable state and runtimes; the TUI and CLI are disposable clients.
 - Use React with OpenTUI for the TUI. Do not introduce Solid.
