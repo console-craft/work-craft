@@ -157,12 +157,16 @@ the entire state directory or manually remove a live daemon's socket/lock.
   bare repositories and separate-git-dir layouts without a registered primary
   checkout are rejected rather than guessed.
 - Bun 1.4.3 can deadlock macOS PTY exit: its event-loop wait blocks the output
-  drain that lets the child finish exiting. The Bun 1.4.4 pin includes upstream's
-  off-thread reaping fix. Three failed-reactivation cases remain skipped on macOS
-  pending separate quarantine-removal verification.
-  The [investigation spec](../../specs/2026-10-23-native-pty-exit-hang.md)
-  contains evidence, a bounded reproduction requiring an external watchdog and
-  revisit criteria. Do not remove the quarantine based on a single passing run.
+  drain that lets the child finish exiting. macOS can report `ESRCH` before the
+  child is reapable because exit waits in `ttywait` for controlling-terminal
+  output. The Bun 1.4.4 pin includes upstream's off-thread reaping fix for both
+  initial-watch and rewatch paths; keep this correction when changing runtimes.
+  Three failed-reactivation cases remain skipped on macOS pending separate
+  [quarantine-removal verification](../../specs/2026-10-23-native-pty-exit-hang.md).
+- Cold-history's real multi-client acceptance has an intermittent full-frame
+  mismatch after restart; later green CI does not establish its repair. The
+  [open investigation](../../specs/2026-10-25-cold-history-frame-followup.md)
+  preserves the wrapping/geometry evidence and required client-isolation contract.
 - Physical-terminal visual/focus behavior, Linux live-cwd behavior and long-running
   listener stability are not certified by a macOS check. See
   [verification](development.md#checks-and-test-execution) for automated coverage

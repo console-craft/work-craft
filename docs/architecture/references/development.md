@@ -152,8 +152,10 @@ bun scripts/run-bounded.ts 300000 bun test ./packages/tui/src/tests/shared-sessi
 Real-process acceptance requires a working shell/PTY and Git where repositories
 are created. Neovim cases run only when `nvim` is installed. Platform/permission
 skips include macOS-specific cwd probes and inaccessible-directory behavior under
-root. Three failed-reactivation cases are quarantined on macOS for an unresolved
-native hang; their assertions still run on other platforms. See
+root. Three failed-reactivation cases remain quarantined on macOS pending targeted
+verification after the Bun PTY-exit fix; their assertions still run on other
+platforms. Cold-history frame equality has also failed intermittently despite
+green runs; preserve that assertion and its open investigation. See
 [known risks](terminal-lifecycle.md#known-limitations-and-unresolved-risks).
 
 The [Git hooks](../../../lefthook.yml) format/lint staged files at pre-commit;
@@ -265,7 +267,8 @@ Active work lives under `docs/specs/`:
 
 - [Remaining product roadmap and stabilization debt](../../specs/2026-09-18-tui-overhaul-design.md).
 - [Unmet performance acceptance](../../specs/2026-10-21-output-lifecycle-design.md).
-- [Unresolved native PTY-hang investigation](../../specs/2026-10-23-native-pty-exit-hang.md).
+- [macOS failed-reactivation quarantine follow-up](../../specs/2026-10-23-native-pty-exit-hang.md).
+- [Cold-history frame investigation and separate unexplained CI failures](../../specs/2026-10-25-cold-history-frame-followup.md).
 
 These describe unfinished work, not current implementation authority. Completed
 specs/reports live in Git history; retained evidence links use fixed revisions.
