@@ -139,6 +139,12 @@ test("four busy panes retain both client surfaces and active input during a four
       await Bun.sleep(30);
     }
     samples.push(residentKiB(daemonPid, [a.child.pid, b.child.pid]));
+    if (process.env.WORK_CRAFT_BURST_TRACE) {
+      console.error(
+        "burst completion wait starts",
+        JSON.stringify({ at: Date.now(), latencies, typed, duringBurst }),
+      );
+    }
     for (let index = 0; index < 4; index++) {
       await sharedWait(
         () => Bun.file(join(fixture.home, `done-${index}`)).exists(),
@@ -189,6 +195,22 @@ test("four busy panes retain both client surfaces and active input during a four
     }
     expect(Math.max(...latencies)).toBeLessThan(1000);
   } finally {
+    if (process.env.WORK_CRAFT_BURST_TRACE) {
+      for (let index = 0; index < 4; index++) {
+        console.error(
+          `producer ${index}`,
+          await readFile(join(fixture.home, `progress-${index}`), "utf8").catch(String),
+        );
+      }
+      console.error(
+        Bun.spawnSync(["ps", "-axo", "pid=,ppid=,stat=,etime=,command="])
+          .stdout.toString()
+          .split("\n")
+          .filter((line) => line.includes(fixture.home))
+          .join("\n"),
+      );
+      console.error("burst final frames", a.frame(), b.frame());
+    }
     control.close();
     await fixture.close();
   }

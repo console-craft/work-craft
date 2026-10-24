@@ -24,11 +24,33 @@ while (!(await Bun.file(join(home, "burst-start")).exists())) {
 }
 
 const row = "\x1b[2;1H" + ".".repeat(120);
+const trace = process.env.WORK_CRAFT_BURST_TRACE;
+const started = performance.now();
+const startedAt = Date.now();
+const timings: { tick: number; writeMs: number; sleepMs: number }[] = [];
 for (tick = 0; tick < 64; tick++) {
   const end = title();
   const rows = row.repeat(Math.floor((16_384 - end.length) / row.length));
+  const beforeWrite = performance.now();
   process.stdout.write(rows + " ".repeat(16_384 - end.length - rows.length) + end);
+  const afterWrite = performance.now();
   await Bun.sleep(60);
+  timings.push({
+    tick,
+    writeMs: afterWrite - beforeWrite,
+    sleepMs: performance.now() - afterWrite,
+  });
+  if (trace && tick % 8 === 7) {
+    writeFileSync(
+      join(home, `progress-${label}`),
+      JSON.stringify({
+        pid: process.pid,
+        startedAt,
+        elapsedMs: performance.now() - started,
+        timings,
+      }),
+    );
+  }
 }
 process.stdout.write(title());
 writeFileSync(join(home, `done-${label}`), String(process.pid));
