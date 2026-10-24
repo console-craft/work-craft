@@ -1,0 +1,65 @@
+name: Diagnose runtime hang
+
+on:
+  push:
+    branches: [diagnose/runtime-hang]
+
+permissions:
+  contents: read
+
+jobs:
+  trace:
+    runs-on: macos-14
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Capture a stalled acceptance runner
+        run: |
+          cat > "$RUNNER_TEMP/runtime-trace.ts" <<'EOF'
+          import { writeSync } from "node:fs";
+          const listed = Bun.spawnSync([process.execPath, "scripts/test-gates.ts", "acceptance", "--list"]);
+          if (!listed.success) throw new Error(listed.stderr.toString());
+          const files = listed.stdout.toString().trim().split("\n");
+          const phases = [
+            files,
+            ["./packages/server/src/terminal/runtime.test.ts", "--rerun-each=200", "-t",
+              "resolves a persisted|rejects a missing|rejects a working|runs a shell|a pending cold|manual preparation|replacement waits"],
+          ];
+          for (const [phase, args] of phases.entries()) {
+            const child = Bun.spawn([process.execPath, "test", ...args], {
+              stdin: "ignore", stdout: "pipe", stderr: "pipe",
+            });
+            console.error("Diagnostic phase", phase, "runner PID", child.pid);
+            let lastOutput = Date.now();
+            let sampledAt = 0;
+            async function forward(stream, fd) {
+              for await (const bytes of stream) {
+                lastOutput = Date.now();
+                writeSync(fd, bytes);
+              }
+            }
+            const streams = [forward(child.stdout, 1), forward(child.stderr, 2)];
+            const timer = setInterval(async () => {
+              if (Date.now() - lastOutput < 15000 || sampledAt >= lastOutput) return;
+              sampledAt = Date.now();
+              console.error("Stalled runner sample", child.pid);
+              const ps = Bun.spawnSync(["ps", "-axo", "pid,ppid,stat,wchan,command"]);
+              const rows = ps.stdout.toString().split("\n").filter(line => {
+                const fields = line.trim().split(/\s+/);
+                return fields[0] === String(child.pid) || fields[1] === String(child.pid);
+              });
+              console.error(rows.join("\n"));
+              const sample = Bun.spawn(["sample", String(child.pid), "3", "10", "-file", "/dev/stdout"], {
+                stdout: "inherit", stderr: "inherit",
+              });
+              await sample.exited;
+            }, 1000);
+            const code = await child.exited;
+            clearInterval(timer);
+            await Promise.all(streams);
+            if (code !== 0) process.exit(code);
+          }
+          EOF
+          bun scripts/run-bounded.ts 360000 bun "$RUNNER_TEMP/runtime-trace.ts"
