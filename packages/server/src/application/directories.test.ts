@@ -1,16 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
-import {
-  chmod,
-  mkdir,
-  mkdtemp,
-  readFile,
-  realpath,
-  rm,
-  stat,
-  symlink,
-  writeFile,
-} from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { ProtocolError } from "../api/protocol.ts";
@@ -267,42 +257,6 @@ test("parses NUL records without splitting path bytes or optional fields", () =>
   ]);
 });
 
-test("canonical registration validates fields without trimming valid path bytes", async () => {
-  const parent = await fixture();
-  const target = join(parent, " spaced ");
-  const link = join(parent, "link");
-  await mkdir(target);
-  await symlink(target, link);
-  expect(await canonicalDirectoryPath(link)).toBe(target);
-  expect(await canonicalDirectoryPath("~")).toBe(await realpath(homedir()));
-  await writeFile(join(parent, "file"), "data");
-  for (const path of [
-    "",
-    "   ",
-    "relative",
-    "~other",
-    "/a\0b",
-    join(parent, "missing"),
-    join(parent, "file"),
-  ]) {
-    try {
-      await canonicalDirectoryPath(path);
-      throw new Error("accepted invalid path");
-    } catch (error) {
-      expect(error).toBeInstanceOf(ProtocolError);
-      expect((error as ProtocolError).field).toBe("path");
-    }
-  }
-  expect(await inspectDirectory(link)).toMatchObject({ path: link, available: false, git: null });
-  const protectedPath = join(parent, "protected");
-  await mkdir(protectedPath, { mode: 0o000 });
-  try {
-    await expect(canonicalDirectoryPath(protectedPath)).rejects.not.toBeInstanceOf(ProtocolError);
-  } finally {
-    await chmod(protectedPath, 0o700);
-  }
-});
-
 test("canonical symlinks preserve backslash targets and remembered targets never retarget", async () => {
   const parent = await fixture();
   const target = join(parent, "target\\name");
@@ -374,38 +328,16 @@ test("reserved malformed fields and conflicting availability or bare records are
   ]);
 });
 
-async function waitForPublishedPid(path: string): Promise<number> {
-  const deadline = Date.now() + 2000;
-  while (Date.now() < deadline) {
-    // Existence precedes write completion; PID 0 would target our own process group.
-    const contents = (await Bun.file(path).exists()) ? await readFile(path, "utf8") : "";
-    const pid = Number(contents);
-    if (Number.isSafeInteger(pid) && pid > 0) {
-      return pid;
-    }
-    await Bun.sleep(1);
-  }
-  throw new Error(`Git shim did not publish its PID: ${path}`);
-}
-
-async function withGitShim(
-  mode: string,
-  run: (path: string, pidFile: string) => Promise<void>,
-): Promise<void> {
+async function withGitShim(mode: string, run: (path: string) => Promise<void>): Promise<void> {
   const path = await fixture();
   await mkdir(join(path, ".git"));
   const bin = join(path, "bin");
   await mkdir(bin);
-  const pidFile = join(path, "pid");
-  await writeFile(
-    join(bin, "git"),
-    `#!${process.execPath}\nimport {writeFileSync} from 'node:fs';\nwriteFileSync(${JSON.stringify(pidFile)}, String(process.pid));\n${mode}\n`,
-    { mode: 0o755 },
-  );
+  await writeFile(join(bin, "git"), `#!${process.execPath}\n${mode}\n`, { mode: 0o755 });
   const saved = process.env.PATH;
   process.env.PATH = bin;
   try {
-    await run(path, pidFile);
+    await run(path);
   } finally {
     process.env.PATH = saved;
   }
@@ -469,55 +401,6 @@ test("scan failure is not empty membership", async () => {
   });
 });
 
-test("bounded Git processes are drained killed and reaped on overflow timeout and abort", async () => {
-  for (const mode of [
-    "process.stdout.write('x'.repeat(1048577)); setInterval(()=>{},1000);",
-    "process.stderr.write('x'.repeat(1048577)); setInterval(()=>{},1000);",
-    "setInterval(()=>{},1000);",
-  ]) {
-    await withGitShim(mode, async (path, pidFile) => {
-      const start = Date.now();
-      const scan = await inspectDirectory(path);
-      expect(scan.discoveryError).toBeDefined();
-      expect(Date.now() - start).toBeLessThan(3000);
-      const pid = await waitForPublishedPid(pidFile);
-      expect(() => process.kill(pid, 0)).toThrow();
-    });
-  }
-  await withGitShim("setInterval(()=>{},1000);", async (path, pidFile) => {
-    const controller = new AbortController();
-    const scan = inspectDirectory(path, controller.signal);
-    const pid = await waitForPublishedPid(pidFile);
-    controller.abort();
-    expect((await scan).discoveryError).toBeDefined();
-    expect(pid).toBeGreaterThan(0);
-    expect(() => process.kill(pid, 0)).toThrow();
-  });
-}, 10000);
-
-test("Git commands share one total budget and ignore inherited repository redirection", async () => {
-  await withGitShim(
-    "await Bun.sleep(1200); process.stdout.write(process.argv.includes('rev-parse') ? '/common\\n' : 'worktree '+process.argv[4]+'\\0HEAD abc\\0detached\\0\\0');",
-    async (path) => {
-      const start = Date.now();
-      expect((await inspectDirectory(path)).discoveryError).toBeDefined();
-      expect(Date.now() - start).toBeLessThan(2800);
-    },
-  );
-  const repo = await repository();
-  const saved = process.env.GIT_DIR;
-  process.env.GIT_DIR = "/nonexistent";
-  try {
-    expect((await inspectDirectory(repo)).git?.branch).toBe("trunk");
-  } finally {
-    if (saved === undefined) {
-      delete process.env.GIT_DIR;
-    } else {
-      process.env.GIT_DIR = saved;
-    }
-  }
-});
-
 async function expectProcessExit(pid: number): Promise<void> {
   // Descendants are reaped by the OS, not the direct child's exited promise.
   const deadline = Date.now() + 1000;
@@ -535,17 +418,6 @@ async function expectProcessExit(pid: number): Promise<void> {
   throw new Error(`Process ${pid} did not exit within one second`);
 }
 
-test("process exit checks wait for asynchronous termination", async () => {
-  const child = Bun.spawn([process.execPath, "-e", "await Bun.stdin.text()"], { stdin: "pipe" });
-  try {
-    queueMicrotask(() => child.stdin.end());
-    await expectProcessExit(child.pid);
-  } finally {
-    child.kill("SIGKILL");
-    await child.exited;
-  }
-});
-
 test("process exit checks reject a process that remains alive", async () => {
   const child = Bun.spawn([process.execPath, "-e", "await Bun.stdin.text()"], { stdin: "pipe" });
   try {
@@ -555,43 +427,3 @@ test("process exit checks reject a process that remains alive", async () => {
     await child.exited;
   }
 });
-
-test("timeout and abort bound inherited pipes and terminate Git descendants", async () => {
-  for (const abort of [false, true]) {
-    await withGitShim(
-      `const child = Bun.spawn([process.execPath, '-e', 'await Bun.sleep(4500)'], {stdout:'inherit', stderr:'inherit'});
-       writeFileSync(process.argv[4]+'/descendant', String(child.pid));
-       setInterval(()=>{},1000);`,
-      async (path, pidFile) => {
-        const controller = new AbortController();
-        const scan = inspectDirectory(path, controller.signal);
-        const descendant = join(path, "descendant");
-        let descendantPid: number | undefined;
-        try {
-          descendantPid = await waitForPublishedPid(descendant);
-          const start = Date.now();
-          if (abort) {
-            controller.abort();
-          }
-          expect((await scan).discoveryError).toMatch(abort ? /abort/i : /timed out/i);
-          expect(Date.now() - start).toBeLessThan(abort ? 1000 : 2800);
-          const wrapperPid = await waitForPublishedPid(pidFile);
-          expect(() => process.kill(wrapperPid, 0)).toThrow();
-          await expectProcessExit(descendantPid!);
-        } finally {
-          controller.abort();
-          if (descendantPid !== undefined) {
-            try {
-              process.kill(descendantPid, "SIGKILL");
-            } catch (error) {
-              if ((error as NodeJS.ErrnoException).code !== "ESRCH") {
-                throw error;
-              }
-            }
-          }
-          await scan;
-        }
-      },
-    );
-  }
-}, 15000);

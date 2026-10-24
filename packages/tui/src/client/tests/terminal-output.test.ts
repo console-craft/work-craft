@@ -1,8 +1,8 @@
-import { expect, spyOn, test } from "bun:test";
+import { expect, test } from "bun:test";
 
 import { appendTerminalChunk, mergePaneHistory } from "@/client/terminal-buffer";
 import { createTerminalOutputs } from "@/client/terminal-output";
-import * as replay from "@/client/terminal-replay";
+import type * as replay from "@/client/terminal-replay";
 import { terminalBufferFixture } from "@/tests/support/fixtures";
 
 test("pane output listeners are isolated and removable while tiny chunks retain a stable channel", () => {
@@ -101,61 +101,6 @@ test("split VT bytes and equal-cursor resizes retain exact byte order and reply 
   expect(resizes).toEqual([0, 1, 2]);
 });
 
-test("native consumption caps writes and empty drains never rescan retained history", () => {
-  const initial = terminalBufferFixture({
-    history: new Uint8Array(20000).fill(120),
-    historyCursor: 20000,
-  });
-  const outputs = createTerminalOutputs(new Map([["A", initial]]));
-  const output = outputs.pane("A");
-  const planning = spyOn(replay, "terminalReplaySteps");
-  let progress: replay.ReplayProgress | null = null;
-  const writes: number[] = [];
-  try {
-    for (
-      let step = output.next(progress, 8192);
-      step !== null;
-      step = output.next(progress, 8192)
-    ) {
-      if (step === "recover") {
-        throw new Error("unexpected recovery");
-      }
-      if (step.type === "resize") {
-        progress = { cursor: step.marker.cursor, gridSequence: step.marker.sequence };
-      } else {
-        writes.push(step.data.byteLength);
-        progress = { cursor: step.cursor, gridSequence: 0 };
-      }
-      output.consumed(progress);
-    }
-    expect(writes).toEqual([8192, 8192, 3616]);
-    const plans = planning.mock.calls.length;
-    for (let index = 0; index < 200; index++) {
-      expect(output.next(progress, 8192)).toBeNull();
-    }
-    expect(planning.mock.calls.length).toBe(plans);
-    outputs.set("A", appendTerminalChunk(initial, 20001, new Uint8Array([121]), 0));
-    expect(output.next(progress, 8192)).toMatchObject({ type: "bytes", cursor: 20001 });
-    expect(
-      planning.mock.calls.slice(plans).every(([buffer]) => buffer.history.byteLength === 0),
-    ).toBe(true);
-  } finally {
-    planning.mockRestore();
-  }
-});
-
-test("coalescing tiny retained chunks never crosses a resize, origin or response authority boundary", () => {
-  let buffer = terminalBufferFixture();
-  for (let cursor = 1; cursor <= 9000; cursor++) {
-    buffer = appendTerminalChunk(buffer, cursor, new Uint8Array([120]), 0);
-  }
-  expect(buffer.chunks.map((chunk) => chunk.data.byteLength)).toEqual([8192, 808]);
-  buffer = { ...buffer, resizes: [{ cursor: 9000, sequence: 1, cols: 100, rows: 30 }] };
-  buffer = appendTerminalChunk(buffer, 9001, new Uint8Array([121]), 0);
-  buffer = appendTerminalChunk(buffer, 9002, new Uint8Array([122]), 0, "history");
-  expect(buffer.chunks.map((chunk) => chunk.data.byteLength)).toEqual([8192, 808, 1, 1]);
-});
-
 test("unread tiny chunks coalesce separately from retained history", () => {
   let buffer = terminalBufferFixture();
   const outputs = createTerminalOutputs(new Map([["A", buffer]]));
@@ -246,25 +191,6 @@ test("a split display-only prefix never advances the raw cursor without an initi
     type: "bytes",
     cursor: 102,
   });
-});
-
-test("unsubscribing the last native leaf releases unread work until a new consumer enters", () => {
-  const initial = terminalBufferFixture();
-  const outputs = createTerminalOutputs(new Map([["A", initial]]));
-  const output = outputs.pane("A");
-  const unsubscribe = output.subscribe(() => {});
-  output.next(null, 8192);
-  output.consumed({ cursor: 0, gridSequence: 0 });
-  unsubscribe();
-  const planning = spyOn(replay, "terminalReplaySteps");
-  try {
-    outputs.set("A", appendTerminalChunk(initial, 1, new Uint8Array([120]), 0));
-    expect(planning).not.toHaveBeenCalled();
-    expect(output.next(null, 8192)).toMatchObject({ type: "resize" });
-    expect(planning).toHaveBeenCalledTimes(1);
-  } finally {
-    planning.mockRestore();
-  }
 });
 
 test("history replacement resets only a native consumer whose acknowledged frontier was lost", () => {

@@ -121,7 +121,7 @@ commits are recoverable checkpoints, not release certification.
 | `test`, `test:core` | Rules, real SQLite, lightweight transport and native component/parser contracts                   | 120 seconds                        |
 | `test:acceptance`   | Real application/PTY, CLI/daemon, recovery and multi-TUI journeys                                 | 300 seconds                        |
 | `test:all`          | Core followed by acceptance: all product suites                                                   | Per-suite deadlines above          |
-| `test:tooling`      | Benchmark-harness processes, preview seeding/build, no-fork probes and research characterizations | 300 seconds                        |
+| `test:tooling`      | Benchmark-harness processes, preview build support, no-fork probes and research characterizations | 300 seconds                        |
 | `check:all`         | Static checks, all product suites, build and relocated compiled smoke                             | Suite deadlines; smoke 120 seconds |
 
 Gate membership lives in [`scripts/test-gates.ts`](../../../scripts/test-gates.ts),
@@ -145,24 +145,23 @@ bun test packages/tui/src/client/tests
 bun test packages/tui/src/ui/components/tests
 bun test packages/tui/src/ui/interaction/tests packages/tui/src/ui/theming/tests
 bun test packages/tui/src/demos/tests
-bun scripts/run-bounded.ts 300000 bun test ./packages/tui/src/tests/entrypoint.test.ts
 bun scripts/run-bounded.ts 300000 bun test ./packages/tui/src/tests/shared-session.test.ts
 ```
 
 Real-process acceptance requires a working shell/PTY and Git where repositories
-are created. Neovim cases run only when `nvim` is installed. Platform/permission
+are created. Neovim journeys were removed by the reliability cutoff. Platform/permission
 skips include macOS-specific cwd probes and inaccessible-directory behavior under
 root. Three failed-reactivation cases remain quarantined on macOS pending targeted
 verification after the Bun PTY-exit fix; their assertions still run on other
-platforms. Cold-history frame equality has also failed intermittently despite
-green runs; preserve that assertion and its open investigation. See
+platforms. The static reliability audit's below-eight tests were explicitly
+removed, including multi-client cold-history equality, raw reload/input, stopped
+history, burst/query journeys and the output benchmark. Their removal reduces
+coverage; it does not establish that the observed failures were test-only or that
+the underlying behavior is repaired. Preserve the open investigation evidence. See
 [known risks](terminal-lifecycle.md#known-limitations-and-unresolved-risks).
 
-Shared TUI waits default to four seconds. The four-pane burst alone allows eight
-seconds per producer for completion of its paced 4-MiB output; its strict
-`<1000 ms` input-to-visible target, final-frame assertions and 16-KiB/60-ms/64-redraw
-workload remain unchanged. This completion tolerance is not a root-cause repair
-or permission to relax other readiness/performance deadlines.
+Shared TUI waits default to four seconds. The retained gates do not certify the
+removed burst test's input-latency, throughput or passive-frame contracts.
 
 The [Git hooks](../../../lefthook.yml) format/lint staged files at pre-commit;
 commitlint remains enabled. Pre-push runs everyday `check`, unsetting Git-local
@@ -219,19 +218,10 @@ set -o pipefail
 bun run check 2>&1 | tee check.log
 ```
 
-## Manual benchmarks and known-failing diagnostics
+## Known-failing diagnostics
 
-Output benchmarks require a fresh artifact directory and are outside product and
-tooling correctness gates. The full run compares PTY/native/application paths,
-fifty panes and a ten-minute soak, with a 1,800-second external deadline:
-
-```sh
-PROFILE_DIR="$(mktemp -d)"
-WORK_CRAFT_OUTPUT_PROFILE_DIR="$PROFILE_DIR" bun run benchmark:output
-```
-
-Append `-t 'output profile comparison'` or `-t 'fifty-pane capacity'` for a subset.
-The benchmark lives in `packages/tui/src/tests/output-profile.benchmark.ts`.
+The output benchmark entrypoint was removed by the reliability audit. Capacity,
+soak and performance-comparison requirements remain unverified.
 
 ```sh
 bun run diagnose:hyperlinks
@@ -241,9 +231,8 @@ This explicitly selects three OSC8/hidden-wide fidelity reproducers with their
 original assertions. They currently fail against stock OpenTUI 0.6.6 and exit
 nonzero; they are evidence of unsupported fidelity, not a passing acceptance gate.
 The command has a 60-second external deadline.
-`.benchmark.ts` and `.diagnostic.ts(x)` files require explicit selection rather
-than an opt-in skip flag. Neither command certifies performance parity or visual
-fidelity.
+`.diagnostic.ts(x)` files require explicit selection rather than an opt-in skip
+flag. This command does not certify performance parity or visual fidelity.
 
 ## Builds and preview tooling
 

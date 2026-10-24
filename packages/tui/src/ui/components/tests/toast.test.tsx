@@ -1,13 +1,6 @@
 import { expect, spyOn, test } from "bun:test";
 
-import {
-  type BoxRenderable,
-  CliRenderEvents,
-  Renderable,
-  RGBA,
-  type ScrollBoxRenderable,
-  type TextRenderable,
-} from "@opentui/core";
+import { type BoxRenderable, CliRenderEvents, RGBA, type TextRenderable } from "@opentui/core";
 import { setRendererCapabilities } from "@opentui/core/testing";
 import { act, type Dispatch, type SetStateAction, useState } from "react";
 
@@ -22,7 +15,6 @@ import {
   notify,
 } from "@/ui/notifications";
 import { Box } from "@/ui/primitives/box";
-import { Text } from "@/ui/primitives/text";
 import { ThemeProvider } from "@/ui/theming/theme-provider";
 import { defaultTheme } from "@/ui/theming/themes/default";
 
@@ -261,76 +253,6 @@ for (const [kind, childFirst] of [
   });
 }
 
-test("whole-toast hover never resumes while crossing descendant hit targets", async () => {
-  const notify = createNotificationStore();
-  const id = notify("Hover", {
-    delivery: "toast",
-    duration: 0,
-    action: { label: "View", onPress() {} },
-  });
-  const setup = await renderToaster(notify);
-  const hover = spyOn(getNotificationStoreController(notify), "setHovered");
-  try {
-    const root = setup.renderer.root;
-    const title = root.findDescendantById(`toast-${id}-title`)!;
-    await act(async () => setup.mockMouse.moveTo(title.screenX, title.screenY));
-    expect(hover).toHaveBeenCalledWith(id, true);
-    hover.mockClear();
-    for (const suffix of ["action", "close", "icon", "title"]) {
-      const node = root.findDescendantById(`toast-${id}-${suffix}`)!;
-      await act(async () => setup.mockMouse.moveTo(node.screenX, node.screenY));
-      if (suffix === "action" || suffix === "close") {
-        const label = node.getChildren()[0]!;
-        await act(async () => setup.mockMouse.moveTo(label.screenX, label.screenY));
-      }
-    }
-    expect(hover.mock.calls.some(([, hovered]) => hovered === false)).toBe(false);
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("first");
-    await act(async () => setup.mockMouse.moveTo(0, 0));
-    expect(hover).toHaveBeenCalledWith(id, false);
-    const action = root.findDescendantById(`toast-${id}-action`)!;
-    const label = action.getChildren()[0]!;
-    await act(async () => setup.mockMouse.moveTo(action.screenX, action.screenY));
-    await act(async () => setup.mockMouse.pressDown(action.screenX, action.screenY));
-    await act(async () => setup.mockMouse.moveTo(label.screenX, label.screenY));
-    hover.mockClear();
-    await act(async () => setup.mockMouse.moveTo(0, 0));
-    expect(hover).toHaveBeenCalledWith(id, false);
-    hover.mockClear();
-    await act(async () => setup.mockMouse.moveTo(label.screenX, label.screenY));
-    expect(hover).toHaveBeenCalledWith(id, true);
-    await act(async () => setup.mockMouse.release(label.screenX, label.screenY));
-  } finally {
-    hover.mockRestore();
-    act(() => setup.renderer.destroy());
-  }
-});
-
-test("hover pauses real expiry and leaving expires without disturbing focus or history", async () => {
-  const notify = createNotificationStore();
-  const setup = await renderToaster(notify);
-  let id = "";
-  try {
-    act(() => {
-      id = notify("Expires", { delivery: "toast", duration: 200 });
-    });
-    await act(async () => setup.flush());
-    const title = setup.renderer.root.findDescendantById(`toast-${id}-title`)!;
-    await act(async () => setup.mockMouse.moveTo(title.screenX, title.screenY));
-    await act(async () => Bun.sleep(260));
-    expect(notify.getSnapshot()[0]!.dismissedAt).toBeNull();
-    await act(async () => setup.mockMouse.moveTo(0, 0));
-    await act(async () => Bun.sleep(260));
-    await act(async () => setup.flush());
-    expect(notify.getSnapshot()).toHaveLength(1);
-    expect(notify.getSnapshot()[0]!.dismissedAt).not.toBeNull();
-    expect(setup.renderer.root.findDescendantById(`toast-${id}`)).toBeUndefined();
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("first");
-  } finally {
-    act(() => setup.renderer.destroy());
-  }
-});
-
 test("throwing actions report the original handler error and retain the active toast", async () => {
   const notify = createNotificationStore();
   const error = new Error("Application action failed");
@@ -357,87 +279,6 @@ test("throwing actions report the original handler error and retain the active t
     await act(async () => setup.mockMouse.release(action.screenX, action.screenY));
     expect(errors).toHaveLength(1);
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("first");
-  } finally {
-    act(() => setup.renderer.destroy());
-  }
-});
-
-test("root portal escapes scrolling parents, preserves gap hits and isolates toast wheels", async () => {
-  const notify = createNotificationStore();
-  let clicks = 0;
-  let wheels = 0;
-  const setup = await testRender(
-    <ThemeProvider theme={defaultTheme}>
-      <Box
-        id="background"
-        width="100%"
-        height="100%"
-        focusable
-        onMouseDown={() => clicks++}
-        onMouseScroll={() => wheels++}
-      >
-        <scrollbox id="scroll" width="100%" height="100%">
-          <Box height={60} flexShrink={0}>
-            <Text>Scrollable page</Text>
-            <Toaster store={notify} />
-          </Box>
-        </scrollbox>
-      </Box>
-    </ThemeProvider>,
-    { width: 80, height: 24 },
-  );
-  try {
-    await act(async () => setup.flush());
-    const background = setup.renderer.root.findDescendantById("background")!;
-    const scroll = setup.renderer.root.findDescendantById("scroll") as ScrollBoxRenderable;
-    act(() => background.focus());
-    let first = "";
-    let second = "";
-    act(() => {
-      first = notify("First", { delivery: "toast", duration: 0 });
-      second = notify("Second", { delivery: "toast", duration: 0 });
-      scroll.scrollTo(15);
-    });
-    await act(async () => setup.flush());
-    const older = setup.renderer.root.findDescendantById(`toast-${first}`)!;
-    const newer = setup.renderer.root.findDescendantById(`toast-${second}`)!;
-    expect(newer.parent!.parent).toBe(setup.renderer.root);
-    expect(newer.parent!.zIndex).toBeGreaterThan(1000);
-    expect(newer.parent).not.toBe(older.parent);
-    expect(newer.screenX + newer.width).toBe(79);
-    expect(newer.screenY + newer.height).toBe(23);
-    // A shorter toast must leave background hits beside it, without a stack-wide hit area.
-    act(() => {
-      older.parent!.width = 24;
-    });
-    await act(async () => setup.flush());
-    const gapX = newer.screenX;
-    const gapY = older.screenY;
-    const gapHit = Renderable.renderablesByNumber.get(setup.renderer.hitTest(gapX, gapY));
-    expect(gapHit).toBeDefined();
-    expect(gapHit).not.toBe(older);
-    expect(gapHit).not.toBe(newer);
-    await act(async () => setup.mockMouse.click(gapX, gapY));
-    await act(async () => setup.mockMouse.click(0, 12));
-    expect(clicks).toBe(2);
-    act(() => background.focus());
-    await act(async () => setup.mockMouse.click(newer.screenX, newer.screenY));
-    expect(clicks).toBe(2);
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("background");
-    const before = scroll.scrollTop;
-    const title = setup.renderer.root.findDescendantById(`toast-${second}-title`)!;
-    await act(async () => setup.mockMouse.scroll(title.screenX, title.screenY, "down"));
-    await act(async () => setup.flush());
-    expect(scroll.scrollTop).toBe(before);
-    expect(wheels).toBe(0);
-    await act(async () => setup.mockMouse.scroll(0, 12, "down"));
-    expect(scroll.scrollTop).toBeGreaterThan(before);
-    expect(wheels).toBe(1);
-    act(() => notify.clearAll());
-    await act(async () => setup.flush());
-    expect(newer.parent).toBeNull();
-    await act(async () => setup.mockMouse.click(78, 22));
-    expect(clicks).toBe(3);
   } finally {
     act(() => setup.renderer.destroy());
   }

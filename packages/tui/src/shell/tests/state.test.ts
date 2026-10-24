@@ -299,22 +299,6 @@ for (const change of ["archive item", "archive parent", "remove item"] as const)
   });
 }
 
-test("native focus changes do not create another selection authority", () => {
-  let state = createInitialShellState();
-  state = reduceShellState(state, {
-    type: "focus.set",
-    focus: { region: "workbench", paneId: "p1" },
-    tabId: "t1",
-  });
-  state = reduceShellState(state, {
-    type: "focus.set",
-    focus: { region: "workbench", paneId: "p2" },
-    tabId: "t2",
-  });
-  expect(state.focus).toEqual({ region: "workbench", paneId: "p2" });
-  expect(state).not.toHaveProperty("lastPaneByTab");
-});
-
 for (const removed of ["tab", "surface", "item", "archive", "parent archive"] as const) {
   test(`tab entry source lives only while its visible owner exists (${removed})`, () => {
     const snapshot = snapshotFixture({

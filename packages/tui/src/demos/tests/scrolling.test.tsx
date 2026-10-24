@@ -1,13 +1,6 @@
 import { expect, test } from "bun:test";
 
-import {
-  type BoxRenderable,
-  InputRenderable,
-  ScrollBoxRenderable,
-  SelectRenderable,
-  TextareaRenderable,
-  TextRenderable,
-} from "@opentui/core";
+import { type BoxRenderable, ScrollBoxRenderable, TextRenderable } from "@opentui/core";
 import { act } from "react";
 
 import { ComponentsDemo } from "@/demos/components";
@@ -123,56 +116,6 @@ for (const [name, Demo] of [
   });
 }
 
-test("focused native controls consume their keys before page scroll fallback", async () => {
-  const setup = await testRender(<ControlsDemo />, { width: 240, height: 24, kittyKeyboard: true });
-  try {
-    await act(async () => setup.flush());
-    const area = setup.renderer.root.getChildren()[0] as ScrollBoxRenderable;
-    const page = setup.renderer.root.findDescendantById("controls-demo")!;
-    const targets = getFocusableRenderables(page);
-    const select = targets.find(
-      (node): node is SelectRenderable => node instanceof SelectRenderable,
-    )!;
-    act(() => select.focus());
-    await act(async () => setup.flush());
-    const before = area.scrollTop;
-    act(() => setup.mockInput.pressKey("j"));
-    await act(async () => setup.flush());
-    expect(select.getSelectedIndex()).toBe(2);
-    expect(area.scrollTop).toBe(before);
-    act(() => setup.mockInput.pressKey("d", { ctrl: true }));
-    await act(async () => setup.flush());
-    expect(select.getSelectedIndex()).toBe(2);
-    expect(area.scrollTop).toBe(before);
-    const input = targets.find((node): node is InputRenderable => node instanceof InputRenderable)!;
-    act(() => input.focus());
-    await act(async () => setup.flush());
-    const inputPosition = area.scrollTop;
-    act(() => setup.mockInput.pressKey("j"));
-    act(() => setup.mockInput.pressKey("k"));
-    await act(async () => setup.flush());
-    expect(input.value).toBe("jk");
-    expect(area.scrollTop).toBe(inputPosition);
-    act(() => setup.mockInput.pressKey("d", { ctrl: true }));
-    await act(async () => setup.flush());
-    expect(area.scrollTop).toBe(inputPosition);
-    const textarea = targets.find(
-      (node): node is TextareaRenderable =>
-        node instanceof TextareaRenderable && !(node instanceof InputRenderable),
-    )!;
-    act(() => textarea.focus());
-    await act(async () => setup.flush());
-    const textareaPosition = area.scrollTop;
-    act(() => setup.mockInput.pressKey("j"));
-    act(() => setup.mockInput.pressKey("k"));
-    await act(async () => setup.flush());
-    expect(textarea.plainText).toBe("jk");
-    expect(area.scrollTop).toBe(textareaPosition);
-  } finally {
-    act(() => setup.renderer.destroy());
-  }
-});
-
 test("accordion navigation wins over the containing page's j/k shortcuts", async () => {
   const setup = await testRender(<ComponentsDemo />, { width: 240, height: 24 });
   try {
@@ -216,48 +159,6 @@ test("full-width demo page fills the viewport even with small content", async ()
     const page = setup.renderer.root.findDescendantById("small-content")!;
     const area = setup.renderer.root.getChildren()[0] as ScrollBoxRenderable;
     expect(page.width).toBe(area.viewport.width);
-  } finally {
-    act(() => setup.renderer.destroy());
-  }
-});
-
-test("card tabs fill the width with equal triggers and keep logs inside the card", async () => {
-  const setup = await testRender(<ComponentsDemo />, { width: 100, height: 24 });
-  try {
-    await act(async () => setup.flush());
-    await act(async () => setup.flush());
-    const card = setup.renderer.root.findDescendantById("card-tabs-demo")!;
-    const list = getFocusableRenderables(card)[0]!;
-    expect(list.width).toBe(card.width);
-    expect(list.width).toBe(60);
-    const scroller = list.getChildren()[0]!;
-    const strip = setup.renderer.root.findDescendantById(
-      `${scroller.id}:viewport`,
-    ) as ScrollBoxRenderable;
-    const triggers = strip.content.getChildren()[0]!.getChildren();
-    expect(triggers.map((trigger) => trigger.width)).toEqual([20, 20, 20]);
-    expect(triggers[0]!.screenX).toBe(card.screenX);
-    expect(triggers[2]!.screenX + triggers[2]!.width).toBe(card.screenX + card.width);
-    expect(strip.scrollLeft).toBe(0);
-    expect(strip.viewport.width).toBe(60);
-    act(() => list.focus());
-    act(() => setup.mockInput.pressKey("ARROW_RIGHT"));
-    await act(async () => setup.flush());
-    const logs = getFocusableRenderables(card).find(
-      (node): node is ScrollBoxRenderable => node instanceof ScrollBoxRenderable,
-    )!;
-    expect(logs.height).toBe(18);
-    expect(logs.screenY + logs.height).toBeLessThanOrEqual(card.screenY + card.height);
-    expect(logs.scrollHeight).toBeGreaterThan(logs.height);
-    act(() => setup.mockInput.pressEnter());
-    await act(async () => setup.flush());
-    expect(setup.renderer.currentFocusedRenderable).toBe(logs);
-    act(() => setup.mockInput.pressKey("j"));
-    await act(async () => setup.flush());
-    expect(logs.scrollTop).toBeGreaterThan(0);
-    act(() => logs.scrollTo(logs.scrollHeight));
-    await act(async () => setup.flush());
-    expect(setup.captureCharFrame()).toContain("Log 29");
   } finally {
     act(() => setup.renderer.destroy());
   }

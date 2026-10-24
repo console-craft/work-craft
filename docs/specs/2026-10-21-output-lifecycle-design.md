@@ -9,6 +9,11 @@ requirements below have not been established by the existing test gate or manual
 trial. This is an outstanding acceptance contract, not a claim of measured parity
 or permission to repeat an obsolete renderer/fork migration.
 
+The user-approved reliability cutoff removed the burst/query acceptance journeys
+and output benchmark entrypoint. Their prior workloads and numerical targets below
+remain unmet requirements, not currently executable checks. Removal does not
+establish a performance or lifecycle repair; historical source is retained at `a94e4b1`.
+
 Current implementation and ownership are described in the
 [architecture overview](../architecture/overview.md),
 [terminal lifecycle](../architecture/references/terminal-lifecycle.md) and
@@ -132,7 +137,7 @@ not present-day measurements of the stock-renderer implementation. The
 records manual baseline acceptance but explicitly does not certify performance
 equivalence, capacity or soak. No unchanged test rerun closes those gaps.
 
-Existing `benchmark:output` tooling records evidence; it is not itself a numerical
+The former `benchmark:output` tooling recorded evidence; it was not itself a numerical
 acceptance gate and must satisfy the observer requirements above before its output
 can establish the contract. Current commands are in the development guide.
 

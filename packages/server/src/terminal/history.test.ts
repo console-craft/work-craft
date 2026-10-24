@@ -1,7 +1,4 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
 import { openDatabase } from "../persistence/database.ts";
 import { TerminalHistory } from "./history.ts";
@@ -73,22 +70,6 @@ test("reads queued output before it is flushed", async () => {
   db.close();
 });
 
-test("returns the cursor before a size-triggered batch is persisted", async () => {
-  const db = databaseWithPane();
-  const history = new TerminalHistory(db, { flushBytes: 4, flushIntervalMs: 1_000 });
-
-  expect(history.append("pane-1", new TextEncoder().encode("1234"))).toBe(4);
-  expect(
-    db.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM terminal_chunks").get()?.count,
-  ).toBe(0);
-  await Bun.sleep(10);
-  expect(
-    db.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM terminal_chunks").get()?.count,
-  ).toBe(1);
-  await history.close();
-  db.close();
-});
-
 test("retains the newest tail of a chunk larger than the limit", async () => {
   const db = databaseWithPane();
   const history = new TerminalHistory(db, { maxBytesPerPane: 4, flushBytes: 100 });
@@ -107,37 +88,6 @@ test("retains the newest tail of a chunk larger than the limit", async () => {
   ).toEqual({ cursorStart: 5, cursorEnd: 9, data: new TextEncoder().encode("ized") });
   await history.close();
   db.close();
-});
-
-test("flushes queued output on its timer and on close", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "work-craft-history-"));
-  const path = join(directory, "work-craft.db");
-  const db = openDatabase(path);
-  db.exec(`
-    INSERT INTO sessions VALUES ('session-1', 'Main', 0);
-    INSERT INTO workspaces VALUES ('workspace-1', 'Work');
-    INSERT INTO session_workspaces VALUES ('session-1', 'workspace-1', 0);
-    INSERT INTO items VALUES ('item-1', 'workspace-1', 'design', NULL, 'generic', 'Build', 0, 0, '{}');
-    INSERT INTO surfaces VALUES ('surface-1', 'item-1');
-    INSERT INTO panes VALUES ('pane-1', 'surface-1', 'terminal', 'Shell', '/tmp', '{"type":"shell","executable":"/bin/sh","args":[]}', 'running', NULL, NULL, NULL);
-  `);
-  const history = new TerminalHistory(db, { flushBytes: 100, flushIntervalMs: 10 });
-
-  history.append("pane-1", new TextEncoder().encode("timer"));
-  await Bun.sleep(30);
-  expect(
-    db.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM terminal_chunks").get()?.count,
-  ).toBe(1);
-  history.append("pane-1", new TextEncoder().encode(" close"));
-  await history.close();
-  db.close();
-
-  const reopened = openDatabase(path);
-  expect(new TextDecoder().decode(new TerminalHistory(reopened).read("pane-1").data)).toBe(
-    "timer close",
-  );
-  reopened.close();
-  await rm(directory, { recursive: true, force: true });
 });
 
 test("keeps a failed batch queued for an exact retry", async () => {
@@ -167,34 +117,4 @@ test("keeps a failed batch queued for an exact retry", async () => {
   ).toEqual([{ cursorStart: 0, cursorEnd: 3, data: new TextEncoder().encode("abc") }]);
   await history.close();
   db.close();
-});
-
-test("timer flush failures stay queued without an unhandled rejection", async () => {
-  const db = databaseWithPane();
-  const history = new TerminalHistory(db, { flushBytes: 100, flushIntervalMs: 5 });
-  const unhandled: unknown[] = [];
-  const onUnhandled = (error: unknown) => unhandled.push(error);
-  process.on("unhandledRejection", onUnhandled);
-  db.exec(`
-    CREATE TRIGGER fail_terminal_history BEFORE INSERT ON terminal_chunks
-    BEGIN SELECT RAISE(FAIL, 'forced timer failure'); END;
-  `);
-
-  try {
-    history.append("pane-1", new TextEncoder().encode("timer"));
-    await Bun.sleep(20);
-    expect(unhandled).toEqual([]);
-    expect(new TextDecoder().decode(history.read("pane-1").data)).toBe("timer");
-
-    db.exec("DROP TRIGGER fail_terminal_history");
-    await history.flush();
-    expect(
-      db.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM terminal_chunks").get()?.count,
-    ).toBe(1);
-  } finally {
-    process.off("unhandledRejection", onUnhandled);
-    db.exec("DROP TRIGGER IF EXISTS fail_terminal_history");
-    await history.close();
-    db.close();
-  }
 });

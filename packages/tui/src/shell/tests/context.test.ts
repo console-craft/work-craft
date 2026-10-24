@@ -1,10 +1,6 @@
 import { expect, test } from "bun:test";
 
-import {
-  completionContextKey,
-  isCreationNavigationCurrent,
-  navigationContextKey,
-} from "@/shell/context";
+import { isCreationNavigationCurrent } from "@/shell/context";
 import { snapshotFixture } from "@/tests/support/fixtures";
 
 test("first-item normalization belongs to its create, but a remote navigation round trip does not", () => {
@@ -34,27 +30,6 @@ test("first-item normalization belongs to its create, but a remote navigation ro
       "new-root",
     ),
   ).toBe(false);
-});
-
-test("context keys preserve null selection identities and tuple boundaries", () => {
-  const state = {
-    sessionId: "a,b",
-    generation: 1,
-    workspaceId: null,
-    category: null,
-    itemId: null,
-    tabId: null,
-    paneId: null,
-  };
-  expect(navigationContextKey(null, null)).toBe("[null,null,null]");
-  expect(navigationContextKey("epoch", state)).toBe('["epoch","a,b",1]');
-  expect(navigationContextKey("epoch", { ...state, generation: 2 })).not.toBe(
-    navigationContextKey("epoch", state),
-  );
-  expect(completionContextKey("navigation", null, null)).toBe('["navigation",null,null]');
-  expect(completionContextKey("navigation", "surface", "tab")).toBe(
-    '["navigation","surface","tab"]',
-  );
 });
 
 test("first-workspace normalization cannot excuse unrelated targets or navigation round trips", () => {

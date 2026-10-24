@@ -1,7 +1,6 @@
 import { expect, spyOn, test } from "bun:test";
 
 import {
-  CliRenderEvents,
   KeyEvent,
   parseKeypress,
   PasteEvent,
@@ -1029,40 +1028,6 @@ for (const order of ["response first", "snapshot first"] as const) {
   }
 }
 
-test("typing cannot renew a process failure status or churn its scroller", async () => {
-  const now = Date.now;
-  let clock = now();
-  Date.now = () => clock;
-  const failed = splitSurfaceSnapshot();
-  failed.panes[0]!.processStatus = "failed";
-  failed.panes[0]!.errorText = "Missing executable";
-  const setup = await liveInputFixture(failed);
-  try {
-    act(() => setup.renderer.root.findDescendantById("region:tabs")!.focus());
-    await setup.flush();
-    const before = statusText(setup);
-    expect(before).toContain("Missing executable");
-    const scroller = setup.renderer.root.findDescendantById("status-scroll:viewport");
-    clock += 4000;
-    await act(async () => setup.mockInput.pressKeys(["ordinary-text"]));
-    await act(async () => setup.mockInput.pasteBracketedText("ordinary-paste"));
-    await setup.publish({ ...failed, revision: 5 });
-    expect(statusText(setup)).toBe(before);
-    expect(setup.renderer.root.findDescendantById("status-scroll:viewport")).toBe(scroller);
-    expect(setup.sent).toEqual([]);
-    expect(setup.commands.filter((command) => command.type === "process.restart")).toEqual([]);
-    clock += 4001;
-    await act(async () => setup.mockInput.pressKey("x"));
-    await setup.publish({ ...failed, revision: 6 });
-    expect(statusText(setup)).toContain("HINTS");
-    expect(statusText(setup)).not.toContain("Missing executable");
-  } finally {
-    Date.now = now;
-    act(() => setup.renderer.destroy());
-    setup.store.stop();
-  }
-});
-
 test("explicit restart clears its own entry failure after exact running readiness", async () => {
   const stopped = splitSurfaceSnapshot();
   stopped.panes[0]!.processStatus = "exited";
@@ -1603,40 +1568,6 @@ for (const direction of ["horizontal", "vertical"] as const) {
         await act(async () => setup.mockInput.typeText("x"));
         expect(setup.sent).toEqual([{ paneId: "pane-2", bytes: [120] }]);
         expect(statusText(setup)).not.toContain("Old split refused");
-      } finally {
-        act(() => {
-          setup.store.stop();
-          setup.renderer.destroy();
-        });
-      }
-    });
-
-    test(`native split RPC cleanup ${direction} ${outcome} releases its own pre-response observer`, async () => {
-      const setup = await liveInputFixture({ ...surfaceSnapshot(), revision: 1 });
-      try {
-        act(() => setup.renderer.root.findDescendantById("region:tabs")!.focus());
-        await setup.flush();
-        const frames = setup.renderer.listenerCount(CliRenderEvents.FRAME);
-        await act(async () => setup.mockInput.pressKey(" ", { ctrl: true }));
-        await act(async () => setup.mockInput.pressKey(direction === "horizontal" ? "s" : "v"));
-        await setup.flush();
-        expect(setup.renderer.listenerCount(CliRenderEvents.FRAME)).toBe(frames + 1);
-        await act(async () => {
-          if (outcome === "failure") {
-            setup.splits[0]!.reject(new Error("Split refused"));
-          } else {
-            setup.mockInput.typeText("x");
-            setup.splits[0]!.resolve({
-              ok: true,
-              revision: 2,
-              result: { id: "pane-2", paneId: "pane-2" },
-            });
-          }
-        });
-        await setup.flush();
-        expect(setup.renderer.listenerCount(CliRenderEvents.FRAME)).toBe(frames);
-        expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:tabs");
-        expect(setup.sent).toEqual([]);
       } finally {
         act(() => {
           setup.store.stop();

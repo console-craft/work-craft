@@ -1,5 +1,5 @@
 import { expect, spyOn, test } from "bun:test";
-import { appendFile, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -73,73 +73,6 @@ test("capacity fixture owns exactly fifty panes, thirty tabs and ten complex pro
     await rm(directory, { recursive: true, force: true });
   }
 }, 60000);
-
-test("native comparison observes actual rendered tokens rather than child receipt alone", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "work-craft-profile-native-test-"));
-  try {
-    const result = await runOutputProfile("native", directory, { probes: 3, warmupMs: 0 });
-    expect(result.timedOut).toBe(false);
-    expect(
-      result.probes.every((probe) => probe.visibleMs !== null && probe.visibleMs >= probe.sentMs),
-    ).toBe(true);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("application comparison matches the native grid and flushes enabled child traces", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "work-craft-profile-application-test-"));
-  try {
-    const result = await runOutputProfile("application", directory, {
-      probes: 3,
-      warmupMs: 0,
-      diagnostics: true,
-    });
-    expect(result.probes).toHaveLength(3);
-    expect(result.rawBytes).toBeGreaterThan(result.outerBytes!);
-    const { byteWindow } = JSON.parse(await readFile(join(directory, "result.json"), "utf8"));
-    expect(byteWindow).toBeDefined();
-    expect(byteWindow.outerStart).toBeGreaterThan(0);
-    expect(result.rawBytes).toBe(byteWindow.rawEnd - byteWindow.rawStart);
-    expect(result.outerBytes).toBe(byteWindow.outerEnd - byteWindow.outerStart);
-    const traces = (await readdir(directory)).filter(
-      (name) => name.endsWith(".jsonl") && name.startsWith("tui-"),
-    );
-    expect(traces.length).toBeGreaterThan(0);
-    expect(await readFile(join(directory, traces[0]!), "utf8")).toContain('"type":"summary"');
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-}, 30000);
-
-test("a producer startup timeout still reaps its owned subprocess", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "work-craft-profile-timeout-test-"));
-  const original = Bun.spawn;
-  let child: Bun.Subprocess | undefined;
-  const capture = spyOn(Bun, "spawn").mockImplementation(((
-    ...args: Parameters<typeof Bun.spawn>
-  ) => {
-    child = Reflect.apply(original, Bun, [
-      [process.execPath, "-e", "setInterval(()=>{},1000)"],
-      args[1],
-    ]);
-    return child;
-  }) as typeof Bun.spawn);
-  try {
-    await expect(
-      runOutputProfile("direct-pty", join(directory, "missing"), { probes: 3, warmupMs: 0 }),
-    ).rejects.toThrow("profile producer ready");
-    expect(await child!.exited).toBeGreaterThan(0);
-    expect(() => process.kill(child!.pid, 0)).toThrow();
-  } finally {
-    capture.mockRestore();
-    if (child && child.exitCode === null && child.signalCode === null) {
-      child.kill();
-      await child.exited;
-    }
-    await rm(directory, { recursive: true, force: true });
-  }
-});
 
 test("diagnostic ownership rejects PID zero before inspecting or signalling manifests", async () => {
   await expect(flushProfileProbes("/path-not-read", [0])).rejects.toThrow("owned root PID");

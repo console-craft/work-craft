@@ -8,11 +8,14 @@ and [both tooling jobs](https://github.com/console-craft/work-craft/actions/runs
 That green run does not repair the earlier mismatch; the failing assertion and
 application code were unchanged by that commit.
 
-Owner: `packages/tui/src/tests/cold-history.test.ts`, the real two-client cold
-recovery case. While A browses retained output, B must stay at its own bottom.
-Preserve exact full-screen equality (including the status bar), durable history,
-fresh-shell input, one-shell/reconnect and independent-scroll assertions. Do not
-crop frames, recapture B's baseline after A scrolls, add skips or raise deadlines.
+The user-approved reliability cutoff subsequently removed the real two-client
+cold-recovery case and raw-stage-1 reload journey. Their source remains at
+`a94e4b1` in `packages/tui/src/tests/cold-history.test.ts` and `entrypoint.test.ts`.
+This removal supersedes the instruction to retain those assertions, not the
+underlying client-isolation requirement or the unresolved failure evidence.
+While A browses retained output, B must stay at its own bottom. Any future
+replacement should preserve durable history, fresh-shell input, one-shell/reconnect
+and independent scrolling without treating a cropped frame as equivalent evidence.
 
 ## Latest unresolved failure
 

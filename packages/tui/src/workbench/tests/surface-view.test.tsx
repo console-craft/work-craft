@@ -5,11 +5,7 @@ import { extend } from "@opentui/react";
 import type { LayoutNode, Snapshot } from "@work-craft/server/client";
 import { act, type ReactNode, useState } from "react";
 
-import {
-  appendTerminalChunk,
-  snapshotTerminals,
-  type TerminalBuffer,
-} from "@/client/terminal-buffer";
+import { snapshotTerminals, type TerminalBuffer } from "@/client/terminal-buffer";
 import { createTerminalOutputs } from "@/client/terminal-output";
 import {
   snapshotFixture,
@@ -28,7 +24,7 @@ import {
   type SurfaceViewProps,
 } from "@/workbench/surface-view.tsx";
 import { TerminalMaterialRenderable } from "@/workbench/terminal-material";
-import { TerminalPane, terminalPaneKey } from "@/workbench/terminal-pane";
+import { terminalPaneKey } from "@/workbench/terminal-pane";
 import { Workbench as NativeWorkbench, type WorkbenchProps } from "@/workbench/workbench.tsx";
 
 extend({ terminal: TerminalMaterialRenderable });
@@ -227,123 +223,6 @@ test("history baseline advance does not replace the native leaf identity", () =>
   expect(terminalPaneKey("pane-1", { ...previous, historyCursor: 100 })).toBe(
     terminalPaneKey("pane-1", previous),
   );
-});
-
-test("baseline advance preserves native state and a genuine reset replaces only its inner viewport", async () => {
-  const initial = terminalBufferFixture({ history: new Uint8Array([65]), historyCursor: 1 });
-  const outputs = createTerminalOutputs(new Map([["pane-1", initial]]));
-  const sent: number[][] = [];
-  const setup = await testRender(
-    <TerminalPane
-      {...recoveryProps}
-      bounds={{ x: 0, y: 0, width: 80, height: 25 }}
-      output={outputs.pane("pane-1")}
-      focused
-      pane={surfaceSnapshot().panes[0]!}
-      size={{ cols: 80, rows: 24 }}
-      stream={materialStreamFixture(
-        (paneId) => outputs.pane(paneId).read(),
-        () => ({ cols: 80, rows: 24 }),
-        streamFixture({ sendInput: (_paneId, bytes) => sent.push([...bytes]) }),
-      )}
-      onFocus={() => {}}
-      onTerminalReady={() => {}}
-    />,
-    { width: 80, height: 28 },
-  );
-  await setup.flush();
-  const native = setup.renderer.root.findDescendantById(
-    "terminal:pane-1",
-  ) as TerminalMaterialRenderable;
-  const outer = native.parent!.parent;
-  const captured = native.handlePaste.bind(native);
-  try {
-    outputs.set("pane-1", { ...initial, history: new Uint8Array([65, 66]), historyCursor: 2 });
-    await act(async () => Bun.sleep(35));
-    await setup.flush();
-    expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBe(native);
-    expect(setup.captureCharFrame()).toContain("AB");
-    act(() => {
-      outputs.set("pane-1", {
-        ...initial,
-        history: new Uint8Array([88]),
-        historyStartCursor: 10,
-        historyCursor: 11,
-        resetGeneration: 1,
-      });
-      captured(new PasteEvent(new Uint8Array([97])));
-      expect(sent).toEqual([]);
-    });
-    await setup.flush();
-    const replacement = setup.renderer.root.findDescendantById(
-      "terminal:pane-1",
-    ) as TerminalMaterialRenderable;
-    expect(replacement).not.toBe(native);
-    expect(replacement.parent!.parent).toBe(outer);
-    expect(setup.captureCharFrame()).toContain("X");
-    await setup.flush();
-    expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBe(replacement);
-  } finally {
-    act(() => setup.renderer.destroy());
-  }
-});
-
-test("deferred native input keeps its original activity context and drops revoked admission", async () => {
-  const initial = terminalBufferFixture();
-  const outputs = createTerminalOutputs(new Map([["pane-1", initial]]));
-  const contexts: unknown[] = [];
-  let allowed = true;
-  let event = { kind: "paste" as "paste" | "key", activitySequence: 17 };
-  const setup = await testRender(
-    <TerminalPane
-      {...recoveryProps}
-      canReceiveInput={() => allowed}
-      inputEvent={() => event}
-      bounds={{ x: 0, y: 0, width: 80, height: 25 }}
-      output={outputs.pane("pane-1")}
-      focused
-      pane={surfaceSnapshot().panes[0]!}
-      size={{ cols: 80, rows: 24 }}
-      stream={materialStreamFixture(
-        (paneId) => outputs.pane(paneId).read(),
-        () => ({ cols: 80, rows: 24 }),
-        streamFixture({ sendInput: (_paneId, _bytes, context) => contexts.push(context) }),
-      )}
-      onFocus={() => {}}
-      onTerminalReady={() => {}}
-    />,
-    { width: 80, height: 28 },
-  );
-  await setup.flush();
-  const native = setup.renderer.root.findDescendantById(
-    "terminal:pane-1",
-  ) as TerminalMaterialRenderable;
-  try {
-    let current = appendTerminalChunk(initial, 8, new TextEncoder().encode("\x1b[?2004h"), 0);
-    outputs.set("pane-1", current);
-    native.handlePaste(new PasteEvent(new TextEncoder().encode("original")));
-    event = { kind: "key", activitySequence: 99 };
-    await act(async () => Bun.sleep(35));
-    await setup.flush();
-    expect(contexts).toEqual([
-      {
-        ...recoveryProps.stamp,
-        runtimeGeneration: 0,
-        source: "input",
-        kind: "paste",
-        activitySequence: 17,
-      },
-    ]);
-    current = appendTerminalChunk(current, 9, new Uint8Array([120]), 0);
-    outputs.set("pane-1", current);
-    native.handlePaste(new PasteEvent(new Uint8Array([121])));
-    allowed = false;
-    await act(async () => Bun.sleep(35));
-    await setup.flush();
-    expect(contexts).toHaveLength(1);
-  } finally {
-    act(() => setup.renderer.destroy());
-  }
 });
 
 for (const source of ["history", "chunks"] as const) {

@@ -1,5 +1,4 @@
-import { Database } from "bun:sqlite";
-import { expect, spyOn, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -57,43 +56,6 @@ test("new and schema-4 database opening reach schema 6 without losing sentinel b
     });
   } finally {
     db.close();
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("a failure after the additive DDL rolls the entire schema-4 migration chain back", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "work-craft-cold-rollback-"));
-  const path = join(directory, "state.sqlite");
-  const old = stage2Fixture(path);
-  const schema = old.query("SELECT sql FROM sqlite_master ORDER BY name").all();
-  old.close();
-  const original = Database.prototype.exec;
-  const exec = spyOn(Database.prototype, "exec").mockImplementation(function (this: Database, sql) {
-    const result = original.call(this, sql);
-    if (sql.includes("ADD COLUMN runtime_start")) {
-      throw new Error("forced cold migration failure");
-    }
-    return result;
-  });
-  let unexpected: Database | undefined;
-  try {
-    expect(() => {
-      unexpected = openDatabase(path);
-    }).toThrow("forced cold migration failure");
-  } finally {
-    unexpected?.close();
-    exec.mockRestore();
-  }
-  const preserved = new Database(path);
-  try {
-    expect(preserved.query("PRAGMA user_version").get()).toEqual({ user_version: 4 });
-    expect(preserved.query("SELECT sql FROM sqlite_master ORDER BY name").all()).toEqual(schema);
-    expect(preserved.query("SELECT hex(data) AS data FROM terminal_chunks").get()).toEqual({
-      data: "53454E54494E454C",
-    });
-    preserved.exec("BEGIN EXCLUSIVE; ROLLBACK;");
-  } finally {
-    preserved.close();
     await rm(directory, { recursive: true, force: true });
   }
 });

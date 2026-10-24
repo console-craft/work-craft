@@ -1,4 +1,4 @@
-import { expect, spyOn, test } from "bun:test";
+import { expect, test } from "bun:test";
 
 import { extend } from "@opentui/react";
 import type {
@@ -51,20 +51,17 @@ async function viewport(initialStatus: PaneStatus = "running") {
   const requests: {
     context: TerminalProjectionContext;
     signal?: AbortSignal;
-    scrollOffset: number;
     resolve(value: TerminalMaterialResult): void;
-    reject(error: Error): void;
   }[] = [];
-  const errors: string[] = [];
   const inputs: string[] = [];
   const outputs = createTerminalOutputs(
     new Map([["p", terminalBufferFixture({ epoch: "e", runtimeGeneration: 4 })]]),
   );
   function connection(): StreamConnection {
     return streamFixture({
-      requestMaterial: async (_paneId, captured, scrollOffset, signal) =>
-        new Promise((resolve, reject) => {
-          requests.push({ context: { ...captured }, scrollOffset, signal, resolve, reject });
+      requestMaterial: async (_paneId, captured, _scrollOffset, signal) =>
+        new Promise((resolve) => {
+          requests.push({ context: { ...captured }, signal, resolve });
         }),
       sendSemantic: async (_paneId, input) => {
         inputs.push(input.kind);
@@ -75,9 +72,7 @@ async function viewport(initialStatus: PaneStatus = "running") {
   let setConnection!: (connection: StreamConnection) => void;
   let setContext!: (context: TerminalProjectionContext) => void;
   let setStatus!: (status: PaneStatus) => void;
-  let renders = 0;
   function Fixture() {
-    renders++;
     const [stream, updateConnection] = useState(connection);
     const [scope, updateContext] = useState(context);
     const [status, updateStatus] = useState(initialStatus);
@@ -110,7 +105,7 @@ async function viewport(initialStatus: PaneStatus = "running") {
             })}
             onReady={() => {}}
             onFocus={() => {}}
-            onError={(error) => errors.push(error)}
+            onError={() => {}}
           />
         </Box>
       </ThemeProvider>
@@ -147,9 +142,7 @@ async function viewport(initialStatus: PaneStatus = "running") {
     respond,
     node,
     requests,
-    outputs,
     context,
-    errors,
     inputs,
     connection,
     setConnection,
@@ -158,39 +151,8 @@ async function viewport(initialStatus: PaneStatus = "running") {
     setBrowse: (allowed: boolean) => {
       browseAllowed = allowed;
     },
-    renders: () => renders,
   };
 }
-
-test("stopped wheel requests historical-grid material locally and preserves offsets across reconnect", async () => {
-  const setup = await viewport("exited");
-  try {
-    await setup.respond(0, "STOPPED", { cols: 40, rows: 8 });
-    expect(setup.errors).toEqual([]);
-    expect(setup.node().focusable).toBe(false);
-    await act(async () => setup.mockInput.pressKeys(["\x1b[<64;10;4M"]));
-    await Bun.sleep(40);
-    expect(setup.node().scrollOffset).toBe(1);
-    expect(setup.requests.at(-1)!.scrollOffset).toBe(1);
-    expect(setup.inputs).toEqual([]);
-    await setup.respond(1, "EARLIER", { cols: 40, rows: 8 });
-    act(() => setup.setConnection(setup.connection()));
-    await setup.flush();
-    expect(setup.requests.at(-1)!.scrollOffset).toBe(1);
-    await setup.respond(2, "EARLIER", { cols: 40, rows: 8 });
-    setup.setBrowse(false);
-    await act(async () => setup.mockInput.pressKeys(["\x1b[<64;10;4M"]));
-    expect(setup.node().scrollOffset).toBe(1);
-    act(() => {
-      setup.setStatus("running");
-      setup.setContext({ ...setup.context, runtimeGeneration: 5 });
-    });
-    await setup.flush();
-    expect(setup.requests.at(-1)!.scrollOffset).toBe(0);
-  } finally {
-    act(() => setup.renderer.destroy());
-  }
-});
 
 test("status changes refresh idle material without granting starting or stopped child input", async () => {
   const setup = await viewport("starting");
@@ -250,29 +212,6 @@ test("idle material mount requests a current picture and becomes ready only afte
   }
 });
 
-test("continuous pane-local output coalesces one request without moving initial frame readiness", async () => {
-  const setup = await viewport();
-  try {
-    const renders = setup.renders();
-    for (let cursor = 1; cursor <= 10; cursor++) {
-      setup.outputs.set(
-        "p",
-        terminalBufferFixture({ epoch: "e", runtimeGeneration: 4, historyCursor: cursor }),
-      );
-    }
-    await Bun.sleep(40);
-    expect(setup.requests).toHaveLength(1);
-    await setup.respond(0, "FINITE");
-    expect(setup.node().focusable).toBe(true);
-    expect(setup.renders()).toBe(renders);
-    await Bun.sleep(40);
-    expect(setup.requests).toHaveLength(2);
-    expect(setup.node().focusable).toBe(true);
-  } finally {
-    act(() => setup.renderer.destroy());
-  }
-});
-
 test("same-scope idle reconnect aborts old material and cannot apply its late reply", async () => {
   const setup = await viewport();
   try {
@@ -317,35 +256,4 @@ test("geometry replacement gates input and rejects a same-revision stale frame",
   } finally {
     act(() => setup.renderer.destroy());
   }
-});
-
-test("scoped material failure retains its picture and unmount cancels outstanding work", async () => {
-  const setup = await viewport();
-  await setup.respond(0, "BEFORE");
-  setup.outputs.set(
-    "p",
-    terminalBufferFixture({ epoch: "e", runtimeGeneration: 4, historyCursor: 1 }),
-  );
-  await Bun.sleep(40);
-  await act(async () => setup.requests.at(-1)!.reject(new Error("Projection frame budget")));
-  await setup.flush();
-  expect(setup.captureCharFrame()).toContain("BEFORE");
-  expect(setup.errors).toEqual(["Projection frame budget"]);
-  expect(setup.node().focusable).toBe(false);
-  act(() => setup.setConnection(setup.connection()));
-  await setup.flush();
-  const request = setup.requests.at(-1)!;
-  const setFrame = spyOn(setup.node(), "setFrame");
-  act(() => setup.renderer.destroy());
-  expect(request.signal?.aborted).toBe(true);
-  await act(async () =>
-    request.resolve({
-      paneId: "p",
-      context: request.context,
-      sequence: 100,
-      frame: picture("TOO LATE"),
-    }),
-  );
-  expect(setFrame).not.toHaveBeenCalled();
-  setFrame.mockRestore();
 });

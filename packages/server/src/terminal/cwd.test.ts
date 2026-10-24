@@ -112,7 +112,6 @@ test.skipIf(process.platform !== "darwin")("missing lsof fails explicitly", asyn
 });
 
 for (const [name, script, error] of [
-  ["timed-out cwd inspection is reaped", "setInterval(() => {}, 1000)", "timed out"],
   [
     "oversized cwd output is bounded and reaped",
     'process.stdout.write("a".repeat(40_000)); process.stderr.write("b".repeat(40_000)); setInterval(() => {}, 1000)',
@@ -138,9 +137,6 @@ for (const [name, script, error] of [
       expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
       expect(() => process.kill(child.pid, 0)).toThrow();
       expect(Date.now() - started).toBeLessThan(2_000);
-      if (error === "timed out") {
-        expect(Date.now() - started).toBeGreaterThanOrEqual(900);
-      }
     } finally {
       spawn.mockRestore();
       if (child.exitCode === null) {

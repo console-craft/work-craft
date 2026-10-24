@@ -723,17 +723,6 @@ test("work-item submission delegates exact identity, parent and revision without
   }
 });
 
-test("builds completion keys from durable navigation and surface context", () => {
-  const { model } = activeItemFixture();
-  const navigationKey = JSON.stringify(["epoch-a", "session-work", 1]);
-
-  expect(completionContextFor(model, null)).toEqual({
-    key: JSON.stringify([navigationKey, "surface-1", "tab-1"]),
-    navigationKey,
-    dialog: null,
-  });
-});
-
 test("reports structural commands without applying connection policy", () => {
   const { model, snapshot, state } = activeItemFixture();
 

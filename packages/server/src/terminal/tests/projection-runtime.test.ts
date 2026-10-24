@@ -152,47 +152,6 @@ test("a fresh runtime never encodes input with the previous child's modes", asyn
   }
 });
 
-test("real native input keeps its charge until PTY drain and rejects oversize without truncation", async () => {
-  let output = "";
-  const registry = new RuntimeRegistry({
-    onStatus() {},
-    onOutput(_id, bytes) {
-      output += new TextDecoder().decode(bytes);
-    },
-  });
-  let pending: Promise<unknown> | undefined;
-  try {
-    await registry.start({
-      id: "p",
-      cwd: process.cwd(),
-      restorePolicy: {
-        type: "shell",
-        executable: "/bin/sh",
-        args: ["-c", "stty raw -echo; printf READY; sleep 60"],
-      },
-    });
-    await waitFor(() => output.includes("READY"));
-    await expect(registry.writeSemantic("p", new Uint8Array(1048577).fill(120))).rejects.toThrow(
-      "InvalidArgument",
-    );
-    expect(registry.inputPending("p")).toBe(false);
-    pending = registry
-      .writeSemantic("p", new Uint8Array(1048576).fill(120))
-      .catch((error) => error);
-    await Bun.sleep(20);
-    expect(registry.inputPending("p")).toBe(true);
-    await expect(registry.writeSemantic("p", { kind: "key", key: { text: "x" } })).rejects.toThrow(
-      "flight",
-    );
-    await registry.stopAll();
-    expect(await pending).toBeInstanceOf(Error);
-    expect(registry.inputPending("p")).toBe(false);
-  } finally {
-    await registry.stopAll();
-    await pending;
-  }
-});
-
 test("a runtime created at a small grid can grow to a supported compact large grid", async () => {
   const registry = new RuntimeRegistry({ onStatus() {}, onOutput() {} });
   try {

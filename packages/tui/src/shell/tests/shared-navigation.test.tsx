@@ -253,46 +253,6 @@ test("fast terminal redraws preserve native focus when old parsed chunks exceed 
   }
 });
 
-test("a genuinely unread output gap repairs history without detaching or stealing terminal focus", async () => {
-  const a = await liveInputFixture();
-  try {
-    const stream = a.store.getState().stream;
-    const attachment = a.store.getState().attachment;
-    const recovered = structuredClone(a.store.snapshot()!);
-    const history = {
-      paneId: "pane-1",
-      cursor: 2_400_000,
-      startCursor: 1_500_000,
-      prefixBytes: 2,
-      data: Buffer.from("\x1bc" + "y".repeat(900_000)).toString("base64"),
-      truncated: true,
-      initialSize: recovered.geometry.panes.find(({ paneId }) => paneId === "pane-1")!.size,
-      initialGridSequence: 0,
-      resizes: [],
-    };
-    a.client.paneHistory = async () => ({
-      epoch: recovered.epoch,
-      paneId: "pane-1",
-      runtimeGeneration: 0,
-      history,
-    });
-    await act(async () => {
-      await a.output("x".repeat(1_200_000));
-      await a.output("y".repeat(1_200_000));
-    });
-    await a.flush();
-    expect(a.store.getState().stream).toBe(stream);
-    expect(a.store.getState().attachment).toBe(attachment);
-    a.renderCurrent();
-    await a.flush();
-    expect(a.renderer.root.findDescendantById("dialog")).toBeUndefined();
-    expect(a.renderer.currentFocusedRenderable?.id).toBe("terminal:pane-1");
-  } finally {
-    act(() => a.renderer.destroy());
-    a.store.stop();
-  }
-});
-
 test("reattaching the stream preserves active terminal focus without a transient session chooser", async () => {
   const a = await liveInputFixture();
   const pending = deferred<StreamConnection>();

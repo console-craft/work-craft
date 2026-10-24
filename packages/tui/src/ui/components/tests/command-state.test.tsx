@@ -1,6 +1,6 @@
-import { expect, spyOn, test } from "bun:test";
+import { expect, test } from "bun:test";
 
-import { act, useState } from "react";
+import { act } from "react";
 
 import { testRender } from "@/tests/support/render";
 import {
@@ -10,7 +10,6 @@ import {
   CommandList,
   type CommandProps,
 } from "@/ui/components/command";
-import { Box } from "@/ui/primitives/box";
 import { ThemeProvider } from "@/ui/theming/theme-provider";
 import { defaultTheme } from "@/ui/theming/themes/default";
 
@@ -50,55 +49,3 @@ for (const [name, filter, expected] of [
     }
   });
 }
-
-test("removed command registrations cannot activate after callback-driven teardown", async () => {
-  let removeNative = () => {};
-  let selected = 0;
-  const errors = spyOn(console, "error");
-  function Fixture() {
-    const [shown, setShown] = useState(true);
-    return (
-      <ThemeProvider theme={defaultTheme}>
-        {shown ? (
-          <Box id="owner">
-            <Command>
-              <CommandInput id="query" />
-              <CommandList height={4}>
-                <CommandItem
-                  onSelect={() => {
-                    selected++;
-                    removeNative();
-                    setShown(false);
-                  }}
-                >
-                  Remove me
-                </CommandItem>
-              </CommandList>
-            </Command>
-          </Box>
-        ) : (
-          <Box />
-        )}
-      </ThemeProvider>
-    );
-  }
-  const setup = await testRender(<Fixture />, { width: 40, height: 8 });
-  removeNative = () => {
-    setup.renderer.root.findDescendantById("owner")!.visible = false;
-  };
-  try {
-    await act(async () => setup.flush());
-    act(() => setup.renderer.root.findDescendantById("query")!.focus());
-    act(() => {
-      setup.mockInput.pressEnter();
-      setup.mockInput.pressEnter();
-    });
-    await act(async () => setup.flush());
-    expect(selected).toBe(1);
-    expect(setup.renderer.root.findDescendantById("query")).toBeUndefined();
-    expect(errors.mock.calls).toEqual([]);
-  } finally {
-    act(() => setup.renderer.destroy());
-    errors.mockRestore();
-  }
-});

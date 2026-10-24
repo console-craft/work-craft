@@ -20,7 +20,6 @@
     "packages/*"
   ],
   "scripts": {
-    "benchmark:output": "bun scripts/run-bounded.ts 1800000 bun test ./packages/tui/src/tests/output-profile.benchmark.ts",
     "dev": "bun  --watch src/main.ts",
     "diagnose:hyperlinks": "bun scripts/run-bounded.ts 60000 bun test ./packages/server/src/terminal/tests/projection-feasibility.diagnostic.ts ./packages/tui/src/workbench/tests/native-contract.diagnostic.ts ./packages/tui/src/workbench/tests/projection-feasibility.diagnostic.tsx",
     "build": "mkdir -p dist && bun build --compile src/main.ts --outfile dist/work-craft",
