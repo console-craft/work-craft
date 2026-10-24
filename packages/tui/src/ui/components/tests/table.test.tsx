@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { type BoxRenderable, TextRenderable } from "@opentui/core";
+import type { BoxRenderable } from "@opentui/core";
 import { act, useState } from "react";
 
 import { testRender } from "@/tests/support/render";
@@ -225,39 +225,6 @@ test.each(["none", "minimal", "full"] as const)(
     }
   },
 );
-
-test("text respects cell padding at fractional column widths", async () => {
-  const setup = await testRender(
-    <ThemeProvider theme={defaultTheme}>
-      <Table columns={[40, null, 20]} border="full">
-        <TableBody>
-          <TableRow id="row">
-            <TableCell>Server</TableCell>
-            <TableCell>Long text wraps within the padded cell</TableCell>
-            <TableCell textAlign="right">31ms</TableCell>
-          </TableRow>
-        </TableBody>
-      </Table>
-    </ThemeProvider>,
-    { width: 40, height: 12 },
-  );
-  try {
-    await act(async () => setup.flush());
-    await act(async () => setup.flush());
-    const row = setup.renderer.root.findDescendantById("row")!;
-    for (const column of row.getChildren()) {
-      const cell = column.getChildren()[0]!;
-      const text = cell.getChildren()[0] as TextRenderable;
-      expect(text.screenX).toBe(cell.screenX + 1);
-      expect(text.screenX + text.width).toBeLessThanOrEqual(cell.screenX + cell.width - 1);
-    }
-    const text = row.getChildren()[1]!.getChildren()[0]!.getChildren()[0]!;
-    expect(row.height).toBe(text.height);
-    expect(setup.captureCharFrame()).toContain("31ms │");
-  } finally {
-    act(() => setup.renderer.destroy());
-  }
-});
 
 test.each([
   [

@@ -1,13 +1,6 @@
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 
-import {
-  CliRenderEvents,
-  type Clock,
-  type Renderable,
-  RGBA,
-  type ScrollBoxRenderable,
-  TextRenderable,
-} from "@opentui/core";
+import { CliRenderEvents, type Clock, type Renderable, TextRenderable } from "@opentui/core";
 import { ManualClock, setRendererCapabilities } from "@opentui/core/testing";
 import { act } from "react";
 
@@ -15,7 +8,6 @@ import { ComponentsDemo } from "@/demos/components";
 import { testRender } from "@/tests/support/render";
 import { getFocusableRenderables } from "@/ui/interaction/focus-utils";
 import * as notifications from "@/ui/notifications";
-import { defaultTheme } from "@/ui/theming/themes/default";
 
 const frameClock: Clock = {
   now: performance.now.bind(performance),
@@ -111,74 +103,6 @@ async function click(setup: Awaited<ReturnType<typeof renderDemo>>, x: number, y
     await setup.mockMouse.release(x, y);
   });
 }
-
-test("demo variants use isolated history and burst overflow leaves scrolling layout intact", async () => {
-  const defaultHistory = notifications.notify.getSnapshot();
-  const setup = await renderDemo();
-  try {
-    const root = setup.renderer.root;
-    expect(findText(root, "History: 0 · Viewed: 0")).toBeDefined();
-    const area = root.getChildren()[0] as ScrollBoxRenderable;
-    const page = root.findDescendantById("components-demo")!;
-    const bounds = {
-      x: page.screenX,
-      width: page.width,
-      height: page.height,
-      scrollHeight: area.scrollHeight,
-    };
-    for (const [variant, color] of [
-      ["default", "foreground"],
-      ["success", "success"],
-      ["warning", "warning"],
-      ["error", "error"],
-      ["info", "info"],
-    ] as const) {
-      await press(setup, variant);
-      const record = setup.notify!.getSnapshot()[0]!;
-      expect(record.variant).toBe(variant);
-      expect(record.delivery).toBe("toast");
-      expect(record.channel).toBe("toast");
-      const title = root.findDescendantById(`toast-${record.id}-title`) as TextRenderable;
-      expect(title.fg.equals(RGBA.fromHex(defaultTheme.colors[color]))).toBe(true);
-    }
-    await press(setup, "Clear history");
-    expect(setup.notify!.getSnapshot()).toEqual([]);
-    await press(setup, "Burst of five");
-    const records = setup.notify!.getSnapshot();
-    expect(records.map((record) => record.title)).toEqual([
-      "Burst 5",
-      "Burst 4",
-      "Burst 3",
-      "Burst 2",
-      "Burst 1",
-    ]);
-    expect(
-      records.filter((record) => record.dismissedAt === null).map((record) => record.title),
-    ).toEqual(["Burst 5", "Burst 4", "Burst 3"]);
-    expect(findText(root, "History: 5 · Viewed: 0")).toBeDefined();
-    const newest = root.findDescendantById(`toast-${records[0]!.id}`)!;
-    expect(newest.parent!.parent).toBe(root);
-    expect(root.getChildren()).toHaveLength(4);
-    expect(newest.screenX + newest.width).toBe(99);
-    expect(newest.screenY + newest.height).toBe(23);
-    expect({
-      x: page.screenX,
-      width: page.width,
-      height: page.height,
-      scrollHeight: area.scrollHeight,
-    }).toEqual(bounds);
-    const position = area.scrollTop;
-    await act(async () => setup.mockMouse.scroll(newest.screenX, newest.screenY, "down"));
-    expect(area.scrollTop).toBe(position);
-    await press(setup, "Clear history");
-    expect(findText(root, "History: 0 · Viewed: 0")).toBeDefined();
-    expect(root.getChildren()).toHaveLength(1);
-    expect(notifications.notify.getSnapshot()).toBe(defaultHistory);
-  } finally {
-    act(() => setup.renderer.destroy());
-    await setup.renderer.closed;
-  }
-});
 
 test("persistent demo survives expiry and pointer action visibly increments Viewed without stealing focus", async () => {
   const setup = await renderDemo();

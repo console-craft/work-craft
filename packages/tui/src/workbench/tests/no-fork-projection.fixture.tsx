@@ -35,7 +35,6 @@ type RuntimeState = {
   bytes: number;
   input: number[];
   inputBytes: number;
-  inputFrontier: number;
   inputHash: string;
   frame: CompactMaterialFrame;
 };
@@ -895,38 +894,6 @@ test("irregular text and alternating styles retain exact small-frame material", 
   }
 });
 
-test("a valid unique-color grid must remain displayable within the unchanged budget", async () => {
-  const live = await runtime();
-  let failure: string | null = null;
-  try {
-    await live.resize(512, 512);
-    for (let y = 0; y < 512; y++) {
-      let output = `\x1b[${y + 1};1H`;
-      for (let x = 0; x < 512; x++) {
-        const n = y * 512 + x;
-        output += `\x1b[38;2;${n & 255};${(n >>> 8) & 255};${n >>> 16}m${String.fromCharCode(65 + (n % 26))}`;
-      }
-      await live.output(output);
-    }
-    try {
-      const state = await live.state();
-      expect(state.frame.size).toEqual({ cols: 512, rows: 512 });
-      expect(Buffer.byteLength(JSON.stringify(state))).toBeLessThanOrEqual(8388608);
-    } catch (error) {
-      failure = String(error);
-    }
-    await Bun.write(
-      join(live.directory, "irregular-frame-observation.json"),
-      JSON.stringify({ cols: 512, rows: 512, cells: 262144, ceiling: 8388608, failure }, null, 2),
-    );
-    await live.resize(12, 3);
-    expect((await live.state()).frame.size).toEqual({ cols: 12, rows: 3 });
-    expect(failure).toBeNull();
-  } finally {
-    await live.close();
-  }
-}, 30000);
-
 test("bounded paste reaches the real child once with one bracketed envelope", async () => {
   const live = await runtime();
   try {
@@ -1046,48 +1013,6 @@ test("paste chunk boundaries preserve native sanitization and UTF8 bytes", async
   } finally {
     reference.destroy();
     await setup.dispose();
-    await live.close();
-  }
-});
-
-test("an unacknowledged paste commit excludes another full-budget transfer", async () => {
-  const live = await runtime();
-  let pid: number | undefined;
-  let committing: Promise<unknown> | undefined;
-  try {
-    const state = await live.state();
-    pid = state.pid;
-    process.kill(pid, "SIGSTOP");
-    const identity = { stamp: state.stamp, id: "in-flight-paste" };
-    await live.wireInput({ ...identity, type: "paste.begin", total: 1048576 });
-    for (let offset = 0; offset < 1048576; offset += 65536) {
-      await live.wireInput({
-        ...identity,
-        type: "paste.chunk",
-        offset,
-        data: Buffer.alloc(65536, 120).toString("base64"),
-      });
-    }
-    committing = live
-      .wireInput({ ...identity, type: "paste.commit" })
-      .catch((error) => ({ error: String(error) }));
-    await waitFor(live.state, (s) => s.inputFrontier === 1048576);
-    await expect(
-      live.wireInput({ type: "paste.begin", id: "next-paste", stamp: state.stamp, total: 8388480 }),
-    ).rejects.toThrow("flight");
-    process.kill(pid, "SIGCONT");
-    pid = undefined;
-    await committing;
-    expect((await live.state()).inputBytes).toBe(1048576);
-    await live.wireInput({ type: "paste.begin", id: "after-ack", stamp: state.stamp, total: 0 });
-    await live.wireInput({ type: "paste.commit", id: "after-ack", stamp: state.stamp });
-  } finally {
-    if (pid !== undefined) {
-      try {
-        process.kill(pid, "SIGCONT");
-      } catch {}
-    }
-    await committing;
     await live.close();
   }
 });

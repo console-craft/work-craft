@@ -152,7 +152,6 @@ async function serve(socket: string, log: string): Promise<void> {
             bytes,
             input,
             inputBytes,
-            inputFrontier,
             inputHash: inputHash.copy().digest("hex"),
             stamp,
             sequence: ++sequence,

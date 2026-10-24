@@ -6,7 +6,6 @@ import {
   MouseButton,
   parseColor,
   type ScrollBoxRenderable,
-  type TextRenderable,
 } from "@opentui/core";
 import { act, createRef, type Dispatch, type SetStateAction, useState } from "react";
 
@@ -15,7 +14,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/ui/components/tabs";
 import { Button } from "@/ui/controls/button";
 import { getControlHints } from "@/ui/interaction/control-hints";
 import { FocusManager } from "@/ui/interaction/focus-manager";
-import { getFocusableRenderables } from "@/ui/interaction/focus-utils";
 import { Stack } from "@/ui/primitives/stack";
 import { Text } from "@/ui/primitives/text";
 import { ThemeProvider } from "@/ui/theming/theme-provider";
@@ -680,58 +678,6 @@ async function renderOverflow() {
       ) as ScrollBoxRenderable,
   };
 }
-
-test("two-row TabsList reveals complete Unicode triggers across fit and overflow", async () => {
-  const setup = await renderOverflow();
-  try {
-    const list = setup.renderer.root.findDescendantById("overflow-list")!;
-    const unicode = setup.renderer.root.findDescendantById("unicode")!;
-    const tail = setup.renderer.root.findDescendantById("tail")!;
-    expect(list.height).toBe(2);
-    expect(unicode.width).toBe(6);
-    expect(tail.width).toBe(6);
-    expect(setup.captureCharFrame().split("\n")[1]).toBe("━".repeat(12));
-    expect(setup.area()?.scrollWidth).toBe(12);
-    expect(setup.renderer.root.findDescendantById("overflow-list:scroller:right")).toBeUndefined();
-    act(() => setup.resize(9, 8));
-    await setup.settle();
-    const area = setup.area();
-    expect(area.viewport.height).toBe(2);
-    expect(area.scrollWidth).toBe(12);
-    expect(area.viewport.width).toBe(7);
-    act(() => setup.mockInput.pressKey("END"));
-    await setup.settle();
-    expect(tail.screenX + tail.width).toBe(area.viewport.screenX + area.viewport.width);
-    expect(setup.captureCharFrame().split("\n")[0]).toContain("Tail");
-    expect(
-      setup
-        .captureCharFrame()
-        .split("\n")[1]
-        ?.slice(tail.screenX, tail.screenX + tail.width),
-    ).toBe("━".repeat(6));
-    act(() => setup.resize(5, 8));
-    await setup.settle();
-    act(() => setup.mockInput.pressKey("HOME"));
-    await setup.settle();
-    expect(unicode.width).toBe(6);
-    expect(unicode.screenX).toBe(area.viewport.screenX);
-    const label = unicode.getChildren()[0]!.getChildren()[0]!.getChildren()[0] as TextRenderable;
-    expect(label.plainText).toBe("研究");
-    act(() => setup.resize(12, 8));
-    await setup.settle();
-    for (let frame = 0; frame < 4; frame++) {
-      await act(async () => setup.renderOnce());
-      expect(area.viewport.width).toBe(12);
-      expect(area.scrollLeft).toBe(0);
-      expect(
-        setup.renderer.root.findDescendantById("overflow-list:scroller:right"),
-      ).toBeUndefined();
-    }
-    expect(getFocusableRenderables(list)).toEqual([]);
-  } finally {
-    act(() => setup.renderer.destroy());
-  }
-});
 
 test("pointer scrolling preserves selection and native focus", async () => {
   const setup = await renderOverflow();

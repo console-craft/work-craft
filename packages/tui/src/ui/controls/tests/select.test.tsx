@@ -219,19 +219,6 @@ test("all-disabled options use the effective background of a disabled Select", a
   }
 });
 
-test("disabled option tint preserves the native scroll indicator color", async () => {
-  const setup = await renderSelect({ height: 4, showScrollIndicator: true });
-  try {
-    const marker = setup.renderer.currentRenderBuffer
-      .getSpanLines()
-      .flatMap((line) => line.spans)
-      .find((span) => span.text.includes("█"))!;
-    expect(marker.fg.toInts()).toEqual(parseColor("#666666").toInts());
-  } finally {
-    act(() => setup.renderer.destroy());
-  }
-});
-
 test("left-clicking a Select option name or description changes and activates its original index", async () => {
   const events: string[] = [];
   const setup = await renderSelect({

@@ -15,8 +15,9 @@ is not this coverage gap.
 The three `failed prepare/capture/spawn during Reactivate preserves the prior final
 picture across generations` cases in
 `packages/server/src/terminal/tests/stopped-material.test.ts` are skipped on macOS
-only. Their assertions remain intact and still run on other platforms. Ordinary
-stopped-history tests, real recovery acceptance and all other tests remain enabled.
+only. Their assertions remain intact and still run on other platforms. The later
+user-approved reliability cutoff removed the stopped-history and application
+recovery journeys; those checks no longer supplement this quarantined coverage.
 The deferred gap is direct native coverage of retaining the final picture after
 these three failed manual-reactivation paths. Keep the production review fixes.
 

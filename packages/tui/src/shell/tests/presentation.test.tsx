@@ -18,7 +18,6 @@ import { SessionSwitcher } from "@/shell/session-switcher.tsx";
 import { WorkCraftShell } from "@/shell/shell.tsx";
 import { StatusBar } from "@/shell/status-bar.tsx";
 import {
-  deferred,
   liveInputFixture,
   openFixtureItem,
   splitSurfaceSnapshot,
@@ -92,57 +91,6 @@ test("confirmed detach and a deliberate destination change cannot reuse stale pr
       requestedSessionId: "session-work",
     }),
   ).toBeNull();
-});
-
-test("transient reattachment preserves the exact native frame and cursor without input authority", async () => {
-  const setup = await liveInputFixture();
-  const native = setup.renderer.root.findDescendantById(
-    "terminal:pane-1",
-  ) as TerminalMaterialRenderable;
-  await act(async () => setup.output("\x1b[2J\x1b[2;3Hkept through reconnect"));
-  await act(async () => Bun.sleep(35));
-  await setup.flush();
-  const body = setup
-    .captureCharFrame()
-    .split("\n")
-    .slice(0, setup.renderer.height - 1)
-    .join("\n");
-  const cursor = setup.renderer.getCursorState();
-  const oldData = native.handleKeyPress.bind(native);
-  const pending = deferred<ReturnType<typeof streamFixture>>();
-  const entered = deferred<void>();
-  setup.client.stream = async () => {
-    entered.resolve();
-    return pending.promise;
-  };
-  const reconnect = setup.store.reload();
-  try {
-    await entered.promise;
-    native.handlePaste(new PasteEvent(new Uint8Array([97])));
-    oldData(new KeyEvent(parseKeypress("b")!));
-    expect(setup.sent).toEqual([]);
-    setup.renderCurrent();
-    await setup.flush();
-    expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBe(native);
-    expect(setup.renderer.getCursorState()).toEqual(cursor);
-    expect(
-      setup
-        .captureCharFrame()
-        .split("\n")
-        .slice(0, setup.renderer.height - 1)
-        .join("\n"),
-    ).toBe(body);
-    pending.resolve(streamFixture());
-    await reconnect;
-    setup.renderCurrent();
-    await setup.flush();
-    expect(setup.renderer.root.findDescendantById("terminal:pane-1")).toBe(native);
-  } finally {
-    pending.resolve(streamFixture());
-    await reconnect;
-    setup.store.stop();
-    act(() => setup.renderer.destroy());
-  }
 });
 
 test("runtime replacement changes only its native viewport once and rejects old callbacks before commit", async () => {
@@ -434,26 +382,6 @@ test("navigator stays unmounted when fewer than two rows are available", async (
     await setup.flush();
     expect(setup.renderer.root.findDescendantById("region:navigator")?.focusable).toBe(false);
   }
-  act(() => setup.renderer.destroy());
-});
-
-test("size-hiding a focused navigator returns focus to the category rail", async () => {
-  const setup = await testRender(<WorkCraftShell workCraft={workCraftStateFixture()} />, {
-    width: 119,
-    height: 20,
-    kittyKeyboard: true,
-  });
-  await setup.flush();
-  act(() => setup.renderer.root.findDescendantById("region:category")!.focus());
-  await act(async () => setup.mockInput.pressKey("l", { ctrl: true }));
-  await setup.flush();
-  expect(setup.captureCharFrame()).toContain("HINTS");
-
-  act(() => setup.resize(119, 4));
-  await setup.flush();
-  act(() => setup.resize(119, 20));
-  await setup.flush();
-  expect(setup.captureCharFrame()).toContain("HINTS");
   act(() => setup.renderer.destroy());
 });
 

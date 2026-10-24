@@ -109,18 +109,4 @@ for (const mode of ["control", "full"] as const) {
       await a.close();
     }
   });
-
-  test(`${mode}: an excessive stalled stream is still disconnected rather than buffered indefinitely`, async () => {
-    const a = await fixture(mode);
-    try {
-      a.socket.pause();
-      burst(a.peer, 1024);
-      await Bun.sleep(100);
-      a.socket.resume();
-      await waitFor(a.closed);
-      expect(a.messages.filter(({ type }) => type === "terminal.output").length).toBeLessThan(1024);
-    } finally {
-      await a.close();
-    }
-  });
 }

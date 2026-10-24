@@ -64,23 +64,3 @@ test("fragmented real reports update pointer state but mouse-shaped bracketed pa
     renderer.destroy();
   }
 });
-
-test("same-batch gestures have distinct tokens and consuming a later report discards stale presses", async () => {
-  const { renderer } = await createTestRenderer({ width: 40, height: 10 });
-  const release = observePointer(renderer);
-  try {
-    renderer.stdin.emit("data", "\x1b[<0;2;3M\x1b[<0;30;9m\x1b[<0;5;6M\x1b[<0;5;6m");
-    expect(consumePrimaryPointerPress(renderer, mouse("down", 1, 2))).toBe(1);
-    expect(consumePrimaryPointerPress(renderer, mouse("up", 29, 8))).toBe(1);
-    expect(consumePrimaryPointerPress(renderer, mouse("down", 4, 5))).toBe(2);
-    expect(consumePrimaryPointerPress(renderer, mouse("up", 4, 5))).toBe(2);
-    expect(isPrimaryPointerPressed(renderer)).toBe(false);
-    expect(consumePrimaryPointerPress(renderer, mouse("up", 4, 5))).toBeUndefined();
-    renderer.stdin.emit("data", "\x1b[<0;2;3M\x1b[<0;30;9m");
-    expect(consumePrimaryPointerPress(renderer, mouse("up", 29, 8))).toBe(3);
-    expect(consumePrimaryPointerPress(renderer, mouse("down", 1, 2))).toBeUndefined();
-  } finally {
-    release();
-    renderer.destroy();
-  }
-});

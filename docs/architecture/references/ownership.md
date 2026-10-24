@@ -90,8 +90,8 @@ their existing owners (`ui/tests`, `ui/interaction/tests`, `ui/theming/tests`,
 wrapper directory for every source/test pair.
 
 `packages/tui/src/tests/` is for package-wide acceptance and genuinely shared
-support. Its entrypoint, shared-session, cold-history and stopped-history tests
-exercise real processes. Place narrower fixtures with their consumer, such as
+support. Its retained shared-session and graceful-restart tests exercise real
+processes. Place narrower fixtures with their consumer, such as
 `shell/tests/fixtures.tsx`. Server and CLI tests retain their existing placement.
 
 Shell tests independently control command responses, snapshots, React commits,

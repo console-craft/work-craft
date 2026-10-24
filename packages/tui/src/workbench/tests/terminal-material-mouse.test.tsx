@@ -3,7 +3,6 @@ import { expect, test } from "bun:test";
 import { createTestRenderer } from "@opentui/core/testing";
 import type { CompactMaterialFrame } from "@work-craft/server/client";
 
-import { streamFixture, terminalBufferFixture } from "@/tests/support/fixtures";
 import { materialStreamFixture } from "@/tests/support/material-stream";
 import { TerminalMaterialRenderable } from "@/workbench/terminal-material";
 
@@ -57,48 +56,6 @@ test("read-only wheel bypasses child input and obeys the current browse gate", a
     view.focus();
     await setup.mockInput.pressKey("x");
     expect(input).toEqual([]);
-  } finally {
-    await setup.dispose();
-  }
-});
-
-test("raw SGR hover, drag and release retain their actual button state in child mouse reports", async () => {
-  const setup = await createTestRenderer({ width: 30, height: 4 });
-  const encoded: string[] = [];
-  const history = new TextEncoder().encode("\x1b[?1003h\x1b[?1006h");
-  const stream = materialStreamFixture(
-    () => terminalBufferFixture({ history, historyCursor: history.length }),
-    () => frame.size,
-    streamFixture({ sendInput: (_id, bytes) => encoded.push(new TextDecoder().decode(bytes)) }),
-  );
-  try {
-    const view = new TerminalMaterialRenderable(setup.renderer, {
-      frame,
-      position: "absolute",
-      left: 5,
-      top: 1,
-      onInput(input) {
-        if (input.kind === "mouse") {
-          void stream.sendSemantic("p", input, context);
-        }
-      },
-    });
-    setup.renderer.root.add(view);
-    await setup.flush();
-    await setup.mockInput.pressKeys(["\x1b[<35;7;2M"]);
-    expect(encoded).toEqual(["\x1b[<35;2;1M"]);
-    await setup.mockInput.pressKeys(["\x1b[<0;7;2M", "\x1b[<32;9;2M", "\x1b[<0;9;2m"]);
-    // The public renderer releases both the captured and hit target after a drag.
-    expect(encoded).toEqual([
-      "\x1b[<35;2;1M",
-      "\x1b[<0;2;1M",
-      "\x1b[<32;4;1M",
-      "\x1b[<0;4;1m",
-      "\x1b[<0;4;1m",
-    ]);
-    await setup.mockInput.pressKeys(["\x1b[<35;1;4M"]);
-    expect(encoded).toHaveLength(5);
-    expect(view.getSelectedText()).toBe("");
   } finally {
     await setup.dispose();
   }

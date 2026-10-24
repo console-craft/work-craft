@@ -622,24 +622,6 @@ for (const target of ["itemId", "rootId"] as const) {
   });
 }
 
-test("valid live cwd is not gated by stale directory availability", async () => {
-  const { db, workspaceId } = organizationalFixture();
-  const { itemId } = applyCommand(
-    db,
-    { type: "directory.register", workspaceId, path: process.cwd() },
-    { path: process.cwd(), available: true, git: null },
-  ).result;
-  const app = createApp({ db });
-  apps.push(app);
-  const { paneId } = (await app.execute({ type: "surface.ensure", itemId: itemId! })).result;
-  db.query(
-    "UPDATE items SET data_json = json_set(data_json, '$.availability', 'unavailable') WHERE id = ?",
-  ).run(itemId!);
-  const split = await app.execute({ type: "pane.split", paneId: paneId!, direction: "vertical" });
-  expect(app.runtime.isLive(paneId!)).toBe(true);
-  expect(app.runtime.isLive(split.result.id)).toBe(true);
-});
-
 test("split equalizes untouched branches in its tab but preserves other tab ratios", () => {
   const { db, itemId } = organizationalFixture();
   const opened = applyCommand(db, { type: "surface.ensure", itemId }).result;

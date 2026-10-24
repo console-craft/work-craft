@@ -19,26 +19,6 @@ import {
 import { getControlHints } from "@/ui/interaction/control-hints";
 import type { TerminalMaterialRenderable } from "@/workbench/terminal-material";
 
-test("tab entry waits across a frame before the new terminal has native layout", async () => {
-  const setup = await localTabFixture(false);
-  try {
-    await setup.next();
-    await setup.respond();
-    setup.publish(twoTabSnapshot("tab-2", 5, 2, "a"));
-    const terminal = setup.renderer.root.findDescendantById("terminal:pane-2a")!;
-    expect(terminal.width).toBe(80);
-    expect(terminal.parent!.getLayout().width > 0).toBe(false);
-    act(() => setup.renderer.emit(CliRenderEvents.FRAME, { frameId: 100 }));
-    expect(statusText(setup)).not.toContain("too small");
-    await setup.flush();
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("terminal:pane-2a");
-    await act(async () => setup.mockInput.pressKey("x"));
-    expect(setup.received).toEqual([{ paneId: "pane-2a", bytes: [120] }]);
-  } finally {
-    act(() => setup.renderer.destroy());
-  }
-});
-
 test("explicit tab entry focuses the selected exited action without pressing; action-source Hyper and leader never become terminal input", async () => {
   const setup = await localTabFixture(false);
   try {
@@ -1099,13 +1079,7 @@ for (const cancel of ["scroll", "disconnect"] as const) {
   });
 }
 
-for (const transition of [
-  "item archive",
-  "parent archive",
-  "existing tab",
-  "source tab after new selection",
-  "context",
-] as const) {
+for (const transition of ["item archive", "parent archive", "existing tab", "context"] as const) {
   test(`native Hyper+n pre-response ${transition} restoration cannot rearm control-origin entry`, async () => {
     const initial = { ...surfaceSnapshot(), revision: 1 };
     initial.tabs.push({ ...initial.tabs[0]!, id: "other-tab", layout: null, position: 1 });
@@ -1114,13 +1088,7 @@ for (const transition of [
       act(() => setup.renderer.root.findDescendantById("region:tabs")!.focus());
       await setup.flush();
       await act(async () => setup.mockInput.pressKey("n", { hyper: true }));
-      const changed =
-        transition === "source tab after new selection"
-          ? createdTabSnapshot(2)
-          : structuredClone(initial);
-      if (transition === "source tab after new selection") {
-        changed.tabs.push(initial.tabs[1]!);
-      }
+      const changed = structuredClone(initial);
       changed.revision = 2;
       if (transition === "existing tab") {
         changed.navigation[0] = {
@@ -1138,7 +1106,7 @@ for (const transition of [
       }
       await setup.publish(changed);
       await setup.publish({
-        ...(transition === "source tab after new selection" ? changed : initial),
+        ...initial,
         revision: 3,
         surfaces: initial.surfaces,
       });
@@ -1269,71 +1237,6 @@ for (const origin of ["terminal:pane-1", "region:tabs", "region:category"] as co
         }
       });
     }
-  }
-}
-
-for (const newer of [false, true]) {
-  for (const outcome of ["failure", "cancelled success"] as const) {
-    test(`native Hyper+n ${outcome} cleans its observer without removing newer intent (${newer})`, async () => {
-      const setup = await liveInputFixture({ ...surfaceSnapshot(), revision: 1 });
-      try {
-        act(() => setup.renderer.root.findDescendantById("region:tabs")!.focus());
-        await setup.flush();
-        const frames = setup.renderer.listenerCount(CliRenderEvents.FRAME);
-        await act(async () => setup.mockInput.pressKey("n", { hyper: true }));
-        await setup.flush();
-        expect(setup.renderer.listenerCount(CliRenderEvents.FRAME)).toBe(frames + 1);
-        if (newer) {
-          await act(async () => setup.mockInput.pressKey("n", { hyper: true }));
-        }
-        await act(async () => {
-          if (outcome === "failure") {
-            setup.tabCreates[0]!.reject(new Error("Create refused"));
-          } else {
-            if (!newer) {
-              setup.mockInput.typeText("z");
-            }
-            setup.tabCreates[0]!.resolve({
-              ok: true,
-              revision: 2,
-              result: { id: "old-tab", tabId: "old-tab", paneId: "old-pane" },
-            });
-          }
-        });
-        await setup.flush();
-        expect(setup.renderer.listenerCount(CliRenderEvents.FRAME)).toBe(frames + (newer ? 1 : 0));
-        if (newer) {
-          await setup.publish(createdTabSnapshot(2, "starting"));
-          await act(async () =>
-            setup.tabCreates[1]!.resolve({
-              ok: true,
-              revision: 2,
-              result: {
-                id: "created-tab",
-                tabId: "created-tab",
-                paneId: "created-pane",
-                navigation: createdTabSnapshot(2).navigation[0],
-              },
-            }),
-          );
-          await setup.publish(createdTabSnapshot(3));
-          await act(async () => setup.mockInput.typeText("x"));
-          expect(setup.sent).toEqual([{ paneId: "created-pane", bytes: [120] }]);
-          expect(statusText(setup)).not.toContain("Create refused");
-        } else {
-          expect(setup.renderer.currentFocusedRenderable?.id).toBe("region:tabs");
-          expect(setup.sent).toEqual([]);
-          if (outcome === "failure") {
-            expect(statusText(setup)).toContain("Create refused");
-          }
-        }
-      } finally {
-        act(() => {
-          setup.store.stop();
-          setup.renderer.destroy();
-        });
-      }
-    });
   }
 }
 

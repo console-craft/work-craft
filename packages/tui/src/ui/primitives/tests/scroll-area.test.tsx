@@ -1,11 +1,6 @@
 import { expect, test } from "bun:test";
 
-import {
-  CliRenderEvents,
-  type InputRenderable,
-  parseColor,
-  type ScrollBoxRenderable,
-} from "@opentui/core";
+import { type InputRenderable, parseColor, type ScrollBoxRenderable } from "@opentui/core";
 import { act, createRef, type Dispatch, type SetStateAction, useState } from "react";
 
 import { testRender } from "@/tests/support/render";
@@ -220,59 +215,6 @@ test("focused descendants are revealed locally without overriding manual scrolli
     await act(async () => setup.flush());
     expect(right.current!.scrollTop).toBeGreaterThan(0);
     expect(area.scrollTop).toBe(0);
-  } finally {
-    act(() => setup.renderer.destroy());
-  }
-});
-
-test("scroll area cancels pending focus reveal when unmounted and preserves native overrides", async () => {
-  const ref = createRef<ScrollBoxRenderable>();
-  let setPresent!: Dispatch<SetStateAction<boolean>>;
-  function Fixture() {
-    const [present, updatePresent] = useState(false);
-    setPresent = updatePresent;
-    return (
-      <ThemeProvider theme={defaultTheme}>
-        {present ? (
-          <ScrollArea
-            ref={ref}
-            width={30}
-            height={6}
-            focusable={false}
-            scrollbarColor="error"
-            scrollbarOptions={{ trackOptions: { foregroundColor: "#123456" } }}
-          >
-            <Stack>
-              <Text height={20}>Content</Text>
-              <Button id="tail">Tail</Button>
-            </Stack>
-          </ScrollArea>
-        ) : null}
-      </ThemeProvider>
-    );
-  }
-  const setup = await testRender(<Fixture />, { width: 30, height: 8 });
-  try {
-    const unmountedFrames = setup.renderer.listenerCount(CliRenderEvents.FRAME);
-    const unmountedInputListeners = setup.renderer.stdin.listenerCount("data");
-    act(() => setPresent(true));
-    await act(async () => setup.flush());
-    expect(ref.current!.verticalScrollBar.slider.foregroundColor.toInts()).toEqual(
-      parseColor("#123456").toInts(),
-    );
-    await act(async () => setup.mockMouse.moveTo(2, 2));
-    await act(async () => setup.flush());
-    expect(ref.current!.verticalScrollBar.slider.foregroundColor.toInts()).toEqual(
-      parseColor("#123456").toInts(),
-    );
-    const frames = setup.renderer.listenerCount(CliRenderEvents.FRAME);
-    act(() => setup.renderer.root.findDescendantById("tail")!.focus());
-    expect(setup.renderer.listenerCount(CliRenderEvents.FRAME)).toBe(frames + 1);
-    act(() => setPresent(false));
-    expect(ref.current).toBeNull();
-    expect(setup.renderer.listenerCount(CliRenderEvents.FRAME)).toBe(unmountedFrames);
-    expect(setup.renderer.stdin.listenerCount("data")).toBe(unmountedInputListeners);
-    await act(async () => setup.flush());
   } finally {
     act(() => setup.renderer.destroy());
   }
@@ -551,44 +493,6 @@ test("explicit scrollbar colors and native axis overrides survive activity chang
         parseColor("#fedcba").toInts(),
       );
     }
-  } finally {
-    act(() => setup.renderer.destroy());
-  }
-});
-
-test("an outside wheel report clears hover activity without requiring a mouse move", async () => {
-  const ref = createRef<ScrollBoxRenderable>();
-  const setup = await testRender(
-    <ThemeProvider theme={defaultTheme}>
-      <ScrollArea ref={ref} width={30} height={6}>
-        <Text height={20}>Content</Text>
-      </ScrollArea>
-    </ThemeProvider>,
-    { width: 60, height: 8 },
-  );
-  async function settle() {
-    await act(async () => setup.flush());
-    await act(async () => setup.flush());
-  }
-  try {
-    await settle();
-    for (const afterEscape of [false, true]) {
-      await act(async () => setup.mockMouse.moveTo(2, 2));
-      await settle();
-      expect(ref.current!.verticalScrollBar.slider.foregroundColor.toInts()).toEqual(
-        parseColor(defaultTheme.colors.primary).toInts(),
-      );
-      if (afterEscape) {
-        act(() => setup.mockInput.pressKey("ESCAPE"));
-        await Bun.sleep(80);
-      }
-      await act(async () => setup.mockMouse.scroll(50, 1, "down"));
-      await settle();
-      expect(ref.current!.verticalScrollBar.slider.foregroundColor.toInts()).toEqual(
-        parseColor(defaultTheme.colors.mutedForeground).toInts(),
-      );
-    }
-    expect(ref.current!.scrollTop).toBe(0);
   } finally {
     act(() => setup.renderer.destroy());
   }

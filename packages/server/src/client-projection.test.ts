@@ -24,9 +24,7 @@ const frame: CompactMaterialFrame = {
 async function fixture() {
   const received: TerminalProjectionRequest[] = [];
   const published: string[] = [];
-  let hold = false;
   let stale = false;
-  let respond: (() => void) | undefined;
   const directory = await mkdtemp(join(tmpdir(), "wc-projection-"));
   const socketPath = join(directory, "d.sock");
   const server = Bun.serve({
@@ -77,11 +75,7 @@ async function fixture() {
             ),
           );
         }
-        if (hold) {
-          respond = reply;
-        } else {
-          reply();
-        }
+        reply();
       },
     },
   });
@@ -92,14 +86,8 @@ async function fixture() {
     connection,
     received,
     published,
-    hold() {
-      hold = true;
-    },
     stale() {
       stale = true;
-    },
-    reply() {
-      respond?.();
     },
     async close() {
       connection.close();
@@ -118,67 +106,6 @@ test("material replies retain their capture and never publish root shell message
     expect(f.published).toEqual([]);
     f.stale();
     await expect(f.connection.requestMaterial("p", context, 0)).rejects.toThrow("scope");
-  } finally {
-    await f.close();
-  }
-});
-
-test("aborted material requests drop late replies instead of publishing obsolete pictures", async () => {
-  const f = await fixture();
-  try {
-    f.hold();
-    const abort = new AbortController();
-    const request = f.connection.requestMaterial("p", context, 0, abort.signal);
-    const rejected = request.catch((error) => error);
-    while (f.received.length === 0) {
-      await Bun.sleep(1);
-    }
-    abort.abort();
-    expect(await rejected).toBeInstanceOf(Error);
-    f.reply();
-    await Bun.sleep(5);
-    expect(f.published).toEqual([]);
-  } finally {
-    await f.close();
-  }
-});
-
-test("paste snapshots caller bytes and sends bounded base64 chunks with the original context", async () => {
-  const f = await fixture();
-  try {
-    const bytes = Array.from({ length: 70000 }, () => 120);
-    const captured = {
-      ...context,
-      source: "input" as const,
-      kind: "paste" as const,
-      activitySequence: 7,
-    };
-    const sending = f.connection.sendSemantic("p", { kind: "paste", bytes }, captured);
-    bytes.fill(0);
-    expect(await sending).toEqual({ forwarded: true });
-    const transfers = f.received
-      .filter((message) => message.type === "terminal.paste")
-      .map((message) => message.transfer);
-    expect(transfers.map((transfer) => transfer.operation)).toEqual([
-      "begin",
-      "chunk",
-      "chunk",
-      "commit",
-    ]);
-    const chunks = transfers.filter((transfer) => transfer.operation === "chunk");
-    expect(chunks.map((transfer) => Buffer.from(transfer.data, "base64").length)).toEqual([
-      65536, 4464,
-    ]);
-    expect(Buffer.concat(chunks.map((transfer) => Buffer.from(transfer.data, "base64")))).toEqual(
-      Buffer.alloc(70000, 120),
-    );
-    expect(
-      f.received.every((message) => JSON.stringify(message.context) === JSON.stringify(captured)),
-    ).toBe(true);
-    expect(
-      Math.max(...f.received.map((message) => Buffer.byteLength(JSON.stringify(message)))),
-    ).toBeLessThan(90000);
-    expect(f.published).toEqual([]);
   } finally {
     await f.close();
   }

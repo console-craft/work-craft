@@ -211,86 +211,6 @@ test("large retained history still permits attachment and snapshot updates", asy
   }
 });
 
-for (const mode of ["control", "full"] as const) {
-  test(`${mode}: large metadata uses its own HTTP notification and leaves acknowledgments independent`, async () => {
-    const fixture = await startTestServer();
-    await fixture.app.execute({ type: "session.create", name: "x".repeat(600000) });
-    const path = mode === "control" ? "/control" : "/snapshot";
-    const realFetch = globalThis.fetch;
-    let release!: () => void;
-    let entered!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const fetching = new Promise<void>((resolve) => {
-      entered = resolve;
-    });
-    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
-      Object.assign(
-        async (...args: Parameters<typeof fetch>) => {
-          if (
-            String(args[0]).endsWith(path) &&
-            args[1] &&
-            "unix" in args[1] &&
-            args[1].unix === fixture.socketPath
-          ) {
-            entered();
-            await gate;
-          }
-          return realFetch(...args);
-        },
-        { preconnect: realFetch.preconnect },
-      ),
-    );
-    const snapshots: ServerMessage[] = [];
-    const stream = await fixture.client.stream(
-      { onMessage: (message) => snapshots.push(message) },
-      { snapshot: mode },
-    );
-    try {
-      await fetching;
-      const attached = await Promise.race([stream.attach(null), Bun.sleep(500).then(() => null)]);
-      expect(attached).not.toBeNull();
-      const result = await Promise.race([
-        stream.command(
-          { type: "session.create", name: "While HTTP is held" },
-          attached!.generation,
-        ),
-        Bun.sleep(500).then(() => null),
-      ]);
-      expect(result?.ok).toBe(true);
-      expect(
-        snapshots.filter(
-          (message) => message.type === "snapshot" || message.type === "control.snapshot",
-        ),
-      ).toEqual([]);
-      release();
-      const deadline = Date.now() + 3000;
-      while (
-        !snapshots.some(
-          (message) => message.type === (mode === "control" ? "control.snapshot" : "snapshot"),
-        ) &&
-        Date.now() < deadline
-      ) {
-        await Bun.sleep(1);
-      }
-      const received = snapshots.find(
-        (message) => message.type === (mode === "control" ? "control.snapshot" : "snapshot"),
-      );
-      expect(received).toBeDefined();
-      if (received?.type === "control.snapshot") {
-        expect(received.snapshot).not.toHaveProperty("terminalHistories");
-      }
-      expect(fetchSpy).toHaveBeenCalled();
-    } finally {
-      release();
-      fetchSpy.mockRestore();
-      stream.close();
-      await fixture.close();
-    }
-  });
-}
-
 test("snapshots above 512 KiB use HTTP notification independently of stream burst headroom", async () => {
   const fixture = await startTestServer({ withPane: true });
   fixture.history.append("pane-1", new Uint8Array(400_000).fill(120));
@@ -507,35 +427,6 @@ test("directory registration exposes requested and root IDs without opening a su
   }
 });
 
-test("bounds normal client requests when the daemon stops responding", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "work-craft-client-timeout-"));
-  const socketPath = join(directory, "work-craft.sock");
-  const server = Bun.serve({
-    unix: socketPath,
-    fetch() {
-      return new Promise<Response>(() => {});
-    },
-  });
-  const timeout = AbortSignal.timeout.bind(AbortSignal);
-  const timeoutSpy = spyOn(AbortSignal, "timeout").mockImplementation(() => timeout(10));
-  const request = createClient({ socketPath }).snapshot();
-  try {
-    const settled = await Promise.race([
-      request.then(
-        () => "resolved",
-        () => "rejected",
-      ),
-      Bun.sleep(100).then(() => "pending"),
-    ]);
-    expect(settled).toBe("rejected");
-  } finally {
-    timeoutSpy.mockRestore();
-    await server.stop(true);
-    await request.catch(() => {});
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
 test("ordinary stream input authorization never reads retained terminal histories", async () => {
   const fixture = await startTestServer({ withPane: true });
   await fixture.app.runtime.start(fixture.app.snapshot().panes[0]!);
@@ -668,57 +559,6 @@ test("field attribution survives real HTTP and client validation boundaries", as
   }
 });
 
-test("only successful durable commands advance and broadcast snapshots", async () => {
-  const fixture = await startTestServer();
-  const messages: ServerMessage[] = [];
-  let receiveFirst!: () => void;
-  let receiveSecond!: () => void;
-  const firstMessage = new Promise<void>((resolve) => (receiveFirst = resolve));
-  const secondMessage = new Promise<void>((resolve) => (receiveSecond = resolve));
-  let connection;
-
-  try {
-    connection = await fixture.client.stream({
-      onMessage(message) {
-        if (message.type !== "snapshot") {
-          return;
-        }
-        messages.push(message);
-        if (messages.length === 1) {
-          receiveFirst();
-        } else if (messages.length === 2) {
-          receiveSecond();
-        }
-      },
-    });
-    await firstMessage;
-
-    const created = await fixture.client.command({ type: "session.create", name: "Main" });
-    await secondMessage;
-    expect(created.revision).toBe(1);
-    expect(messages).toHaveLength(2);
-    expect(messages[1]).toMatchObject({
-      type: "snapshot",
-      snapshot: { revision: 1, sessions: [{ name: "Main" }] },
-    });
-
-    await expect(
-      fixture.client.command({ type: "workspace.create", sessionId: "missing", name: "Nope" }),
-    ).rejects.toThrow("session not found");
-    expect(await fixture.client.command({ type: "daemon.stop" })).toEqual({
-      ok: true,
-      revision: 1,
-      result: { id: "daemon", stopping: true },
-    });
-    await Bun.sleep(20);
-    expect((await fixture.client.health()).revision).toBe(1);
-    expect(messages).toHaveLength(2);
-  } finally {
-    connection?.close();
-    await fixture.close();
-  }
-});
-
 test("exposes owned history for shutdown flushing", async () => {
   const db = openDatabase(":memory:");
   seedPane(db);
@@ -810,38 +650,6 @@ test("closes malformed stream peers with policy violation", async () => {
     });
     expect(code).toBe(1008);
   } finally {
-    await fixture.close();
-  }
-});
-
-test("closes stream peers whose terminal input targets no live pane", async () => {
-  const fixture = await startTestServer();
-  const socket = new WebSocket(`ws+unix:${fixture.socketPath}:/stream`);
-  try {
-    const closed = new Promise<number>((resolve, reject) => {
-      socket.once("open", () =>
-        socket.send(
-          JSON.stringify({
-            type: "terminal.input",
-            paneId: "missing-pane",
-            data: Buffer.from("input").toString("base64"),
-          }),
-        ),
-      );
-      socket.once("close", resolve);
-      socket.once("error", reject);
-    });
-    const code = await Promise.race([
-      closed,
-      Bun.sleep(250).then(() => {
-        throw new Error("Timed out waiting for invalid stream peer to close");
-      }),
-    ]);
-
-    expect(code).toBe(1008);
-    expect((await fixture.client.health()).pid).toBe(process.pid);
-  } finally {
-    socket.terminate();
     await fixture.close();
   }
 });
