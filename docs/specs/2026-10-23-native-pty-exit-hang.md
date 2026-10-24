@@ -2,10 +2,18 @@
 
 ## Status and accepted risk
 
-Reopened on 2026-10-25; the user approved Bun 1.4.4 adoption after the causal
-mechanism was established. Local 200-prefix repetitions passed (1,600 tests,
-4,000 assertions), as did check, acceptance, tooling and compiled build/smoke;
-hosted verification is pending. Existing quarantine remains.
+The user approved Bun 1.4.4 adoption on 2026-10-25 after the causal mechanism was
+established. Correction `7135572` is published. The same macOS-14 diagnostic
+[comparison](https://github.com/console-craft/work-craft/actions/runs/40133539123)
+passed full acceptance (294 tests, five existing skips), then all 200 runtime-prefix
+repetitions (1,600 tests, 4,000 assertions, 76.51s), where 1.4.3 hung on repetition 156. Local check, acceptance, tooling, stress and compiled build/smoke also passed.
+
+[Normal PR CI at that correction](https://github.com/console-craft/work-craft/actions/runs/40133426237)
+passed core and Linux acceptance/build/smoke; both tooling hosts passed. macOS
+passed runtime tests but failed cold-history frame equality later (293 pass,
+five existing skips, one failure); its build/smoke were not run. That remaining
+frame failure is not a native exit stall or a fully green PR. Existing quarantine
+remains; its removal is still unfinished work.
 See [current terminal risks](../architecture/references/terminal-lifecycle.md#known-limitations-and-unresolved-risks).
 
 ## Confirmed mechanism and upstream correction
@@ -97,8 +105,7 @@ them from the original environment separately if needed, or capture new evidence
 
 ## Remaining verification
 
-Verify the approved 1.4.4 pin against the reduced runtime reproduction and ordinary
-Linux/macOS gates. Quarantine removal is separate: run the previously skipped
+Quarantine removal is separate: run the previously skipped
 failed-reactivation cases and their ordering-sensitive reproduction reliably before
 proposing removal. Passing ordinary acceptance with those cases skipped does not
 close that coverage gap.
