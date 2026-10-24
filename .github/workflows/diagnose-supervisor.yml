@@ -1,0 +1,34 @@
+name: Diagnose supervisor
+
+on:
+  push:
+    branches: [diagnose/test-supervisor]
+
+permissions:
+  contents: read
+
+jobs:
+  supervisor:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, macos-14]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Compare process inspection syntax without exposing environments
+        run: |
+          bun -e '
+            const format = "pid=,ppid=,lstart=,command=";
+            for (const options of [["-axo", format], ["eww", "-axo", format], ["eww", "axo", format]]) {
+              const result = Bun.spawnSync(["ps", ...options], {
+                env: { ...process.env, LC_ALL: "C" }, timeout: 1000, maxBuffer: 16 * 1024 * 1024,
+              });
+              console.log(JSON.stringify({ options, exitCode: result.exitCode, signalCode: result.signalCode, stderr: result.stderr.toString() }));
+            }
+          '
+      - name: Exercise existing supervisor contracts
+        run: bun test ./scripts/run-bounded.test.ts
