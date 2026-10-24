@@ -187,6 +187,11 @@ program that clears ownership and detaches between observations can escape
 tracking. Supervising uncooperative programs would require separate OS-level
 isolation, not permission to signal unrelated processes.
 
+The opt-in no-fork probe launcher owns its newly spawned process group. Timeout,
+cancellation and leader-exit cleanup share one termination guard: after a
+successful `SIGKILL` or `ESRCH`, they never signal that group again. Other signal
+errors propagate; a redundant signal can itself fail on macOS after termination.
+
 Classify failures: changed-behavior regressions block readiness; unrelated failures
 need evidence and an explicit scope statement; suspected runtime/infrastructure
 faults remain unresolved, not passed. After two unsuccessful causal experiments

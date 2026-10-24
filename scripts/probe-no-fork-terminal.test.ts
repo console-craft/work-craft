@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -279,6 +279,21 @@ test("a timeout reaps the owned probe and its child without signalling a differe
     stdout: "ignore",
     stderr: "ignore",
   });
+  const kill = process.kill.bind(process);
+  const killedGroups = new Set<number>();
+  const signal = spyOn(process, "kill").mockImplementation((pid, signal) => {
+    // macOS can return EPERM when an already-killed group is signalled again.
+    if (pid < 0 && signal === "SIGKILL" && killedGroups.has(pid)) {
+      throw Object.assign(new Error("kill() failed: EPERM: Operation not permitted"), {
+        code: "EPERM",
+      });
+    }
+    const result = kill(pid, signal);
+    if (pid < 0 && signal === "SIGKILL") {
+      killedGroups.add(pid);
+    }
+    return result;
+  });
   try {
     const script = `
       const child = Bun.spawn([process.execPath, "-e", "setInterval(() => {}, 1000)"], {
@@ -307,6 +322,7 @@ test("a timeout reaps the owned probe and its child without signalling a differe
     expect(() => process.kill(unrelated.pid, 0)).not.toThrow();
     expect(await readFile(join(root, "timeout.log"), "utf8")).toContain("probe-started");
   } finally {
+    signal.mockRestore();
     unrelated.kill("SIGKILL");
     await unrelated.exited;
     await rm(root, { recursive: true, force: true });
