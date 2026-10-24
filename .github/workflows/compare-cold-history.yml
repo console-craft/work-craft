@@ -1,0 +1,37 @@
+name: Compare cold-history baseline
+
+on:
+  push:
+    branches: [diagnose/cold-history-baseline]
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: macos-14
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+      - uses: actions/checkout@v7
+        with:
+          ref: eefa7e0134634d8b0f7ded3f1784b8dc30b338df
+          path: subject-base
+      - uses: actions/checkout@v7
+        with:
+          ref: a134eddae15702694eab51cebdefb56300365904
+          path: subject-head
+      - run: bun install --frozen-lockfile
+        working-directory: subject-base
+      - run: bun install --frozen-lockfile
+        working-directory: subject-head
+      - name: Base owning tests, once
+        working-directory: subject-base
+        run: bun ../scripts/run-bounded.ts 120000 bun test ./packages/tui/src/tests/cold-history.test.ts ./packages/tui/src/tests/entrypoint.test.ts
+      - name: Head owning tests, once
+        if: ${{ !cancelled() }}
+        working-directory: subject-head
+        run: bun ../scripts/run-bounded.ts 120000 bun test ./packages/tui/src/tests/cold-history.test.ts ./packages/tui/src/tests/entrypoint.test.ts
