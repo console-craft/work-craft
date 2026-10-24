@@ -3,6 +3,8 @@ import { expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import type { StreamConnection } from "@work-craft/server/client";
+
 import {
   focusSharedTerminal,
   sharedWait,
@@ -45,6 +47,29 @@ test("cold daemon recovery restores ordinary scrollback independently in two nor
   const fixture = await startSharedSessionFixture();
   const [a, b] = fixture.tuis;
   let oldPids: number[] = [];
+  const started = performance.now();
+  let phase = "before-crash";
+  let observation: Promise<StreamConnection> | undefined;
+  let lastFrame = "";
+  let lastState: { epoch?: string; geometry?: unknown; cursor?: number; tail?: string } = {};
+  const trace = (event: string, detail: unknown) => {
+    console.error(
+      "cold-frame-trace",
+      JSON.stringify({
+        ms: Math.round(performance.now() - started),
+        phase,
+        event,
+        detail,
+      }),
+    );
+  };
+  const frames = setInterval(() => {
+    const frame = b.frame();
+    if (frame !== lastFrame) {
+      lastFrame = frame;
+      trace("B-frame", { frame, observedDaemonState: lastState });
+    }
+  }, 20);
   try {
     await focusSharedTerminal(a);
     sharedWrite(
@@ -73,6 +98,39 @@ test("cold daemon recovery restores ordinary scrollback independently in two nor
       .split("\n")
       .map(Number);
     await fixture.crashDaemon();
+    phase = "reconnecting";
+    observation = fixture.client.stream({
+      onMessage(message) {
+        if (message.type === "snapshot") {
+          const history = message.snapshot.terminalHistories.find(
+            (h) => h.paneId === fixture.paneId,
+          );
+          lastState = {
+            epoch: message.snapshot.epoch,
+            geometry: message.snapshot.geometry,
+            cursor: history?.cursor,
+            tail: history && Buffer.from(history.data, "base64").toString().slice(-160),
+          };
+          trace("snapshot", lastState);
+        } else if (message.type === "terminal.geometry") {
+          lastState = { ...lastState, epoch: message.epoch, geometry: message.geometry };
+          trace("geometry", message);
+        } else if (message.type === "terminal.output" && message.paneId === fixture.paneId) {
+          const data = Buffer.from(message.data, "base64").toString();
+          lastState = {
+            ...lastState,
+            epoch: message.epoch,
+            cursor: message.cursor,
+            tail: ((lastState.tail ?? "") + data).slice(-160),
+          };
+          trace("output", { ...message, data });
+        }
+      },
+      onClose(error) {
+        trace("observer-closed", String(error ?? "closed"));
+      },
+    });
+    void observation.catch((error) => trace("observer-error", String(error)));
     await sharedWait(
       () =>
         [a, b].every((tui) => {
@@ -91,6 +149,11 @@ test("cold daemon recovery restores ordinary scrollback independently in two nor
       expect(tui.frame()).not.toContain("Console (Focused)");
     }
     const bottom = b.frame();
+    phase = "passive-baseline";
+    trace("baseline", { frame: bottom, observedDaemonState: lastState });
+    await Bun.sleep(400);
+    trace("before-first-scroll", { frame: b.frame(), changed: b.frame() !== bottom });
+    phase = "scrolling-A";
     const seen = new Set<string>();
     for (let step = 0; step < 195; step++) {
       for (const marker of ["COLD-000-42", "COLD-090-42", "COLD-179-42"]) {
@@ -100,7 +163,9 @@ test("cold daemon recovery restores ordinary scrollback independently in two nor
       await Bun.sleep(35);
     }
     expect([...seen].sort()).toEqual(["COLD-000-42", "COLD-090-42", "COLD-179-42"]);
+    trace("before-isolation-assertion", { frame: b.frame(), changed: b.frame() !== bottom });
     expect(b.frame()).toBe(bottom);
+    phase = "after-isolation-assertion";
     for (let step = 0; step < 195; step++) {
       sharedWrite(a, "\x1b[<65;80;15M");
     }
@@ -133,6 +198,8 @@ test("cold daemon recovery restores ordinary scrollback independently in two nor
       Buffer.from(retained.data, "base64").toString().split("daemon restarted; shell restored"),
     ).toHaveLength(2);
   } finally {
+    clearInterval(frames);
+    (await observation?.catch(() => undefined))?.close();
     await fixture.close();
   }
   for (const pid of oldPids) {

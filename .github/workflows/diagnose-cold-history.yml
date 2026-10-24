@@ -1,0 +1,19 @@
+name: Diagnose cold-history frame
+
+on:
+  push:
+    branches: [diagnose/cold-history-frame]
+
+permissions:
+  contents: read
+
+jobs:
+  trace:
+    runs-on: macos-14
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Trace the existing full acceptance sequence
+        run: bun run test:acceptance
