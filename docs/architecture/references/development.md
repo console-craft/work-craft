@@ -1,8 +1,8 @@
 # Development and verification
 
 Read the [architecture overview](../overview.md) and [ownership map](ownership.md)
-before changing the system. The commands here describe the existing workflow;
-they do not introduce the proposed test overhaul.
+before changing the system. This reference owns the implemented verification
+policy; older testing proposals are context, not additional gates.
 
 ## Setup and running from source
 
@@ -79,9 +79,28 @@ traversal and `Ctrl+c` to exit. Click page background to focus scrolling; nested
 scroll areas keep wheel events local. These theme controls are demos, not an
 application theme preference. Composite sections live in `demos/component-demos/`.
 
+## Test-first changes without suite growth
+
+Superpowers/TDD remains a RED → GREEN development loop, not a requirement to add a
+new permanent test for every function or commit. Before RED, name the regression,
+its primary test owner and its execution gate. Extend the existing owning test
+when it already establishes that contract; add a new case for a distinct risk.
+
+Use the cheapest faithful boundary. Real SQLite, authority and process-lifecycle
+contracts still need their real boundaries; routine UI assertions should not
+reimplement them. Additional input methods, layouts and response orderings earn
+coverage when they expose different failures, not merely more combinations.
+
+Consolidation must leave a retained test that catches the original regression.
+Temporary probes and duplicate assertions can go only after verifying that
+protection survives. There is no test-count or coverage-growth quota. Choose gate
+membership by cost and product risk, never by whether the test was written first
+or whether moving a failing product contract would make the gate green. Keep this
+policy local to the repository rather than modifying installed Superpowers skills.
+
 ## Checks and test execution
 
-Run the full repository gate before completing a change:
+Run the everyday repository gate before completing a change:
 
 ```sh
 bun run check
@@ -92,28 +111,42 @@ It runs, sequentially:
 1. `bun run lint` (Oxlint).
 2. `bun run format:check` (Oxfmt).
 3. `bun run typecheck` (TypeScript).
-4. `bun run test` (`bun test`, automatic correctness discovery).
-5. `bun run build` (current-host standalone executable).
-6. `bun run build:smoke` (relocated compiled CLI/TUI/daemon and PTY coverage).
+4. `bun run test:core` (also `bun run test`).
 
-There is currently no separate fast/unit/integration execution policy. The
-ordinary suite includes pure logic, SQLite, native parser/renderer, filesystem/Git,
-CLI/daemon/PTY and multi-TUI acceptance tests. Capability location identifies
-ownership, not cost or isolation. Native continuation characterizations run by
-default. Do not silently move correctness assertions into opt-in diagnostics.
+It does **not** compile or start real application/PTY acceptance journeys. Local
+commits are recoverable checkpoints, not release certification.
 
-Use targeted existing suites during development, then the full gate:
+| Command             | Coverage                                                                                          | External deadline                  |
+| ------------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| `test`, `test:core` | Rules, real SQLite, lightweight transport and native component/parser contracts                   | 120 seconds                        |
+| `test:acceptance`   | Real application/PTY, CLI/daemon, recovery and multi-TUI journeys                                 | 300 seconds                        |
+| `test:all`          | Core followed by acceptance: all product suites                                                   | Per-suite deadlines above          |
+| `test:tooling`      | Benchmark-harness processes, preview seeding/build, no-fork probes and research characterizations | 300 seconds                        |
+| `check:all`         | Static checks, all product suites, build and relocated compiled smoke                             | Suite deadlines; smoke 120 seconds |
+
+Gate membership lives in [`scripts/test-gates.ts`](../../../scripts/test-gates.ts),
+not directory layout. It discovers correctness files under `packages/` and
+`scripts/`; new tests default to core. Explicit acceptance/tooling exceptions must
+exist and cannot overlap. `bun scripts/test-gates.ts <suite> --list` lists exact
+paths without running them. Capability location identifies ownership, not cost or
+isolation. Tooling assertions remain executable; they are not product acceptance
+or known-failing diagnostics. Bare `bun test` still performs Bun's broad discovery
+across all three groups; use repository scripts for normal gates.
+
+Use focused tests while editing, then `check`. Changes touching a native/process
+contract also need the affected acceptance cases locally; tooling/dependency
+changes need the affected tooling cases. Use the external supervisor for focused
+native/process execution:
 
 ```sh
 bun test packages/server/src/application/navigation.test.ts
-bun test packages/server/src/terminal/tests
 bun test packages/tui/src/shell/tests
 bun test packages/tui/src/client/tests
 bun test packages/tui/src/ui/components/tests
 bun test packages/tui/src/ui/interaction/tests packages/tui/src/ui/theming/tests
 bun test packages/tui/src/demos/tests
-bun test packages/tui/src/tests/entrypoint.test.ts
-bun test packages/tui/src/tests/shared-session.test.ts
+bun scripts/run-bounded.ts 300000 bun test ./packages/tui/src/tests/entrypoint.test.ts
+bun scripts/run-bounded.ts 300000 bun test ./packages/tui/src/tests/shared-session.test.ts
 ```
 
 Real-process acceptance requires a working shell/PTY and Git where repositories
@@ -123,17 +156,48 @@ root. Three failed-reactivation cases are quarantined on macOS for an unresolved
 native hang; their assertions still run on other platforms. See
 [known risks](terminal-lifecycle.md#known-limitations-and-unresolved-risks).
 
-The current [Git hooks](../../../lefthook.yml) format/lint staged files, typecheck
-and run the **whole ordinary suite at pre-commit**. Pre-push runs the full check.
-Hooks unset Git-local environment variables so fixture repositories cannot target
-the invoking repository. Do not stage or commit as a side effect of verification.
+The [Git hooks](../../../lefthook.yml) format/lint staged files at pre-commit;
+commitlint remains enabled. Pre-push runs everyday `check`, unsetting Git-local
+environment variables so fixture repositories cannot target the invoking
+repository. Do not stage or commit as a side effect of verification.
 
-[CI](../../../.github/workflows/ci.yml) runs the full check on Ubuntu for main
-pushes and pull requests. The macOS job builds and runs compiled smoke only; it
-does not run the full ordinary suite. Passing one host does not certify every
-supported platform or physical terminal. Existing React `act(...)` diagnostics,
-listener warnings and a server `no-unsafe-finally` lint warning are not claims of
-repaired timing or long-duration stability.
+[PR/main CI](../../../.github/workflows/ci.yml) runs core/static checks on Ubuntu
+and product acceptance, build and compiled smoke on **both Ubuntu and macOS**.
+Require `check`, `acceptance (ubuntu-latest)` and `acceptance (macos-14)` in branch
+protection; workflow files alone do not configure remote merge enforcement.
+[Release](../../../.github/workflows/release.yml) runs `check:all` on each packaged
+platform. A [separate tooling workflow](../../../.github/workflows/test-tooling.yml)
+runs on relevant scripts, dependency, terminal/material and fixture changes, or by
+manual dispatch. It never substitutes for product checks. CI jobs have explicit
+15-minute limits; no gate automatically retries a failure.
+
+[`run-bounded.ts`](../../../scripts/run-bounded.ts) keeps supervision in a separate
+native-free parent, forwards output live, and exits nonzero on timeout (124),
+interruption or unsafe cleanup. It tracks owned descendants and revalidates process
+birth before signalling, including detached fixture processes; it never restarts
+the user's daemon or deletes uncertain fixture state. A timer in a native-blocked
+test process is not an external watchdog.
+
+Detached fixture launchers must preserve `WORK_CRAFT_TEST_RUN_ID`. When deliberately
+scrubbing an environment, pass `testProcessEnvironment(cleanEnv)` from
+`scripts/run-bounded.ts`; it transfers only the ownership marker, not ordinary
+environment variables. All current detached application/fixture launchers retain
+the marker. This is cooperative test supervision, not an OS sandbox: an arbitrary
+program that clears ownership and detaches between observations can escape
+tracking. Supervising uncooperative programs would require separate OS-level
+isolation, not permission to signal unrelated processes.
+
+Classify failures: changed-behavior regressions block readiness; unrelated failures
+need evidence and an explicit scope statement; suspected runtime/infrastructure
+faults remain unresolved, not passed. After two unsuccessful causal experiments
+or roughly 20 minutes without new evidence, preserve the reproducer, remaining risk
+and next useful experiment rather than making debugging an open-ended feature gate.
+Quarantine requires an explicit risk decision and retained assertions/revisit
+criteria; moving a failing product test into tooling is not a repair.
+
+Passing one host does not certify every supported platform or physical terminal.
+Existing React `act(...)` diagnostics, listener warnings and a server
+`no-unsafe-finally` lint warning are not repaired timing or long-duration stability.
 
 When retaining a command log, mirror both streams and preserve failure status:
 
@@ -144,9 +208,9 @@ bun run check 2>&1 | tee check.log
 
 ## Manual benchmarks and known-failing diagnostics
 
-Output benchmarks require a fresh artifact directory and are outside the normal
-gate. The full run compares PTY/native/application paths, fifty panes and a
-ten-minute soak:
+Output benchmarks require a fresh artifact directory and are outside product and
+tooling correctness gates. The full run compares PTY/native/application paths,
+fifty panes and a ten-minute soak, with a 1,800-second external deadline:
 
 ```sh
 PROFILE_DIR="$(mktemp -d)"
@@ -163,6 +227,7 @@ bun run diagnose:hyperlinks
 This explicitly selects three OSC8/hidden-wide fidelity reproducers with their
 original assertions. They currently fail against stock OpenTUI 0.6.6 and exit
 nonzero; they are evidence of unsupported fidelity, not a passing acceptance gate.
+The command has a 60-second external deadline.
 `.benchmark.ts` and `.diagnostic.ts(x)` files require explicit selection rather
 than an opt-in skip flag. Neither command certifies performance parity or visual
 fidelity.

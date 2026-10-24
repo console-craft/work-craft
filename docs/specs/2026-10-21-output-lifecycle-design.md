@@ -134,5 +134,5 @@ can establish the contract. Current commands are in the development guide.
 Complete this work only with recorded serial comparisons, accepted latency/memory
 results, input-ready capacity/switch/recovery evidence, the full ten-minute soak,
 real Neovim/OpenCode physical acceptance, repeated regressions, independent review
-and `bun run check` including compiled smoke. Report Linux, other terminals,
+and `bun run check:all` including compiled smoke. Report Linux, other terminals,
 paid-provider throughput and all-day behavior separately when unverified.

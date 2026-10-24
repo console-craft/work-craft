@@ -18,11 +18,12 @@ jobs:
           - runner: ubuntu-latest
             platform: linux-x64
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
-      - run: bun run check
+      - run: bun run check:all
       - name: Archive and upload executable
         env:
           GH_TOKEN: ${{ github.token }}

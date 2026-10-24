@@ -104,5 +104,11 @@ Connected shell/surface fixtures use
 [`tests/support/material-stream.ts`](../../../packages/tui/src/tests/support/material-stream.ts),
 which creates a real daemon parser per request and destroys it afterward.
 These are integration fixtures, not proof that all capability tests are isolated.
-See [development and verification](development.md#checks-and-test-execution) for
-the current commands and execution policy.
+Gate membership is defined by `scripts/test-gates.ts`, independently of capability
+ownership. Keep new tests with their owner and in core by default; explicitly
+classify real application/PTY acceptance and research/tooling without moving the
+files. Missing/overlapping explicit entries fail selection. Before RED, identify
+the protected failure and primary test owner; extend existing coverage before
+adding a new permutation of the same contract. See
+[development and verification](development.md#checks-and-test-execution) for the
+commands, external deadlines and execution policy.

@@ -9,10 +9,7 @@ const hooks = Bun.YAML.parse(await Bun.file(join(root, "lefthook.yml")).text()) 
   { jobs: { name: string; run: string }[] }
 >;
 
-for (const [hook, job] of [
-  ["pre-commit", "test"],
-  ["pre-push", "check"],
-] as const) {
+for (const [hook, job] of [["pre-push", "check"]] as const) {
   test(`${hook} isolates fixture Git commands from the invoking repository`, async () => {
     const temporaryDirectory = await mkdtemp(join(tmpdir(), "work-craft-hook-"));
     const invoking = join(temporaryDirectory, "invoking");
