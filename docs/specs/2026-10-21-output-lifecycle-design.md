@@ -63,7 +63,11 @@ numbers. Measure harness and child cost separately from application/daemon cost.
    sessions; switch among ten running TUIs after hidden output exceeds retained
    raw history, then edit immediately after each switch.
 4. **Overload/recovery:** keep the four-pane 4-MiB burst's original
-   16-KiB/60-ms/64-redraw workload and deadlines. Stall a viewer and delay one
+   16-KiB/60-ms/64-redraw workload. On October 25, the user approved increasing
+   only its per-producer completion wait from four to eight seconds after timing
+   diagnostics showed narrow completion margin. This is scheduling tolerance,
+   not a demonstrated root-cause repair; retain the strict `<1000 ms` input target,
+   passive final-frame assertions and all other deadlines. Stall a viewer and delay one
    pane's recovery while another remains usable. Include history rollover,
    same-cursor resizes, reconnect, confirmed detach/deletion and cold daemon restart.
 
@@ -115,8 +119,9 @@ certify all-day stability.
   daemon read/parse/publication, client receipt/material/render, child input and
   observed display. Separate native-call blocking from application and harness
   cost; do not infer the bottleneck from code shape alone.
-- Do not increase timeouts, remove assertions, raise resource budgets or require
-  user cleanup to manufacture success. Test fixes must preserve intended behavior.
+- Except for the explicitly approved burst-completion tolerance above, do not
+  increase timeouts, remove assertions, raise resource budgets or require user
+  cleanup to manufacture success. Test fixes must preserve intended behavior.
 
 ## Evidence gaps and completion
 

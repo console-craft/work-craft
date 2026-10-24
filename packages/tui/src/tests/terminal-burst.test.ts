@@ -139,10 +139,13 @@ test("four busy panes retain both client surfaces and active input during a four
       await Bun.sleep(30);
     }
     samples.push(residentKiB(daemonPid, [a.child.pid, b.child.pid]));
+    // Completion includes paced output; responsiveness keeps its separate <1000ms assertion.
     for (let index = 0; index < 4; index++) {
       await sharedWait(
         () => Bun.file(join(fixture.home, `done-${index}`)).exists(),
         `pane ${index} completes`,
+        () => a.frame() + "\n" + b.frame(),
+        8000,
       );
     }
     await sharedWait(

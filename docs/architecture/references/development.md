@@ -158,6 +158,12 @@ platforms. Cold-history frame equality has also failed intermittently despite
 green runs; preserve that assertion and its open investigation. See
 [known risks](terminal-lifecycle.md#known-limitations-and-unresolved-risks).
 
+Shared TUI waits default to four seconds. The four-pane burst alone allows eight
+seconds per producer for completion of its paced 4-MiB output; its strict
+`<1000 ms` input-to-visible target, final-frame assertions and 16-KiB/60-ms/64-redraw
+workload remain unchanged. This completion tolerance is not a root-cause repair
+or permission to relax other readiness/performance deadlines.
+
 The [Git hooks](../../../lefthook.yml) format/lint staged files at pre-commit;
 commitlint remains enabled. Pre-push runs everyday `check`, unsetting Git-local
 environment variables so fixture repositories cannot target the invoking
