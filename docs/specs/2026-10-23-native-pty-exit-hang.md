@@ -2,11 +2,33 @@
 
 ## Status and accepted risk
 
-Open; investigated and deferred by the user on 2026-10-23.
-This is not a claimed runtime repair or proven test-only flakiness. Whether it can
-affect ordinary daemon use remains unknown. This spec preserves the unresolved
-investigation, not obsolete PR/merge gates or authorization to change runtimes,
-dependencies or test policy. See [current terminal risks](../architecture/references/terminal-lifecycle.md#known-limitations-and-unresolved-risks).
+Reopened on 2026-10-25; the user approved Bun 1.4.4 adoption after the causal
+mechanism was established. Local 200-prefix repetitions passed (1,600 tests,
+4,000 assertions), as did check, acceptance, tooling and compiled build/smoke;
+hosted verification is pending. Existing quarantine remains.
+See [current terminal risks](../architecture/references/terminal-lifecycle.md#known-limitations-and-unresolved-risks).
+
+## Confirmed mechanism and upstream correction
+
+[Hosted diagnostic run 40129107315](https://github.com/console-craft/work-craft/actions/runs/40129107315)
+passed full acceptance, then hung on repetition 156 of the first eight runtime
+tests in a fresh process. All 250 main-thread samples were in the same
+`__wait4_nocancel` path; the Bash child was exiting. Preceding TUI tests in the same
+process are not necessary for this reproduction.
+
+A local kernel-only `forkpty` probe established that `EVFILT_PROC` registration
+can return `ESRCH` while `waitpid(WNOHANG)` still returns zero. Reading the child's
+pending output from the PTY master then lets `waitpid` complete. XNU's
+`proc_exit` drains the controlling terminal through `ttywait` before reaping.
+Bun's blocking fallback therefore prevents the very output read needed to finish
+child exit. This is not a test-only synchronization failure.
+
+[Bun 1.4.4's process implementation](https://github.com/oven-sh/bun/blob/bun-v1.4.4/src/spawn/process.rs)
+moves macOS ESRCH reaping to a dedicated thread, preserving event-loop PTY reads.
+Both initial watch and rewatch paths avoid the blocking fallback. Adopt that
+released correction rather than changing application lifecycle semantics, dropping
+final output, adding sleeps, or increasing test deadlines. The existing runtime
+replacement acceptance case owns project-level regression protection.
 
 ## Quarantined coverage
 
@@ -18,7 +40,7 @@ stopped-history tests, real recovery acceptance and all other tests remain enabl
 The deferred gap is direct native coverage of retaining the final picture after
 these three failed manual-reactivation paths. Keep the production review fixes.
 
-## Reproduction and evidence
+## Earlier reproduction and evidence
 
 On macOS with Bun 1.4.3 (`c6da4a4d3`) and stock OpenTUI 0.6.6, temporarily remove
 the macOS skip locally and run this bounded reproduction:
@@ -31,11 +53,11 @@ Use an external watchdog: JS test deadlines cannot interrupt the native wait.
 Sampled runners block in `__wait4_nocancel`, with a Bash child stuck exiting.
 Installed-Bun disassembly matches its
 [macOS ESRCH process-exit fallback](https://github.com/oven-sh/bun/blob/c6da4a4d3/src/spawn/process.rs#L366-L390),
-which deliberately calls blocking `wait4` on the event-loop thread. Why the child
-cannot finish exiting is not established. The blocking instruction was sampled at
+which deliberately calls blocking `wait4` on the event-loop thread. At that stage,
+why the child could not finish exiting was not established. The instruction was sampled at
 offset `0xa57de8` in that pinned binary, after an errno-3 (`ESRCH`) branch. This
-identifies the blocking mechanism, not the underlying child-exit cause or proof of
-shared native-state corruption.
+identified the blocking mechanism; the causal explanation above was established
+later. Shared native-state corruption was not demonstrated.
 
 ## Experiments already tried
 
@@ -73,9 +95,10 @@ in the audited cleanup checkout. Git preserves the written report, not those raw
 logs/samples; do not claim they are bundled or verified accessible here. Recover
 them from the original environment separately if needed, or capture new evidence.
 
-## Revisit criteria
+## Remaining verification
 
-Time-box a separate runtime investigation, preserving current behavior and tests.
-A controlled comparison with another official Bun release is one next experiment,
-not authorization to change the project's runtime pin. Remove the quarantine only
-after the reduced reproduction and ordinary full verification finish reliably.
+Verify the approved 1.4.4 pin against the reduced runtime reproduction and ordinary
+Linux/macOS gates. Quarantine removal is separate: run the previously skipped
+failed-reactivation cases and their ordering-sensitive reproduction reliably before
+proposing removal. Passing ordinary acceptance with those cases skipped does not
+close that coverage gap.
