@@ -54,7 +54,7 @@ jobs:
           console.error("test-process started", process.pid);
           EOF
       - name: Direct lifecycle execution
-        run: /usr/bin/time -l bun --preload ./.superpowers/trace-kill.ts test ./packages/server/src/daemon/lifecycle.test.ts
+        run: /usr/bin/time -l bun test --preload ./.superpowers/trace-kill.ts ./packages/server/src/daemon/lifecycle.test.ts
       - name: Supervised lifecycle execution
         if: always()
-        run: /usr/bin/time -l bun scripts/run-bounded.ts 60000 bun --preload ./.superpowers/trace-kill.ts test ./packages/server/src/daemon/lifecycle.test.ts
+        run: /usr/bin/time -l bun scripts/run-bounded.ts 60000 bun test --preload ./.superpowers/trace-kill.ts ./packages/server/src/daemon/lifecycle.test.ts
