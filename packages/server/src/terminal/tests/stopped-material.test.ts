@@ -105,7 +105,7 @@ test("stopped history without any runtime reconstructs at its recorded grid or l
 
 for (const failure of ["prepare", "capture", "spawn"] as const) {
   // Quarantined macOS native exit hang; keep assertions for the tracked follow-up:
-  // docs/superpowers/handovers/2026-10-23-native-pty-exit-hang.md
+  // docs/specs/2026-10-23-native-pty-exit-hang.md
   test.skipIf(process.platform === "darwin")(
     `failed ${failure} during Reactivate preserves the prior final picture across generations`,
     async () => {
