@@ -44,8 +44,9 @@ export async function sharedWait(
   predicate: () => boolean | Promise<boolean>,
   message: string,
   details: () => string = () => "",
+  timeoutMs = 4000,
 ): Promise<void> {
-  const deadline = Date.now() + 4000;
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (await predicate()) {
       return;

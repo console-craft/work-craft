@@ -93,7 +93,7 @@ stopping unrelated runtimes. Keep one normal runnable entry point, not a second 
 
 ## Small stabilization debt
 
-These two deferred Coding issues remain distinct from the delivered navigator:
+These deferred issues remain distinct from the delivered navigator:
 
 - Prefer the relevant active-source background error instead of stable source-key
   ordering. Current owner: `packages/tui/src/shell/errors.ts`.
@@ -106,6 +106,27 @@ These two deferred Coding issues remain distinct from the delivered navigator:
   them. Preserve this diagnostic-helper validation debt during the test overhaul;
   normal captured bytes are valid, and canonical base64 validation cannot recover
   malformed original values. This is not an established production validation defect.
+
+## Deferred test-cost reduction proposal
+
+The testing-policy overhaul is delivered; commands, gates, hooks, failure handling
+and test-first policy now live in the
+[development reference](../architecture/references/development.md).
+The retired proposal also suggested deeper cost reduction, not implemented or
+authorized as part of that gate split:
+
+- Measure expensive cases by cost and distinct product risk, then consolidate
+  repeated private-structure assertions, redundant permutations and over-broad
+  fixtures while proving retained tests still catch the original regressions.
+- Preserve real persistence, input-authority, lifecycle, synchronization and UI
+  interaction coverage. Minimal dependency compatibility belongs in product
+  gates; wider characterizations remain separate executable tooling.
+- The proposal's approximately 15-second fast and 60-second core-integration
+  ambitions are unachieved targets, not current gate names, deadlines or promises.
+  Agree any further split and budget from measurements; do not delete by count,
+  impose coverage-growth quotas or reclassify failures to obtain green gates.
+
+This is optional follow-up, not a new merge or release prerequisite.
 
 ## Delivery constraints
 

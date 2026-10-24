@@ -15,10 +15,21 @@
 - Prefer native OpenTUI primitives until a dedicated local primitive or component exists. Keep application-specific behavior in callers.
 - Keep the CLI non-interactive and Unix-like, with plain-text or JSON output.
 - Do not introduce remote, distributed, or plugin-system abstractions without an explicit requirement.
-- Run `bun run check` before completing work.
+- Run `bun run check` before completing work, plus affected acceptance/tooling tests for relevant changes. Local commits are checkpoints; CI owns complete product acceptance on macOS/Linux. Use `bun run check:all` for local full-product certification, not every edit or commit.
 - When saving shell-command output to a log, also mirror stdout and stderr to the terminal with `2>&1 | tee <log>`, and enable `pipefail` so command failures propagate.
 - Use Conventional Commits for commit messages.
 - Do not stage or commit changes unless explicitly requested or when required when running some skill that requires it.
+
+## Test-First Work (Including Superpowers)
+
+- Keep RED → GREEN. Before writing a regression test, name the failure it must catch, its primary test owner and its execution gate.
+- Extend an existing owning test when it already covers the contract. Add a separate case for a distinct failure mode, not automatically for every function or implementation step.
+- Use the cheapest boundary that can faithfully prove the behavior. Keep real database/process tests where durability, authority or lifecycle is the risk; do not reproduce those boundaries in generic UI fixtures.
+- Add response-order/input/layout permutations only when they protect different failures. Prefer behavioral outcomes over private structure, exact frames, styles or mock choreography unless those are the actual contract.
+- Consolidation must retain protection against the original regression. Remove a temporary probe or duplicate only after verifying the surviving test can catch that failure; do not delete by count or require test-count/coverage growth.
+- Test-first development does not make a test a pre-commit requirement. Assign its gate by cost and product risk; never move a failing product contract into tooling or diagnostics just to obtain a green gate.
+- Use `bun run test`/`bun run check` for routine repository gates; use `bun test` with explicit paths for focused work, not bare broad discovery. Detached fixtures must retain `WORK_CRAFT_TEST_RUN_ID`; use `testProcessEnvironment()` from `scripts/run-bounded.ts` when scrubbing their environment.
+- Apply this policy through repository instructions; do not edit installed/global Superpowers skills as part of project work.
 
 ## Coding Style and Conventions
 

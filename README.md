@@ -96,8 +96,8 @@ work-craft daemon status
   starts fresh shells where appropriate—not the memory of your previous editor
   or other running applications. Already stopped shells stay stopped.
 - History is bounded, not an unlimited archive. Terminal rendering still has
-  known Unicode/hyperlink limitations, and a macOS PTY exit hang remains under
-  investigation. See [runtime limitations](docs/architecture/references/terminal-lifecycle.md#known-limitations-and-unresolved-risks).
+  known Unicode/hyperlink limitations. See
+  [runtime limitations](docs/architecture/references/terminal-lifecycle.md#known-limitations-and-unresolved-risks).
 - Non-Coding categories currently provide generic items and terminal workspaces,
   not specialized task, GitHub or Azure DevOps screens.
 

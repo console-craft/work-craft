@@ -3,6 +3,8 @@ import { expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import type { StreamConnection } from "@work-craft/server/client";
+
 import {
   focusSharedTerminal,
   sharedWait,
@@ -45,6 +47,7 @@ test("cold daemon recovery restores ordinary scrollback independently in two nor
   const fixture = await startSharedSessionFixture();
   const [a, b] = fixture.tuis;
   let oldPids: number[] = [];
+  let geometryViewer: StreamConnection | undefined;
   try {
     await focusSharedTerminal(a);
     sharedWrite(
@@ -90,6 +93,38 @@ test("cold daemon recovery restores ordinary scrollback independently in two nor
       expect(tui.output()).not.toContain("Unhandled error");
       expect(tui.frame()).not.toContain("Console (Focused)");
     }
+    // Reproduce the 24-row recovery picture before measured viewer geometry takes over.
+    geometryViewer = await fixture.client.stream({ onMessage() {} });
+    const attachment = await geometryViewer.attach(fixture.sessionId);
+    const current = await fixture.client.snapshot();
+    const navigation = current.navigation.find(({ sessionId }) => sessionId === fixture.sessionId)!;
+    const stamp = {
+      epoch: current.epoch,
+      attachmentGeneration: attachment.generation,
+      navigationGeneration: navigation.generation,
+      geometrySequence: current.geometry.tabs.find(({ tabId }) => tabId === fixture.tabId)!
+        .generation,
+    };
+    geometryViewer.reportViewport(
+      {
+        ...stamp,
+        tabId: fixture.tabId,
+        canvas: { cols: 80, rows: 25 },
+        eligible: true,
+      },
+      stamp,
+    );
+    await sharedWait(
+      () => b.frame().match(/COLD-\d+-42/)?.[0] === "COLD-160-42",
+      "controlled reconnect-sized picture in B",
+      b.frame,
+    );
+    geometryViewer.close();
+    await sharedWait(
+      () => b.frame().match(/COLD-\d+-42/)?.[0] === "COLD-159-42",
+      "B renders measured geometry before the scroll-isolation baseline",
+      b.frame,
+    );
     const bottom = b.frame();
     const seen = new Set<string>();
     for (let step = 0; step < 195; step++) {
@@ -133,6 +168,7 @@ test("cold daemon recovery restores ordinary scrollback independently in two nor
       Buffer.from(retained.data, "base64").toString().split("daemon restarted; shell restored"),
     ).toHaveLength(2);
   } finally {
+    geometryViewer?.close();
     await fixture.close();
   }
   for (const pid of oldPids) {

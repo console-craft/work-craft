@@ -107,7 +107,11 @@ export async function runProbeCommand(
   }
   let timedOut = false;
   let cancelled = false;
+  let groupStopped = false;
   function stopGroup(): void {
+    if (groupStopped) {
+      return;
+    }
     try {
       process.kill(-child.pid, "SIGKILL");
     } catch (error) {
@@ -115,6 +119,8 @@ export async function runProbeCommand(
         throw error;
       }
     }
+    // Timeout/cancellation already killed the group; exit cleanup must not signal it again.
+    groupStopped = true;
   }
   function cancel(): void {
     cancelled = true;
