@@ -120,7 +120,11 @@ test("cold daemon recovery restores ordinary scrollback independently in two nor
       b.frame,
     );
     geometryViewer.close();
-    await focusSharedTerminal(b);
+    await sharedWait(
+      () => b.frame().match(/COLD-\d+-42/)?.[0] === "COLD-159-42",
+      "B renders measured geometry before the scroll-isolation baseline",
+      b.frame,
+    );
     const bottom = b.frame();
     const seen = new Set<string>();
     for (let step = 0; step < 195; step++) {
