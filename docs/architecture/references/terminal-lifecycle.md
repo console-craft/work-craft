@@ -156,8 +156,10 @@ the entire state directory or manually remove a live daemon's socket/lock.
   Bare repositories are plain-directory targets. Linked worktrees backed only by
   bare repositories and separate-git-dir layouts without a registered primary
   checkout are rejected rather than guessed.
-- A macOS native PTY exit hang remains unresolved. Three failed-reactivation
-  cases are skipped on macOS, not repaired; ordinary daemon impact is unknown.
+- Bun 1.4.3 can deadlock macOS PTY exit: its event-loop wait blocks the output
+  drain that lets the child finish exiting. The Bun 1.4.4 pin includes upstream's
+  off-thread reaping fix. Three failed-reactivation cases remain skipped on macOS
+  pending separate quarantine-removal verification.
   The [investigation spec](../../specs/2026-10-23-native-pty-exit-hang.md)
   contains evidence, a bounded reproduction requiring an external watchdog and
   revisit criteria. Do not remove the quarantine based on a single passing run.
