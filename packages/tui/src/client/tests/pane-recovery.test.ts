@@ -208,14 +208,16 @@ test("pane recovery requests a full retained baseline despite newer received byt
     f.control.terminalStates.map(({ paneId }) => f.store.getState().resyncPane(paneId)),
   );
   const afterCursors: (number | undefined)[] = [];
-  f.client.paneHistory = async (paneId, after) => {
+  const held = Promise.withResolvers<PaneHistoryResponse>();
+  const response: PaneHistoryResponse = {
+    epoch: f.full.epoch,
+    paneId: "0",
+    runtimeGeneration: 1,
+    history: { ...f.full.terminalHistories[0]!, cursor: 3, data: "YWJj" },
+  };
+  f.client.paneHistory = async (_paneId, after) => {
     afterCursors.push(after);
-    return {
-      epoch: f.full.epoch,
-      paneId,
-      runtimeGeneration: 1,
-      history: { ...f.full.terminalHistories[0]!, cursor: 3, data: "YWJj" },
-    };
+    return held.promise;
   };
   try {
     await f.store.apply({
@@ -224,10 +226,12 @@ test("pane recovery requests a full retained baseline despite newer received byt
       paneId: "0",
       runtimeGeneration: 1,
       cursor: 3,
-      data: "YWJj",
+      data: "Yw==",
       geometrySequence: f.control.geometry.sequence,
     });
-    await f.store.getState().resyncPane("0");
+    const recovery = f.store.getState().resyncPane("0");
+    held.resolve(response);
+    await recovery;
     expect(afterCursors).toEqual([undefined]);
     const buffer = f.store.getState().outputs.pane("0").read()!;
     expect(buffer.recovering).toBe(false);
@@ -237,6 +241,7 @@ test("pane recovery requests a full retained baseline despite newer received byt
       ),
     ).toEqual([97, 98, 99]);
   } finally {
+    held.resolve(response);
     f.store.stop();
   }
 });

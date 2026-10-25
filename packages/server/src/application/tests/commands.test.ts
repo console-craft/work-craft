@@ -319,7 +319,7 @@ test("stops the daemon without durable state", async () => {
 });
 
 test("requests daemon destruction without mutating durable state", async () => {
-  const db = openDatabase(":memory:");
+  const { db, sessionId } = organizationalFixture();
   const stops: boolean[] = [];
   const app = createApp({ db, onStop: (destroy) => stops.push(destroy) });
   apps.push(app);
@@ -329,7 +329,7 @@ test("requests daemon destruction without mutating durable state", async () => {
     effects: [],
     changed: false,
   });
-  expect(readSnapshot(db, "epoch", 0).sessions).toEqual([]);
+  expect(readSnapshot(db, "epoch", 0).sessions.map(({ id }) => id)).toEqual([sessionId]);
   expect(await app.execute({ type: "daemon.destroy" })).toEqual({
     ok: true,
     revision: 0,

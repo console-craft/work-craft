@@ -204,11 +204,44 @@ function splitSurfaceSnapshot(direction: "horizontal" | "vertical"): Snapshot {
   };
 }
 
-test("terminal renderer identity includes the daemon epoch and runtime generation", () => {
-  expect(terminalPaneKey("pane-1", undefined)).toBe("pane-1:pending:0");
-  expect(
-    terminalPaneKey("pane-1", terminalBufferFixture({ epoch: "epoch-2", historyCursor: 42 })),
-  ).toBe("pane-1:epoch-2:0");
+test("daemon and runtime replacement remount the terminal at the same history cursor", async () => {
+  const snapshot = surfaceSnapshot();
+  let replace!: (epoch: string, runtimeGeneration: number) => void;
+  function Fixture() {
+    const [identity, setIdentity] = useState({ epoch: snapshot.epoch, runtimeGeneration: 1 });
+    replace = (epoch, runtimeGeneration) => setIdentity({ epoch, runtimeGeneration });
+    return (
+      <SurfaceView
+        {...recoveryProps}
+        snapshot={{ ...snapshot, epoch: identity.epoch }}
+        surface={snapshot.surfaces[0]!}
+        stream={null}
+        terminals={new Map([["pane-1", terminalBufferFixture(identity)]])}
+        focusedPaneId={null}
+        workbenchFocused={false}
+        undersized={false}
+        onFocusPane={() => {}}
+        onTerminalReady={() => {}}
+      />
+    );
+  }
+  const setup = await testRender(<Fixture />, { width: 80, height: 24 });
+  try {
+    await setup.flush();
+    let previous = setup.renderer.root.findDescendantById("terminal:pane-1")!;
+    expect(previous).toBeInstanceOf(TerminalMaterialRenderable);
+    for (const generation of [1, 2]) {
+      act(() => replace("replacement-epoch", generation));
+      await setup.flush();
+      const current = setup.renderer.root.findDescendantById("terminal:pane-1")!;
+      expect(current).toBeInstanceOf(TerminalMaterialRenderable);
+      expect(previous.isDestroyed).toBe(true);
+      expect(current).not.toBe(previous);
+      previous = current;
+    }
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
 });
 
 test("runtime replacement cannot reuse a native input encoder at the same history cursor", () => {

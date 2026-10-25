@@ -48,42 +48,54 @@ function seedSnapshot(db: ReturnType<typeof openDatabase>): void {
 
 test("initializes the complete baseline without fabricating resources", () => {
   const db = openDatabase(":memory:");
-  expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: 1 });
-  for (const table of [
-    "session_navigation",
-    "session_surface_tabs",
-    "session_tab_panes",
-    "terminal_grids",
-    "terminal_resizes",
-  ]) {
-    expect(db.query(`SELECT * FROM ${table}`).all()).toEqual([]);
+  try {
+    expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: 1 });
+    for (const table of [
+      "session_navigation",
+      "session_surface_tabs",
+      "session_tab_panes",
+      "terminal_grids",
+      "terminal_resizes",
+    ]) {
+      expect(db.query(`SELECT * FROM ${table}`).all()).toEqual([]);
+    }
+    expect(
+      db
+        .query<{ name: string }, []>("PRAGMA table_info(surfaces)")
+        .all()
+        .map(({ name }) => name),
+    ).not.toContain("active_tab_id");
+    expect(
+      db
+        .query<{ name: string }, []>("PRAGMA table_info(terminal_resizes)")
+        .all()
+        .map(({ name }) => name),
+    ).toContain("runtime_start");
+    expect(CATEGORIES.map((category) => category.kind)).toEqual([
+      "inbox",
+      "today",
+      "design",
+      "implementation",
+      "collaboration",
+      "operations",
+    ]);
+    expect(readSnapshot(db, "epoch-1", 0)).toMatchObject({
+      epoch: "epoch-1",
+      revision: 0,
+      sessions: [],
+      workspaces: [],
+      sessionWorkspaces: [],
+      categories: [],
+      items: [],
+      surfaces: [],
+      tabs: [],
+      panes: [],
+      terminalHistories: [],
+      navigation: [],
+    });
+  } finally {
+    db.close();
   }
-  expect(
-    db
-      .query<{ name: string }, []>("PRAGMA table_info(surfaces)")
-      .all()
-      .map(({ name }) => name),
-  ).not.toContain("active_tab_id");
-  expect(
-    db
-      .query<{ name: string }, []>("PRAGMA table_info(terminal_resizes)")
-      .all()
-      .map(({ name }) => name),
-  ).toContain("runtime_start");
-  expect(CATEGORIES.map((category) => category.kind)).toEqual([
-    "inbox",
-    "today",
-    "design",
-    "implementation",
-    "collaboration",
-    "operations",
-  ]);
-  expect(readSnapshot(db, "epoch-1", 0)).toMatchObject({
-    epoch: "epoch-1",
-    revision: 0,
-    sessions: [],
-  });
-  db.close();
 });
 
 test("makes acknowledged file-backed transactions power-loss durable", async () => {
