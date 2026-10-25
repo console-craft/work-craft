@@ -60,6 +60,8 @@ before retrying. No rollback deletes data or terminates existing runtimes for yo
 
 The CLI is non-interactive, with plain text by default and `--json` for structured
 output. [`args.ts`](../../../packages/cli/src/args.ts) defines its accepted syntax.
+Daemon status and post-command pane-failure checks use history-free control
+snapshots; the explicit `snapshot` command still fetches the full snapshot.
 Replace ID placeholders with IDs returned by earlier commands or `snapshot`:
 
 ```sh

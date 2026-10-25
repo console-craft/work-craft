@@ -14,7 +14,7 @@ type Counts = Omit<
 >;
 export type Status = Omit<Health, "protocol"> & { running: true; counts: Counts };
 
-export function snapshotCounts(snapshot: Snapshot): Counts {
+export function snapshotCounts(snapshot: Pick<Snapshot, keyof Counts>): Counts {
   return {
     sessions: snapshot.sessions.length,
     workspaces: snapshot.workspaces.length,
@@ -27,10 +27,10 @@ export function snapshotCounts(snapshot: Snapshot): Counts {
 }
 
 export async function readStatus(
-  client: Pick<WorkCraftClient, "health" | "snapshot">,
+  client: Pick<WorkCraftClient, "health" | "controlSnapshot">,
 ): Promise<Status> {
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const snapshot = await client.snapshot();
+    const snapshot = await client.controlSnapshot();
     const health = await client.health();
     if (snapshot.epoch === health.epoch && snapshot.revision === health.revision) {
       return {

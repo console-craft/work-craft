@@ -6,6 +6,9 @@ import { join } from "node:path";
 import { createClient, decodeBytes, type WorkCraftClient } from "@work-craft/server/client";
 
 import { sendTerminalInput } from "../../../../scripts/test-support/terminal-input.ts";
+import { startHttpServer } from "../../../server/src/api/http.ts";
+import { createApp } from "../../../server/src/application/app.ts";
+import { openDatabase } from "../../../server/src/persistence/database.ts";
 import { USAGE } from "../args.ts";
 import { readStatus } from "../format.ts";
 
@@ -1120,7 +1123,52 @@ test("cleanup preserves the home when shutdown cannot be confirmed", async () =>
   }
 });
 
-test("retries status reads until snapshot and health revisions match", async () => {
+test("checks committed pane failures without reading history and keeps explicit snapshots full", async () => {
+  const home = await tempHome();
+  const db = openDatabase(":memory:");
+  const app = createApp({ db });
+  const server = startHttpServer(app, join(home, "work-craft.sock"));
+  const reads = spyOn(app.history, "read").mockImplementation(() => {
+    throw new Error("Terminal history must not be read for metadata checks");
+  });
+  try {
+    const session = await app.execute({ type: "session.create", name: "Main" });
+    const workspace = await app.execute({
+      type: "workspace.create",
+      sessionId: session.result.id,
+      name: "Work",
+    });
+    const item = await app.execute({
+      type: "item.create",
+      workspaceId: workspace.result.id,
+      category: "design",
+      title: "Failed",
+    });
+    const cwd = join(home, "missing");
+    expect(
+      await runCli(home, ["surface", "ensure", "--item", item.result.id, "--cwd", cwd, "--json"]),
+    ).toEqual({
+      exitCode: 1,
+      stdout: "",
+      stderr: `Working directory does not exist: ${cwd}\n`,
+    });
+    const [pane] = app.controlSnapshot().panes;
+    expect(pane).toMatchObject({ processStatus: "failed", cwd });
+
+    reads.mockRestore();
+    const snapshot = await runJson(home, ["snapshot"]);
+    expect(snapshot.terminalHistories).toEqual([expect.objectContaining({ paneId: pane!.id })]);
+  } finally {
+    reads.mockRestore();
+    await server.stop(true);
+    await app.runtime.stopAll();
+    await app.history.close();
+    db.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("retries history-free status reads until epoch and revision match", async () => {
   const emptySnapshot = {
     navigation: [],
     geometry: { sequence: 0, tabs: [], panes: [] },
@@ -1134,9 +1182,10 @@ test("retries status reads until snapshot and health revisions match", async () 
     surfaces: [],
     tabs: [],
     panes: [],
-    terminalHistories: [],
+    terminalStates: [],
   };
   const snapshots = [
+    { ...emptySnapshot, epoch: "previous", revision: 2 },
     emptySnapshot,
     {
       ...emptySnapshot,
@@ -1148,13 +1197,16 @@ test("retries status reads until snapshot and health revisions match", async () 
   let healthCalls = 0;
   const client = {
     async snapshot() {
+      throw new Error("Status must not fetch terminal history");
+    },
+    async controlSnapshot() {
       return snapshots[snapshotCalls++]!;
     },
     async health() {
       healthCalls += 1;
       return { epoch: "epoch", revision: 2, pid: 42, protocol: "work-craft-projection-preview/1" };
     },
-  } satisfies Pick<WorkCraftClient, "health" | "snapshot">;
+  } satisfies Pick<WorkCraftClient, "health" | "snapshot" | "controlSnapshot">;
 
   expect(await readStatus(client)).toEqual({
     running: true,
@@ -1171,5 +1223,5 @@ test("retries status reads until snapshot and health revisions match", async () 
       panes: 0,
     },
   });
-  expect([snapshotCalls, healthCalls]).toEqual([2, 2]);
+  expect([snapshotCalls, healthCalls]).toEqual([3, 3]);
 });
