@@ -7,27 +7,26 @@ export type TestSuite = "core" | "acceptance" | "tooling";
 // Explicit exceptions keep new correctness tests in core, never silently omitted.
 export const nonCoreTests: Record<"acceptance" | "tooling", string[]> = {
   acceptance: [
-    "packages/cli/src/cli.test.ts",
-    "packages/server/src/acceptance.test.ts",
-    "packages/server/src/application/commands.test.ts",
-    "packages/server/src/application/directories.test.ts",
-    "packages/server/src/application/discovery.test.ts",
-    "packages/server/src/application/items.test.ts",
-    "packages/server/src/application/shared-navigation.test.ts",
-    "packages/server/src/api/http.test.ts",
-    "packages/server/src/api/stopped-material.test.ts",
-    "packages/server/src/daemon/lifecycle.test.ts",
-    "packages/server/src/terminal/cwd.test.ts",
-    "packages/server/src/terminal/runtime.test.ts",
+    "packages/cli/src/tests/cli.test.ts",
+    "packages/server/src/tests/acceptance.test.ts",
+    "packages/server/src/application/tests/commands.test.ts",
+    "packages/server/src/application/tests/directories.test.ts",
+    "packages/server/src/application/tests/discovery.test.ts",
+    "packages/server/src/application/tests/items.test.ts",
+    "packages/server/src/application/tests/shared-navigation.test.ts",
+    "packages/server/src/api/tests/http.test.ts",
+    "packages/server/src/api/tests/stopped-material.test.ts",
+    "packages/server/src/daemon/tests/lifecycle.test.ts",
+    "packages/server/src/terminal/tests/cwd.test.ts",
+    "packages/server/src/terminal/tests/runtime.test.ts",
     "packages/server/src/terminal/tests/projection-runtime.test.ts",
     "packages/server/src/terminal/tests/stopped-material.test.ts",
     "packages/tui/src/tests/shared-session.test.ts",
     "packages/tui/src/tests/cold-history.test.ts",
   ],
   tooling: [
-    "scripts/probe-no-fork-terminal.test.ts",
-    "scripts/preview.test.ts",
-    "scripts/test-support/terminal-projection-paste.test.ts",
+    "scripts/tests/probe-opentui-compatibility.test.ts",
+    "scripts/tests/terminal-projection-paste.test.ts",
     "packages/tui/src/tests/output-profile-support.test.ts",
     "packages/server/src/terminal/tests/projection-feasibility.test.ts",
     "packages/tui/src/workbench/tests/projection-feasibility.test.tsx",
@@ -93,14 +92,10 @@ async function main(args: string[]): Promise<number> {
       console.log(paths.join("\n"));
       continue;
     }
+    const timeoutMs = suite === "acceptance" ? 300000 : 120000;
     const started = performance.now();
-    console.log(
-      `${suite}: ${paths.length} files; external deadline ${suite === "core" ? 120 : 300}s`,
-    );
-    const code = await runBounded(
-      [process.execPath, "test", ...paths],
-      suite === "core" ? 120000 : 300000,
-    );
+    console.log(`${suite}: ${paths.length} files; external deadline ${timeoutMs / 1000}s`);
+    const code = await runBounded([process.execPath, "test", ...paths], timeoutMs);
     console.log(`${suite}: exit ${code}; ${((performance.now() - started) / 1000).toFixed(2)}s`);
     if (code !== 0) {
       return code;

@@ -7,6 +7,8 @@ pre-commit:
     - name: lint
       glob: "*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}"
       run: bunx oxlint --no-error-on-unmatched-pattern {staged_files}
+    - name: typecheck
+      run: bun run typecheck
 pre-push:
   jobs:
     - name: check

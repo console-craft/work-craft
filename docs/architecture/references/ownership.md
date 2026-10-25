@@ -18,7 +18,7 @@ Paths in this table are relative to the repository root.
 | [`packages/server/src/daemon/`](../../../packages/server/src/daemon/)           | State paths, lock/socket ownership, startup, shutdown and explicit destruction.                                                            |
 | [`packages/server/src/terminal/`](../../../packages/server/src/terminal/)       | PTY/process registry, native projection, bounded history, inert reconstruction, stopped-display cache, shell spawn and live cwd discovery. |
 | [`packages/cli/src/`](../../../packages/cli/src/)                               | Argument validation, API calls and plain-text/JSON output; no interactive UI or duplicate domain logic.                                    |
-| [`scripts/`](../../../scripts/)                                                 | Install/build support, compiled smoke, preview tooling, probes and cross-package process fixtures.                                         |
+| [`scripts/`](../../../scripts/)                                                 | Install/build support, compiled smoke, probes and cross-package process fixtures.                                                          |
 
 ## TUI capabilities
 
@@ -84,6 +84,9 @@ make a UI change easier.
 
 ## Tests and fixtures
 
+Script tests live in `scripts/tests/`; shared process fixtures remain in
+`scripts/test-support/`.
+
 TUI capability tests live in their owner's `tests/` directory. Keep UI tests with
 their existing owners (`ui/tests`, `ui/interaction/tests`, `ui/theming/tests`,
 `ui/components/tests`, `ui/controls/tests`, `ui/primitives/tests`); do not add a
@@ -92,7 +95,13 @@ wrapper directory for every source/test pair.
 `packages/tui/src/tests/` is for package-wide acceptance and genuinely shared
 support. Its retained shared-session and graceful-restart tests exercise real
 processes. Place narrower fixtures with their consumer, such as
-`shell/tests/fixtures.tsx`. Server and CLI tests retain their existing placement.
+`shell/tests/fixtures.tsx`.
+
+Server capability tests live in `api/tests/`, `application/tests/`, `daemon/tests/`,
+`persistence/tests/` and `terminal/tests/`. Public client and package-wide acceptance
+tests live in `packages/server/src/tests/`. Keep persistence fixture support with
+its owning tests, even when other capability tests also consume it. CLI tests live
+in `packages/cli/src/tests/`; the package does not need further test subdirectories.
 
 Shell tests independently control command responses, snapshots, React commits,
 native frames and buffered input. `publish(snapshot, false)` advances the real

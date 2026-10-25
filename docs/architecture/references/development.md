@@ -116,13 +116,14 @@ It runs, sequentially:
 It does **not** compile or start real application/PTY acceptance journeys. Local
 commits are recoverable checkpoints, not release certification.
 
-| Command             | Coverage                                                                                          | External deadline                  |
-| ------------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------- |
-| `test`, `test:core` | Rules, real SQLite, lightweight transport and native component/parser contracts                   | 120 seconds                        |
-| `test:acceptance`   | Real application/PTY, CLI/daemon, recovery and multi-TUI journeys                                 | 300 seconds                        |
-| `test:all`          | Core followed by acceptance: all product suites                                                   | Per-suite deadlines above          |
-| `test:tooling`      | Benchmark-harness processes, preview build support, no-fork probes and research characterizations | 300 seconds                        |
-| `check:all`         | Static checks, all product suites, build and relocated compiled smoke                             | Suite deadlines; smoke 120 seconds |
+| Command             | Coverage                                                                                 | External deadline                 |
+| ------------------- | ---------------------------------------------------------------------------------------- | --------------------------------- |
+| `test`, `test:core` | Rules, real SQLite, lightweight transport and native component/parser contracts          | 120 seconds                       |
+| `test:acceptance`   | Real application/PTY, CLI/daemon, recovery and multi-TUI journeys                        | 300 seconds                       |
+| `test:all`          | Core followed by acceptance: all product suites                                          | Per-suite deadlines above         |
+| `test:tooling`      | Benchmark-harness processes, OpenTUI compatibility probes and research characterizations | 120 seconds                       |
+| `test:smoke`        | Relocated compiled executable with disposable state; requires `build` first              | 60 seconds                        |
+| `check:all`         | Static checks, all product suites, build and relocated compiled smoke                    | Suite deadlines; smoke 60 seconds |
 
 Gate membership lives in [`scripts/test-gates.ts`](../../../scripts/test-gates.ts),
 not directory layout. It discovers correctness files under `packages/` and
@@ -139,7 +140,7 @@ changes need the affected tooling cases. Use the external supervisor for focused
 native/process execution:
 
 ```sh
-bun test packages/server/src/application/navigation.test.ts
+bun test packages/server/src/application/tests/navigation.test.ts
 bun test packages/tui/src/shell/tests
 bun test packages/tui/src/client/tests
 bun test packages/tui/src/ui/components/tests
@@ -162,8 +163,9 @@ the underlying behavior is repaired. Preserve the open investigation evidence. S
 Shared TUI waits default to four seconds. The retained gates do not certify the
 removed burst test's input-latency, throughput or passive-frame contracts.
 
-The [Git hooks](../../../lefthook.yml) format/lint staged files at pre-commit;
-commitlint remains enabled. Pre-push runs everyday `check`, unsetting Git-local
+The [Git hooks](../../../lefthook.yml) format/lint staged files, then typecheck the
+whole working tree at pre-commit; unstaged type errors also block a commit.
+Commitlint remains enabled. Pre-push runs everyday `check`, unsetting Git-local
 environment variables so fixture repositories cannot target the invoking
 repository. Do not stage or commit as a side effect of verification.
 
@@ -193,7 +195,9 @@ program that clears ownership and detaches between observations can escape
 tracking. Supervising uncooperative programs would require separate OS-level
 isolation, not permission to signal unrelated processes.
 
-The opt-in no-fork probe launcher owns its newly spawned process group. Timeout,
+The opt-in [OpenTUI compatibility probe](../../../scripts/probe-opentui-compatibility.ts)
+uses an isolated upstream dependency installation, not the full application.
+Its launcher owns its newly spawned process group. Timeout,
 cancellation and leader-exit cleanup share one termination guard: after a
 successful `SIGKILL` or `ESRCH`, they never signal that group again. Other signal
 errors propagate; a redundant signal can itself fail on macOS after termination.
@@ -217,39 +221,20 @@ set -o pipefail
 bun run check 2>&1 | tee check.log
 ```
 
-## Known-failing diagnostics
-
-The output benchmark entrypoint was removed by the reliability audit. Capacity,
-soak and performance-comparison requirements remain unverified.
-
-```sh
-bun run diagnose:hyperlinks
-```
-
-This explicitly selects three OSC8/hidden-wide fidelity reproducers with their
-original assertions. They currently fail against stock OpenTUI 0.6.6 and exit
-nonzero; they are evidence of unsupported fidelity, not a passing acceptance gate.
-The command has a 60-second external deadline.
-`.diagnostic.ts(x)` files require explicit selection rather than an opt-in skip
-flag. This command does not certify performance parity or visual fidelity.
-
-## Builds and preview tooling
+## Builds and compiled smoke testing
 
 ```sh
 bun run build
+bun run test:smoke
 bun run build:install
 WORK_CRAFT_BIN_DIR="$HOME/bin" bun run build:install
 ```
 
 `build` writes `dist/work-craft` without installing it. The installer defaults to
 `~/.local/bin`, creates the destination and warns if it is not on `PATH`; it never
-edits shell configuration. Use `build:smoke` to exercise the compiled executable.
-
-The retained `preview:build` and `preview:smoke` scripts are development provenance
-checks for stock registry OpenTUI, not another supported product or runtime
-fallback. They audit registry artifacts/compiled imports and run a relocated
-preview with disposable state. Preview seeding/reset is explicit tooling, not an
-instruction to replace a normal installation or reuse old machine-local homes.
+edits shell configuration. `test:smoke` exercises the already-built executable
+after relocating it to a temporary installation with disposable state; it does
+not build or install the application.
 
 ## Documentation maintenance
 

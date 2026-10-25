@@ -21,14 +21,10 @@
   ],
   "scripts": {
     "dev": "bun  --watch src/main.ts",
-    "diagnose:hyperlinks": "bun scripts/run-bounded.ts 60000 bun test ./packages/server/src/terminal/tests/projection-feasibility.diagnostic.ts ./packages/tui/src/workbench/tests/native-contract.diagnostic.ts ./packages/tui/src/workbench/tests/projection-feasibility.diagnostic.tsx",
     "build": "mkdir -p dist && bun build --compile src/main.ts --outfile dist/work-craft",
     "build:install": "bun run build && sh scripts/install.sh",
-    "build:smoke": "bun scripts/run-bounded.ts 120000 bun scripts/smoke-build.ts",
-    "preview:build": "bun scripts/build-preview.ts",
-    "preview:smoke": "bun scripts/smoke-preview.ts",
     "check": "bun run lint && bun run format:check && bun run typecheck && bun run test:core",
-    "check:all": "bun run lint && bun run format:check && bun run typecheck && bun run test:all && bun run build && bun run build:smoke",
+    "check:all": "bun run lint && bun run format:check && bun run typecheck && bun run test:all && bun run build && bun run test:smoke",
     "cli": "bun src/main.ts",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
@@ -41,6 +37,7 @@
     "test:acceptance": "bun scripts/test-gates.ts acceptance",
     "test:tooling": "bun scripts/test-gates.ts tooling",
     "test:all": "bun scripts/test-gates.ts all",
+    "test:smoke": "bun scripts/run-bounded.ts 60000 bun scripts/smoke-build.ts",
     "tui": "bun src/main.ts",
     "typecheck": "tsc --noEmit"
   },
