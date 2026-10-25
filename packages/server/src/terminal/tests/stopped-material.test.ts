@@ -104,66 +104,61 @@ test("stopped history without any runtime reconstructs at its recorded grid or l
 });
 
 for (const failure of ["prepare", "capture", "spawn"] as const) {
-  // Quarantined macOS native exit hang; keep assertions for the tracked follow-up:
-  // docs/specs/2026-10-23-native-pty-exit-hang.md
-  test.skipIf(process.platform === "darwin")(
-    `failed ${failure} during Reactivate preserves the prior final picture across generations`,
-    async () => {
-      const f = fixture();
-      const pane = {
-        id: "p",
-        cwd: process.cwd(),
-        restorePolicy: {
-          type: "shell" as const,
-          executable: "/bin/sh",
-          args: ["-c", "printf FINAL-PICTURE"],
-        },
-      };
-      let forced: ReturnType<typeof spyOn> | undefined;
-      try {
-        await f.registry.start(pane);
-        await f.registry.waitForExit("p");
-        const before = (await f.registry.readMaterial("p", 0, () => true)).frame;
-        if (failure === "capture") {
-          forced = spyOn(resolveRenderLib(), "contextAcquireBufferLease").mockImplementationOnce(
-            () => {
-              throw new Error("forced capture");
-            },
-          );
-        } else if (failure === "spawn") {
-          forced = spyOn(Bun, "spawn").mockImplementationOnce(() => {
-            throw new Error("forced spawn");
-          });
-        }
-        await expect(
-          f.registry.start(pane, undefined, async () => {
-            if (failure === "prepare") {
-              throw new Error("forced prepare");
-            }
-            return f.history.readForRecovery("p");
-          }),
-        ).rejects.toThrow(`forced ${failure}`);
-        forced?.mockRestore();
-        expect(f.registry.generation("p")).toBe(2);
-        expect(f.registry.isLive("p")).toBe(false);
-        const read = spyOn(f.history, "readForRecovery").mockImplementation(() => {
-          throw new Error("history remains unsupported");
+  test(`failed ${failure} during Reactivate preserves the prior final picture across generations`, async () => {
+    const f = fixture();
+    const pane = {
+      id: "p",
+      cwd: process.cwd(),
+      restorePolicy: {
+        type: "shell" as const,
+        executable: "/bin/sh",
+        args: ["-c", "printf FINAL-PICTURE"],
+      },
+    };
+    let forced: ReturnType<typeof spyOn> | undefined;
+    try {
+      await f.registry.start(pane);
+      await f.registry.waitForExit("p");
+      const before = (await f.registry.readMaterial("p", 0, () => true)).frame;
+      if (failure === "capture") {
+        forced = spyOn(resolveRenderLib(), "contextAcquireBufferLease").mockImplementationOnce(
+          () => {
+            throw new Error("forced capture");
+          },
+        );
+      } else if (failure === "spawn") {
+        forced = spyOn(Bun, "spawn").mockImplementationOnce(() => {
+          throw new Error("forced spawn");
         });
-        try {
-          expect((await f.registry.readMaterial("p", 0, () => true)).frame).toEqual(before);
-          await expect(f.registry.readMaterial("p", 10, () => true)).rejects.toThrow(
-            "history remains unsupported",
-          );
-          expect(text((await f.registry.readMaterial("p", 0, () => true)).frame)).toContain(
-            "FINAL-PICTURE",
-          );
-        } finally {
-          read.mockRestore();
-        }
-      } finally {
-        forced?.mockRestore();
-        await f.close();
       }
-    },
-  );
+      await expect(
+        f.registry.start(pane, undefined, async () => {
+          if (failure === "prepare") {
+            throw new Error("forced prepare");
+          }
+          return f.history.readForRecovery("p");
+        }),
+      ).rejects.toThrow(`forced ${failure}`);
+      forced?.mockRestore();
+      expect(f.registry.generation("p")).toBe(2);
+      expect(f.registry.isLive("p")).toBe(false);
+      const read = spyOn(f.history, "readForRecovery").mockImplementation(() => {
+        throw new Error("history remains unsupported");
+      });
+      try {
+        expect((await f.registry.readMaterial("p", 0, () => true)).frame).toEqual(before);
+        await expect(f.registry.readMaterial("p", 10, () => true)).rejects.toThrow(
+          "history remains unsupported",
+        );
+        expect(text((await f.registry.readMaterial("p", 0, () => true)).frame)).toContain(
+          "FINAL-PICTURE",
+        );
+      } finally {
+        read.mockRestore();
+      }
+    } finally {
+      forced?.mockRestore();
+      await f.close();
+    }
+  });
 }
