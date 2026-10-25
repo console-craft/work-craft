@@ -25,6 +25,11 @@ inspections, guarded reconciliation, scheduling and cancellation/draining.
 `app.ts` retains command authorization, revisions and post-commit publication;
 daemon shutdown drains discovery before closing history and SQLite.
 
+`application/catalog.ts` reads fresh shared structural rows and validates items;
+it does not read panes or history. `snapshot.ts` retains full pane validation and
+snapshot projection, while `navigation-store.ts` keeps its narrow pane lookup.
+Both callers retain their own layout parsing and transaction-time reads.
+
 The shared, import-inert diagnostic recorder lives in
 [`packages/server/src/output-probe.ts`](../../../packages/server/src/output-probe.ts),
 exported as `@work-craft/server/client/output-probe`. The server's

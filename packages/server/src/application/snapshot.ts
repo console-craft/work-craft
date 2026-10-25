@@ -8,8 +8,8 @@ import type {
   TerminalGeometry,
 } from "../api/protocol.ts";
 import { TerminalHistory } from "../terminal/history.ts";
+import { readCatalogRows } from "./catalog.ts";
 import { CATEGORIES } from "./categories.ts";
-import { readItems, validateItemAncestry } from "./items.ts";
 import { parseLayout } from "./layout.ts";
 import { readSessionNavigation } from "./navigation-store.ts";
 
@@ -68,40 +68,7 @@ export function readSnapshotState(
   revision: number,
   geometry?: TerminalGeometry,
 ): Omit<Snapshot, "terminalHistories"> {
-  const sessions = db
-    .query<{ id: string; name: string; position: number }, []>(
-      "SELECT id, name, position FROM sessions ORDER BY position, id",
-    )
-    .all();
-  const workspaces = db
-    .query<{ id: string; name: string }, []>("SELECT id, name FROM workspaces ORDER BY id")
-    .all();
-  const sessionWorkspaces = db
-    .query<{ sessionId: string; workspaceId: string; position: number }, []>(
-      "SELECT session_id AS sessionId, workspace_id AS workspaceId, position FROM session_workspaces ORDER BY session_id, position, workspace_id",
-    )
-    .all();
-  const items = readItems(db);
-  validateItemAncestry(items);
-  const surfaces = db
-    .query<{ id: string; itemId: string }, []>(
-      "SELECT id, item_id AS itemId FROM surfaces ORDER BY id",
-    )
-    .all();
-  const tabRows = db
-    .query<
-      {
-        id: string;
-        surfaceId: string;
-        title: string;
-        position: number;
-        layoutJson: string | null;
-      },
-      []
-    >(
-      "SELECT id, surface_id AS surfaceId, title, position, layout_json AS layoutJson FROM tabs ORDER BY position, id",
-    )
-    .all();
+  const { sessions, workspaces, sessionWorkspaces, items, surfaces, tabRows } = readCatalogRows(db);
   const paneRows = db
     .query<
       {

@@ -8,6 +8,26 @@ import {
   writeSessionNavigation,
 } from "../navigation-store.ts";
 import { selectNavigation } from "../navigation.ts";
+import { readSnapshotState } from "../snapshot.ts";
+
+test("navigation stays structural while snapshots reject invalid pane restore policies", () => {
+  const db = databaseFixture();
+  try {
+    db.query("UPDATE panes SET restore_policy_json = ? WHERE id = ?").run(
+      JSON.stringify({ type: "shell", executable: "", args: [] }),
+      "pane-1",
+    );
+    expect(readNavigationCatalog(db).panes).toEqual([
+      { id: "pane-1", surfaceId: "surface" },
+      { id: "pane-2", surfaceId: "surface" },
+    ]);
+    expect(() => readSnapshotState(db, "epoch", 0)).toThrow(
+      /panes\.restore_policy_json executable/,
+    );
+  } finally {
+    db.close();
+  }
+});
 
 test("session memories round-trip independently and unchanged writes are no-ops", () => {
   const db = databaseFixture();

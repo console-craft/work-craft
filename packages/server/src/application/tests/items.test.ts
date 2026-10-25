@@ -568,6 +568,7 @@ test("generic hierarchy rejects fabricated Coding kinds invalid ancestry and arc
     }
     db.query("UPDATE items SET parent_id = ? WHERE id = ?").run(child.itemId, root.itemId);
     expect(() => readSnapshot(db, "e", 0)).toThrow(/parent|ancestry/);
+    expect(() => readNavigationCatalog(db)).toThrow(/parent|ancestry/);
   } finally {
     db.close();
   }

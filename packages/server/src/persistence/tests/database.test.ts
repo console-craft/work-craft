@@ -159,6 +159,10 @@ test("reads a deterministic snapshot from persisted rows", () => {
   const snapshot = readSnapshot(db, "epoch-2", 7);
 
   expect(snapshot.sessions.map(({ id }) => id)).toEqual(["session-a", "session-b"]);
+  expect(readNavigationCatalog(db).sessions.map(({ id }) => id)).toEqual([
+    "session-a",
+    "session-b",
+  ]);
   expect(snapshot.categories).toEqual(
     CATEGORIES.map((category) => ({ workspaceId: "workspace-1", ...category })),
   );
@@ -200,6 +204,9 @@ test("reads a deterministic snapshot from persisted rows", () => {
   expect(new TextDecoder().decode(decodeBytes(snapshot.terminalHistories[0]!.data))).toEndWith(
     "abc",
   );
+  db.query("UPDATE sessions SET name = ? WHERE id = ?").run("Renamed", "session-a");
+  expect(readSnapshot(db, "epoch-2", 7).sessions[0]?.name).toBe("Renamed");
+  expect(readNavigationCatalog(db).sessions[0]?.name).toBe("Renamed");
   db.close();
 });
 
