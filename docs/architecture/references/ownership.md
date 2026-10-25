@@ -20,6 +20,11 @@ Paths in this table are relative to the repository root.
 | [`packages/cli/src/`](../../../packages/cli/src/)                               | Argument validation, API calls and plain-text/JSON output; no interactive UI or duplicate domain logic.                                    |
 | [`scripts/`](../../../scripts/)                                                 | Install/build support, compiled smoke, probes and cross-package process fixtures.                                                          |
 
+The public `client.ts` facade delegates to private `client/startup.ts` for daemon
+launch/health coordination and `client/stream.ts` for the complete connection
+lifecycle. `client/http.ts` owns JSON requests and the shared `ApiError` constructor.
+Clients continue importing only the public entry point, not those private modules.
+
 Within `application/`, `directory-discovery.ts` owns shared registration/refresh
 inspections, guarded reconciliation, scheduling and cancellation/draining.
 `app.ts` retains command authorization, revisions and post-commit publication;

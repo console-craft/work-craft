@@ -527,6 +527,7 @@ test("routes endpoint failures by error class", async () => {
 
 test("field attribution survives real HTTP and client validation boundaries", async () => {
   const fixture = await startTestServer();
+  let stream;
   try {
     const cases: [Command, string][] = [
       [{ type: "session.create", name: " " }, "name"],
@@ -545,6 +546,15 @@ test("field attribution survives real HTTP and client validation boundaries", as
         expect(String((error as ApiError).field)).toBe(field);
       }
     }
+    stream = await fixture.client.stream({ onMessage() {} });
+    const attachment = await stream.attach(null);
+    try {
+      await stream.command({ type: "session.create", name: " " }, attachment.generation);
+      throw new Error("accepted invalid field");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ApiError);
+      expect((error as ApiError).field).toBe("name");
+    }
     for (const body of ["{", "[]", "null", '{"type":"session.create","name":{}}']) {
       const response = await fetch("http://localhost/command", {
         unix: fixture.socketPath,
@@ -555,6 +565,7 @@ test("field attribution survives real HTTP and client validation boundaries", as
     }
     expect(fixture.app.health().revision).toBe(0);
   } finally {
+    stream?.close();
     await fixture.close();
   }
 });
