@@ -2,8 +2,8 @@ import type { Database } from "bun:sqlite";
 import { isDeepStrictEqual } from "node:util";
 
 import { ProtocolError, type SessionNavigation } from "../api/protocol.ts";
+import { readCatalogRows } from "./catalog.ts";
 import { CATEGORIES } from "./categories.ts";
-import { readItems, validateItemAncestry } from "./items.ts";
 import { parseLayout } from "./layout.ts";
 import {
   initialNavigation,
@@ -14,40 +14,17 @@ import {
 
 /** Read only the catalog needed by a navigation transaction, never history/runtime snapshots. */
 export function readNavigationCatalog(db: Database): NavigationCatalog {
-  const workspaces = db
-    .query<NavigationCatalog["workspaces"][number], []>(
-      "SELECT id,name FROM workspaces ORDER BY id",
-    )
-    .all();
-  const items = readItems(db);
-  validateItemAncestry(items);
-  const rows = db
-    .query<Omit<NavigationCatalog["tabs"][number], "layout"> & { layoutJson: string | null }, []>(
-      "SELECT id,surface_id AS surfaceId,title,position,layout_json AS layoutJson FROM tabs ORDER BY position,id",
-    )
-    .all();
+  const { sessions, workspaces, sessionWorkspaces, items, surfaces, tabRows } = readCatalogRows(db);
   return {
-    sessions: db
-      .query<NavigationCatalog["sessions"][number], []>(
-        "SELECT id,name,position FROM sessions ORDER BY position,id",
-      )
-      .all(),
+    sessions,
     workspaces,
-    sessionWorkspaces: db
-      .query<NavigationCatalog["sessionWorkspaces"][number], []>(
-        "SELECT session_id AS sessionId,workspace_id AS workspaceId,position FROM session_workspaces ORDER BY session_id,position,workspace_id",
-      )
-      .all(),
+    sessionWorkspaces,
     categories: workspaces.flatMap(({ id }) =>
       CATEGORIES.map((category) => ({ ...category, workspaceId: id })),
     ),
     items,
-    surfaces: db
-      .query<NavigationCatalog["surfaces"][number], []>(
-        "SELECT id,item_id AS itemId FROM surfaces ORDER BY id",
-      )
-      .all(),
-    tabs: rows.map(({ layoutJson, ...tab }) => ({
+    surfaces,
+    tabs: tabRows.map(({ layoutJson, ...tab }) => ({
       ...tab,
       layout: layoutJson === null ? null : parseLayout(JSON.parse(layoutJson)),
     })),

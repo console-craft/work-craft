@@ -14,11 +14,32 @@ Paths in this table are relative to the repository root.
 | [`packages/server/src/client.ts`](../../../packages/server/src/client.ts)       | Client-safe API, transport, protocol/material exports and daemon connection/startup. Public import: `@work-craft/server/client`.           |
 | [`packages/server/src/api/`](../../../packages/server/src/api/)                 | HTTP/WebSocket transport, protocol validation, attachments, request/paste authority and material encoding.                                 |
 | [`packages/server/src/application/`](../../../packages/server/src/application/) | Command orchestration and transactions, items/discovery, shared navigation, snapshots, recovery and terminal-size election.                |
-| [`packages/server/src/persistence/`](../../../packages/server/src/persistence/) | SQLite schema and non-destructive migrations.                                                                                              |
+| [`packages/server/src/persistence/`](../../../packages/server/src/persistence/) | SQLite baseline schema, initialization and compatibility checks.                                                                           |
 | [`packages/server/src/daemon/`](../../../packages/server/src/daemon/)           | State paths, lock/socket ownership, startup, shutdown and explicit destruction.                                                            |
 | [`packages/server/src/terminal/`](../../../packages/server/src/terminal/)       | PTY/process registry, native projection, bounded history, inert reconstruction, stopped-display cache, shell spawn and live cwd discovery. |
 | [`packages/cli/src/`](../../../packages/cli/src/)                               | Argument validation, API calls and plain-text/JSON output; no interactive UI or duplicate domain logic.                                    |
-| [`scripts/`](../../../scripts/)                                                 | Install/build support, compiled smoke, preview tooling, probes and cross-package process fixtures.                                         |
+| [`scripts/`](../../../scripts/)                                                 | Install/build support, compiled smoke, probes and cross-package process fixtures.                                                          |
+
+The public `client.ts` facade delegates to private `client/startup.ts` for daemon
+launch/health coordination and `client/stream.ts` for the complete connection
+lifecycle. `client/http.ts` owns JSON requests and the shared `ApiError` constructor.
+Clients continue importing only the public entry point, not those private modules.
+
+Within `application/`, `directory-discovery.ts` owns shared registration/refresh
+inspections, guarded reconciliation, scheduling and cancellation/draining.
+`app.ts` retains command authorization, revisions and post-commit publication;
+daemon shutdown drains discovery before closing history and SQLite.
+
+`application/catalog.ts` reads fresh shared structural rows and validates items;
+it does not read panes or history. `snapshot.ts` retains full pane validation and
+snapshot projection, while `navigation-store.ts` keeps its narrow pane lookup.
+Both callers retain their own layout parsing and transaction-time reads.
+
+The shared, import-inert diagnostic recorder lives in
+[`packages/server/src/output-probe.ts`](../../../packages/server/src/output-probe.ts),
+exported as `@work-craft/server/client/output-probe`. The server's
+`terminal/output-probe.ts` and TUI's `client/output-probe.ts` retain component-local
+file initialization and signal handlers.
 
 ## TUI capabilities
 
@@ -39,8 +60,9 @@ Paths below are relative to [`packages/tui/src/`](../../../packages/tui/src/).
 | `ui/primitives/`, `ui/controls/`, `ui/components/` | Local reusable views and concrete internal mechanisms. Prefer existing components, then native OpenTUI primitives; do not create generic engines for hypothetical reuse.                                                                                                                                                                                                              |
 | `demos/`                                           | Standalone controls showcase and `components.tsx`, composed from `component-demos/` sections.                                                                                                                                                                                                                                                                                         |
 
-`client/terminal-consumer.ts` supports the retained-output registry; it is not the
-live material rendering path. The daemon's `terminal/projection.ts` is the parser
+`client/terminal-replay.ts` validates retained byte/resize ordering for buffer
+merging and material test fixtures; the output registry has no native consumer or
+consumption acknowledgements. The daemon's `terminal/projection.ts` is the parser
 and child-query owner, not a native terminal renderer mounted by the TUI.
 
 ## Enforced imports
@@ -48,7 +70,8 @@ and child-query owner, not a native terminal renderer mounted by the TUI.
 The [TUI lint configuration](../../../packages/tui/.oxlintrc.json) enforces these
 rules for value/type imports, re-exports and dynamic imports:
 
-- Import server APIs only through `@work-craft/server/client`.
+- Import server APIs only through `@work-craft/server/client` or the side-effect-free
+  `@work-craft/server/client/output-probe` recorder entry. Other client subpaths remain restricted.
 - Use direct `@/` imports within the TUI, not relative internal imports or barrels.
 - Shell composes capabilities; `client`, `input`, `navigation` and `workbench`
   must not import shell.
@@ -82,7 +105,14 @@ make a UI change easier.
   messages, field validation stays by its field, and child stderr stays terminal
   output. Reporting must not steal focus or unmount unrelated panes.
 
+The navigator results list grows from a zero flex basis into the space left by
+its title and filter. An automatic basis lets native scrollbar visibility change
+the filter's height, creating a layout feedback loop in short viewports.
+
 ## Tests and fixtures
+
+Script tests live in `scripts/tests/`; shared process fixtures remain in
+`scripts/test-support/`.
 
 TUI capability tests live in their owner's `tests/` directory. Keep UI tests with
 their existing owners (`ui/tests`, `ui/interaction/tests`, `ui/theming/tests`,
@@ -92,7 +122,13 @@ wrapper directory for every source/test pair.
 `packages/tui/src/tests/` is for package-wide acceptance and genuinely shared
 support. Its retained shared-session and graceful-restart tests exercise real
 processes. Place narrower fixtures with their consumer, such as
-`shell/tests/fixtures.tsx`. Server and CLI tests retain their existing placement.
+`shell/tests/fixtures.tsx`.
+
+Server capability tests live in `api/tests/`, `application/tests/`, `daemon/tests/`,
+`persistence/tests/` and `terminal/tests/`. Public client and package-wide acceptance
+tests live in `packages/server/src/tests/`. Keep persistence fixture support with
+its owning tests, even when other capability tests also consume it. CLI tests live
+in `packages/cli/src/tests/`; the package does not need further test subdirectories.
 
 Shell tests independently control command responses, snapshots, React commits,
 native frames and buffered input. `publish(snapshot, false)` advances the real

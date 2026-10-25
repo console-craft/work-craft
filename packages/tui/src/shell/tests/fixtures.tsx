@@ -123,7 +123,6 @@ export function workCraftStateFixture(
       };
       fixture.requestedSessionId = sessionId;
     },
-    canRespond: () => false,
     canReadMaterial: (paneId, stamp) => {
       const current = fixture.snapshot;
       const pane = current?.panes.find((pane) => pane.id === paneId);
@@ -608,15 +607,6 @@ export async function localTabFixture(rememberDestination = true, count = 2, cre
           (buffer.chunks.at(-1)?.cursor ?? buffer.historyCursor) + bytes.length,
           bytes,
           snapshot.geometry.sequence,
-          "live",
-          {
-            epoch: snapshot.epoch,
-            attachmentGeneration: 1,
-            navigationGeneration: navigation.generation,
-            geometrySequence: snapshot.geometry.tabs.find(
-              ({ tabId }) => tabId === navigation.tabId,
-            )!.generation,
-          },
         ),
       );
       setBuffers(terminals);
@@ -633,13 +623,6 @@ export async function localTabFixture(rememberDestination = true, count = 2, cre
             close() {},
             sendInput: (paneId, bytes) => received.push({ paneId, bytes: [...bytes] }),
           }),
-          canRespond: (paneId, stamp) =>
-            connected &&
-            stamp.epoch === snapshot.epoch &&
-            snapshot.navigation[0]?.paneId === paneId &&
-            stamp.navigationGeneration === snapshot.navigation[0].generation &&
-            snapshot.geometry.tabs.find(({ tabId }) => tabId === snapshot.navigation[0]?.tabId)
-              ?.ownerConnectionId === "test-connection",
           command: async (command) => {
             commands.push(command);
             if (command.type === "session.navigate" && command.target.kind === "workspace") {

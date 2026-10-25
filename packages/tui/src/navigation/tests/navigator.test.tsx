@@ -1,6 +1,11 @@
 import { expect, test } from "bun:test";
 
-import { BoxRenderable, parseColor, type ScrollBoxRenderable } from "@opentui/core";
+import {
+  BoxRenderable,
+  CliRenderEvents,
+  parseColor,
+  type ScrollBoxRenderable,
+} from "@opentui/core";
 import { act, useState } from "react";
 
 import { navigatorEntries } from "@/navigation/model.ts";
@@ -147,5 +152,63 @@ test("two-cell rows use stable IDs, themed filter border, path and branch, and p
     expect(f.renderer.currentFocusedRenderable).toBe(list);
   } finally {
     act(() => f.renderer.destroy());
+  }
+});
+
+test("shrinking the navigator preserves the filter and settles its results scrollbars", async () => {
+  let shrink!: () => void;
+  function Fixture() {
+    const [height, setHeight] = useState(35);
+    shrink = () => setHeight(10);
+    return (
+      <ThemeProvider theme={defaultTheme}>
+        <Navigator
+          entries={navigatorEntries(
+            snapshotFixture(),
+            "workspace-shared",
+            "implementation",
+            new Set(["root-1"]),
+          )}
+          query=""
+          homePath="/work"
+          activeItemId="item-1"
+          initialCursorId="item-1"
+          title="Coding"
+          width={45}
+          height={height}
+          interactive
+          focusedControl={null}
+          onQueryChange={() => {}}
+          onCursorChange={() => {}}
+          onExpand={() => {}}
+          onActivate={() => {}}
+          onInteraction={() => {}}
+        />
+      </ThemeProvider>
+    );
+  }
+  const setup = await testRender(<Fixture />, { width: 50, height: 40 });
+  const errors: Error[] = [];
+  setup.renderer.on(CliRenderEvents.RENDER_ERROR, ({ error }) => errors.push(error));
+  try {
+    await act(async () => setup.flush());
+    await act(async () => shrink());
+    await act(async () => setup.flush());
+    const root = setup.renderer.root;
+    const filter = root.findDescendantById("navigator:filter")!;
+    const list = root.findDescendantById("region:navigator")!;
+    const area = list.getChildren()[0] as ScrollBoxRenderable;
+    expect(errors).toEqual([]);
+    expect(filter.parent!.height).toBe(3);
+    expect(area.viewport.height).toBe(3);
+    expect(area.verticalScrollBar.visible).toBe(true);
+    expect(area.horizontalScrollBar.visible).toBe(false);
+    act(() => area.scrollTo({ x: 0, y: 1 }));
+    await act(async () => setup.flush());
+    expect(area.scrollTop).toBe(1);
+    expect(errors).toEqual([]);
+  } finally {
+    act(() => setup.renderer.destroy());
+    await setup.renderer.closed;
   }
 });

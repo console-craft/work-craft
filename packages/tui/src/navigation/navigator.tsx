@@ -263,6 +263,7 @@ export function Navigator(props: NavigatorProps): ReactNode {
         horizontalScrolling
         focused={props.focusedControl === "results"}
         flexGrow={1}
+        flexBasis={0}
         minHeight={0}
         onActiveValueChange={(id) => {
           candidate.current = id ?? null;

@@ -31,6 +31,16 @@
 - Use `bun run test`/`bun run check` for routine repository gates; use `bun test` with explicit paths for focused work, not bare broad discovery. Detached fixtures must retain `WORK_CRAFT_TEST_RUN_ID`; use `testProcessEnvironment()` from `scripts/run-bounded.ts` when scrubbing their environment.
 - Apply this policy through repository instructions; do not edit installed/global Superpowers skills as part of project work.
 
+## Pre-PR Test Quality Review
+
+- Before finalizing a PR, review every added or materially changed test against the merge base with the PR's target branch. Follow renames; exclude pure moves, import-path fixes and unchanged tests. Review changed cases in existing files, not only new test files.
+- Read each complete test, its relevant fixtures/helpers and the production behavior it exercises. Score each test from 1–10 with a concrete reason; passing tests, names, line counts and coverage percentages do not establish quality.
+- Judge meaningful regression detection, independent and specific assertions, real behavior rather than mock choreography, determinism/isolation/cleanup, resistance to unrelated refactors, and appropriate boundary/cost/duplication/readability. Name the plausible production bug it would catch; do not penalize necessary database/process boundaries just for being expensive.
+- Scores 8–10 mean trustworthy, useful protection with no consequential gap: keep. A 7 has a concrete repairable gap: improve and reassess to at least 8. Scores 1–6 mean the test is not worth retaining in its current form: remove it, replacing or consolidating meaningful unique regression protection first. Never raise a score merely to clear the gate.
+- Before removing unique protection, verify the surviving or replacement test catches the original failure, using a targeted mutation or equivalent faithful reproduction. Do not delete useful regression protection solely because its current test is poorly written; report unresolved gaps as blockers.
+- Report each test's path/name, score, reason and proposed action; after cleanup, include final scores and verification evidence. Treat scores as reasoned review judgments, not objective measurements. No deletion quotas, required count/coverage growth or new scoring framework.
+- Honor dry-run requests: report scores and proposed changes without modifying tests, fixtures or production code, and wait for approval before cleanup. After approved cleanup, run affected gates and `bun run check`; retain test ownership and cost/risk-based gates.
+
 ## Coding Style and Conventions
 
 - Keep modules and functions focused and easy to scan. Treat roughly 200 lines per file and 50 lines per function as review signals, not hard limits; do not split cohesive code merely to satisfy a counter.

@@ -76,6 +76,7 @@ for (const form of ["value", "type"] as const) {
     ["ui/theming/tests", "@/tests/support/render"],
     ["tests/support", "@/ui/theming/theme"],
     ["client", "@work-craft/server/client"],
+    ["client", "@work-craft/server/client/output-probe"],
   ]) {
     test(`TUI accepts ${form} import ${owner} -> ${path}`, async () => {
       const result = await lint(owner, source(path));

@@ -1,6 +1,7 @@
 import { expect, spyOn, test } from "bun:test";
 
 import {
+  CliRenderEvents,
   KeyEvent,
   parseKeypress,
   PasteEvent,
@@ -1241,6 +1242,8 @@ test("same-batch split resize checks the bordered interior rather than stale nat
     split.direction = "horizontal";
   }
   const setup = await liveInputFixture(snapshot);
+  const renderErrors: Error[] = [];
+  setup.renderer.on(CliRenderEvents.RENDER_ERROR, ({ error }) => renderErrors.push(error));
   try {
     const terminal = setup.renderer.currentFocusedRenderable as TerminalMaterialRenderable;
     const captured = terminal.handleKeyPress.bind(terminal);
@@ -1258,6 +1261,8 @@ test("same-batch split resize checks the bordered interior rather than stale nat
     });
     expect(setup.sent).toEqual([]);
     expect(setup.resized).toEqual([]);
+    await setup.flush();
+    expect(renderErrors).toEqual([]);
   } finally {
     act(() => setup.renderer.destroy());
     setup.store.stop();

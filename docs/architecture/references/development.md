@@ -28,10 +28,40 @@ WORK_CRAFT_HOME="$HOME/.local/state/work-craft-dev" bun run cli -- daemon stop
 Do not mix installed/source versions against one running daemon. Shutdown keeps
 state but stops shells; see [recovery and reset safety](terminal-lifecycle.md#local-state-and-safe-operation).
 
+### Reusable UX seed
+
+From the repository root, use one explicit development home for reset, seed and
+launch. Reset is destructive: close reconnecting clients and confirm the selected
+home and its managed runtimes first. When switching from an incompatible schema,
+perform the reset with the old compatible executable before changing versions.
+
+```sh
+export WORK_CRAFT_HOME="$HOME/.local/state/work-craft-dev"
+bun run cli -- daemon destroy --force
+bun run db:seed
+bun run tui
+```
+
+`db:seed` requires an explicit nonblank `WORK_CRAFT_HOME` and refuses existing
+application records, including workspaces with no sessions. It never resets state.
+It creates Session 1/2, Workspace 1/2 shared by both sessions, three Inbox and two
+Today items per workspace, and two tabs on one item. The first tab has two vertical
+splits (three panes); four real managed shells run in total, with the repository
+root as their cwd. Session 1 selects the populated first tab/pane.
+The final check allows 250 ms for PTY exit notifications before requiring four
+running panes; it checks startup, not long-term shell health.
+
+The script uses normal source CLI commands. Do not mutate the same home from
+another client while seeding or mix installed/source versions. Seeding stops on
+the first error and may leave partial records; inspect them or explicitly reset
+before retrying. No rollback deletes data or terminates existing runtimes for you.
+
 ## CLI reference
 
 The CLI is non-interactive, with plain text by default and `--json` for structured
 output. [`args.ts`](../../../packages/cli/src/args.ts) defines its accepted syntax.
+Daemon status and post-command pane-failure checks use history-free control
+snapshots; the explicit `snapshot` command still fetches the full snapshot.
 Replace ID placeholders with IDs returned by earlier commands or `snapshot`:
 
 ```sh
@@ -100,6 +130,11 @@ policy local to the repository rather than modifying installed Superpowers skill
 
 ## Checks and test execution
 
+The shared React render fixture awaits mount effects inside `act` without explicitly
+flushing native frames. Measured-render helpers still use separate awaited frame acts;
+held responses and store publication without a React commit remain explicit test
+controls, not work to drain indiscriminately when silencing a warning.
+
 Run the everyday repository gate before completing a change:
 
 ```sh
@@ -116,13 +151,14 @@ It runs, sequentially:
 It does **not** compile or start real application/PTY acceptance journeys. Local
 commits are recoverable checkpoints, not release certification.
 
-| Command             | Coverage                                                                                          | External deadline                  |
-| ------------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------- |
-| `test`, `test:core` | Rules, real SQLite, lightweight transport and native component/parser contracts                   | 120 seconds                        |
-| `test:acceptance`   | Real application/PTY, CLI/daemon, recovery and multi-TUI journeys                                 | 300 seconds                        |
-| `test:all`          | Core followed by acceptance: all product suites                                                   | Per-suite deadlines above          |
-| `test:tooling`      | Benchmark-harness processes, preview build support, no-fork probes and research characterizations | 300 seconds                        |
-| `check:all`         | Static checks, all product suites, build and relocated compiled smoke                             | Suite deadlines; smoke 120 seconds |
+| Command             | Coverage                                                                                 | External deadline                 |
+| ------------------- | ---------------------------------------------------------------------------------------- | --------------------------------- |
+| `test`, `test:core` | Rules, real SQLite, lightweight transport and native component/parser contracts          | 120 seconds                       |
+| `test:acceptance`   | Real application/PTY, CLI/daemon, recovery and multi-TUI journeys                        | 300 seconds                       |
+| `test:all`          | Core followed by acceptance: all product suites                                          | Per-suite deadlines above         |
+| `test:tooling`      | Benchmark-harness processes, OpenTUI compatibility probes and research characterizations | 120 seconds                       |
+| `test:smoke`        | Relocated compiled executable with disposable state; requires `build` first              | 60 seconds                        |
+| `check:all`         | Static checks, all product suites, build and relocated compiled smoke                    | Suite deadlines; smoke 60 seconds |
 
 Gate membership lives in [`scripts/test-gates.ts`](../../../scripts/test-gates.ts),
 not directory layout. It discovers correctness files under `packages/` and
@@ -139,7 +175,7 @@ changes need the affected tooling cases. Use the external supervisor for focused
 native/process execution:
 
 ```sh
-bun test packages/server/src/application/navigation.test.ts
+bun test packages/server/src/application/tests/navigation.test.ts
 bun test packages/tui/src/shell/tests
 bun test packages/tui/src/client/tests
 bun test packages/tui/src/ui/components/tests
@@ -162,8 +198,9 @@ the underlying behavior is repaired. Preserve the open investigation evidence. S
 Shared TUI waits default to four seconds. The retained gates do not certify the
 removed burst test's input-latency, throughput or passive-frame contracts.
 
-The [Git hooks](../../../lefthook.yml) format/lint staged files at pre-commit;
-commitlint remains enabled. Pre-push runs everyday `check`, unsetting Git-local
+The [Git hooks](../../../lefthook.yml) format/lint staged files, then typecheck the
+whole working tree at pre-commit; unstaged type errors also block a commit.
+Commitlint remains enabled. Pre-push runs everyday `check`, unsetting Git-local
 environment variables so fixture repositories cannot target the invoking
 repository. Do not stage or commit as a side effect of verification.
 
@@ -193,7 +230,9 @@ program that clears ownership and detaches between observations can escape
 tracking. Supervising uncooperative programs would require separate OS-level
 isolation, not permission to signal unrelated processes.
 
-The opt-in no-fork probe launcher owns its newly spawned process group. Timeout,
+The opt-in [OpenTUI compatibility probe](../../../scripts/probe-opentui-compatibility.ts)
+uses an isolated upstream dependency installation, not the full application.
+Its launcher owns its newly spawned process group. Timeout,
 cancellation and leader-exit cleanup share one termination guard: after a
 successful `SIGKILL` or `ESRCH`, they never signal that group again. Other signal
 errors propagate; a redundant signal can itself fail on macOS after termination.
@@ -207,8 +246,8 @@ Quarantine requires an explicit risk decision and retained assertions/revisit
 criteria; moving a failing product test into tooling is not a repair.
 
 Passing one host does not certify every supported platform or physical terminal.
-Existing React `act(...)` diagnostics, listener warnings and a server
-`no-unsafe-finally` lint warning are not repaired timing or long-duration stability.
+A clean lint or warning-free test run does not certify runtime timing or
+long-duration listener stability.
 
 When retaining a command log, mirror both streams and preserve failure status:
 
@@ -217,39 +256,20 @@ set -o pipefail
 bun run check 2>&1 | tee check.log
 ```
 
-## Known-failing diagnostics
-
-The output benchmark entrypoint was removed by the reliability audit. Capacity,
-soak and performance-comparison requirements remain unverified.
-
-```sh
-bun run diagnose:hyperlinks
-```
-
-This explicitly selects three OSC8/hidden-wide fidelity reproducers with their
-original assertions. They currently fail against stock OpenTUI 0.6.6 and exit
-nonzero; they are evidence of unsupported fidelity, not a passing acceptance gate.
-The command has a 60-second external deadline.
-`.diagnostic.ts(x)` files require explicit selection rather than an opt-in skip
-flag. This command does not certify performance parity or visual fidelity.
-
-## Builds and preview tooling
+## Builds and compiled smoke testing
 
 ```sh
 bun run build
+bun run test:smoke
 bun run build:install
 WORK_CRAFT_BIN_DIR="$HOME/bin" bun run build:install
 ```
 
 `build` writes `dist/work-craft` without installing it. The installer defaults to
 `~/.local/bin`, creates the destination and warns if it is not on `PATH`; it never
-edits shell configuration. Use `build:smoke` to exercise the compiled executable.
-
-The retained `preview:build` and `preview:smoke` scripts are development provenance
-checks for stock registry OpenTUI, not another supported product or runtime
-fallback. They audit registry artifacts/compiled imports and run a relocated
-preview with disposable state. Preview seeding/reset is explicit tooling, not an
-instruction to replace a normal installation or reuse old machine-local homes.
+edits shell configuration. `test:smoke` exercises the already-built executable
+after relocating it to a temporary installation with disposable state; it does
+not build or install the application.
 
 ## Documentation maintenance
 

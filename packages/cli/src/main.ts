@@ -159,7 +159,7 @@ async function main(argv: string[]): Promise<number> {
           "process.restart",
         ].includes(args.command)
       ) {
-        const pane = (await client.snapshot()).panes.find(
+        const pane = (await client.controlSnapshot()).panes.find(
           ({ id }) => id === response.result.paneId,
         );
         if (pane?.processStatus === "failed") {

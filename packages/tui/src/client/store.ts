@@ -41,7 +41,6 @@ export type WorkCraftState = {
   canSendInput(paneId: string, stamp: InputStamp): boolean;
   /** Current read scope only; stopped display never grants child input authority. */
   canReadMaterial(paneId: string, stamp: InputStamp): boolean;
-  canRespond(paneId: string, stamp: InputStamp): boolean;
   /** Live exited-action readiness; never grants terminal input eligibility. */
   canReactivate(paneId: string, stamp: InputStamp): boolean;
   command(command: Command): Promise<CommandResponse>;
@@ -105,10 +104,9 @@ export function createWorkCraftStore(
     requestedSessionId: null,
     geometry: { sequence: 0, tabs: [], panes: [] },
     attach,
-    canSendInput: (paneId, stamp) => canUsePane(paneId, stamp, "running", false),
-    canReadMaterial: (paneId, stamp) => canUsePane(paneId, stamp, "material", false),
-    canRespond: (paneId, stamp) => canUsePane(paneId, stamp, "running", true),
-    canReactivate: (paneId, stamp) => canUsePane(paneId, stamp, "exited", false),
+    canSendInput: (paneId, stamp) => canUsePane(paneId, stamp, "running"),
+    canReadMaterial: (paneId, stamp) => canUsePane(paneId, stamp, "material"),
+    canReactivate: (paneId, stamp) => canUsePane(paneId, stamp, "exited"),
     command: async (command) => {
       if (state.status !== "connected" || !state.stream || !state.attachment) {
         throw new Error("Cannot mutate while disconnected");
@@ -181,10 +179,8 @@ export function createWorkCraftStore(
       }
       job.started = true;
       activeRecoveries++;
-      const buffer = outputs.buffers().get(paneId);
-      const after = buffer?.needsHistory ? undefined : outputs.frontier(paneId)?.cursor;
       void client
-        .paneHistory(paneId, after, { signal: job.controller.signal })
+        .paneHistory(paneId, undefined, { signal: job.controller.signal })
         .then((response: PaneHistoryResponse) => {
           if (
             recoveries.get(paneId) !== job ||
@@ -285,7 +281,6 @@ export function createWorkCraftStore(
     paneId: string,
     stamp: InputStamp,
     status: "running" | "exited" | "material",
-    response: boolean,
   ): boolean {
     const snapshot = state.snapshot;
     const attachment = state.attachment;
@@ -298,14 +293,12 @@ export function createWorkCraftStore(
       !snapshot ||
       !attachment ||
       !navigation ||
-      (!response && status === "running" && outputs.buffers().get(paneId)?.recovering === true) ||
+      (status === "running" && outputs.buffers().get(paneId)?.recovering === true) ||
       snapshot.epoch !== stamp.epoch ||
       attachment.generation !== stamp.attachmentGeneration ||
       navigation.generation !== stamp.navigationGeneration ||
       geometry?.generation !== stamp.geometrySequence ||
-      (response
-        ? geometry.ownerConnectionId !== attachment.connectionId
-        : status === "running" && navigation.paneId !== paneId)
+      (status === "running" && navigation.paneId !== paneId)
     ) {
       return false;
     }
@@ -428,7 +421,6 @@ export function createWorkCraftStore(
           : {
               epoch: snapshot.epoch,
               runtimeGeneration,
-              resetGeneration: 0,
               needsHistory: true,
               history: new Uint8Array(),
               historyCursor: 0,
@@ -526,21 +518,6 @@ export function createWorkCraftStore(
       if (message.cursor - data.byteLength > lastCursor) {
         requestPaneHistory(message.paneId);
       }
-      const attachment = state.attachment;
-      const navigation = state.snapshot.navigation.find(
-        ({ sessionId }) => sessionId === attachment?.sessionId,
-      );
-      const geometry = state.geometry.tabs.find(({ tabId }) => tabId === navigation?.tabId);
-      // Never assign newer authority to output overtaken by a snapshot/resync.
-      const responseStamp =
-        attachment && navigation && geometry && message.geometrySequence === state.geometry.sequence
-          ? {
-              epoch: message.epoch,
-              attachmentGeneration: attachment.generation,
-              navigationGeneration: navigation.generation,
-              geometrySequence: geometry.generation,
-            }
-          : null;
       outputs.set(
         message.paneId,
         appendTerminalChunk(
@@ -548,8 +525,6 @@ export function createWorkCraftStore(
           message.cursor,
           data,
           message.geometrySequence,
-          "live",
-          responseStamp && state.canRespond(message.paneId, responseStamp) ? responseStamp : null,
         ),
       );
       if (outputProbeEnabled) {

@@ -7,7 +7,6 @@ import type {
   ClientMessage,
   CommandResponse,
   ControlSnapshot,
-  DirectoryData,
   PaneHistoryResponse,
   PaneStatus,
   ServerMessage,
@@ -18,9 +17,8 @@ import { TerminalHistory } from "../terminal/history.ts";
 import { observeOutput, outputProbeEnabled } from "../terminal/output-probe.ts";
 import { RuntimeRegistry } from "../terminal/runtime.ts";
 import { applyCommand } from "./commands.ts";
-import { canonicalDirectoryPath, type DirectoryScan, inspectDirectory } from "./directories.ts";
-import { isTrustedGroupScan, readItems, reconcileDirectoryScan } from "./items.ts";
-import { normalizeSessionNavigations, readNavigationCatalog } from "./navigation-store.ts";
+import type { inspectDirectory } from "./directories.ts";
+import { createDirectoryDiscovery } from "./directory-discovery.ts";
 import { createTerminalSizing, type GeometryDecision } from "./sizing.ts";
 import { readSnapshot, readSnapshotState } from "./snapshot.ts";
 
@@ -56,14 +54,12 @@ export function createApp(options: {
   const history = options.history ?? new TerminalHistory(options.db);
   let revision = 0;
   let recovery: Promise<void> | undefined;
-  const directoryAbort = new AbortController();
-  const inspections = new Map<string, Promise<DirectoryScan>>();
-  let directoryPass: Promise<void> | undefined;
-  let directoryTimer: ReturnType<typeof setTimeout> | undefined;
-  let directoryRefreshStarted = false;
-  let directoryRefreshClosed = false;
-  let directoryClose: Promise<void> | undefined;
   const sizing = createTerminalSizing(readSnapshotState(options.db, epoch, revision));
+  const discovery = createDirectoryDiscovery({
+    db: options.db,
+    inspectDirectory: options.inspectDirectory,
+    onChange: publishChange,
+  });
 
   function controlSnapshot(): ControlSnapshot {
     const state = readSnapshotState(options.db, epoch, revision, sizing.current());
@@ -197,163 +193,6 @@ export function createApp(options: {
         runtime.resize(paneId, size.cols, size.rows);
       }
     }
-  }
-
-  function inspectPath(path: string): Promise<DirectoryScan> {
-    const pending = inspections.get(path);
-    if (pending !== undefined) {
-      return pending;
-    }
-    const inspection = Promise.resolve()
-      .then(() => {
-        if (directoryRefreshClosed) {
-          throw new ProtocolError("Directory discovery is closed");
-        }
-        return (options.inspectDirectory ?? inspectDirectory)(path, directoryAbort.signal);
-      })
-      .finally(() => {
-        inspections.delete(path);
-      });
-    inspections.set(path, inspection);
-    return inspection;
-  }
-
-  function currentDirectory(id: string, workspaceId: string, data: DirectoryData): boolean {
-    return (
-      options.db
-        .query(
-          `SELECT 1 FROM items WHERE id = ? AND workspace_id = ? AND kind = 'directory' AND archived = 0
-       AND json_extract(data_json, '$.path') = ? AND json_extract(data_json, '$.gitCommonDir') IS ?`,
-        )
-        .get(id, workspaceId, data.path, data.gitCommonDir) !== null
-    );
-  }
-
-  async function inspectRemembered(
-    data: Pick<DirectoryData, "path" | "availability" | "failureReason">,
-  ): Promise<DirectoryScan> {
-    try {
-      return await inspectPath(data.path);
-    } catch (error) {
-      return {
-        path: data.path,
-        available: data.availability === "available",
-        ...(data.failureReason === undefined ? {} : { reason: data.failureReason }),
-        git: null,
-        discoveryError: error instanceof Error ? error.message : String(error),
-      };
-    }
-  }
-
-  async function refreshDirectoryPass(): Promise<void> {
-    const roots = readItems(options.db).filter(
-      (item) => item.kind === "directory" && !item.archived,
-    );
-    for (const root of roots) {
-      if (directoryRefreshClosed) {
-        return;
-      }
-      if (root.kind !== "directory" || !currentDirectory(root.id, root.workspaceId, root.data)) {
-        continue;
-      }
-      let scan = await inspectRemembered(root.data);
-      if (directoryRefreshClosed) {
-        return;
-      }
-      if (!currentDirectory(root.id, root.workspaceId, root.data)) {
-        continue;
-      }
-      if (root.data.isGitCheckout && !isTrustedGroupScan(root.data, scan)) {
-        const children = readItems(options.db).filter(
-          (item) => item.kind === "worktree" && item.parentId === root.id && !item.archived,
-        );
-        for (const child of children) {
-          if (directoryRefreshClosed) {
-            return;
-          }
-          if (!currentDirectory(root.id, root.workspaceId, root.data)) {
-            break;
-          }
-          if (child.kind !== "worktree") {
-            continue;
-          }
-          const currentChild = () =>
-            options.db
-              .query(
-                `SELECT 1 FROM items WHERE id = ? AND parent_id = ? AND workspace_id = ? AND kind = 'worktree'
-             AND archived = 0 AND json_extract(data_json, '$.path') = ?`,
-              )
-              .get(child.id, root.id, root.workspaceId, child.data.path) !== null;
-          if (!currentChild()) {
-            continue;
-          }
-          const fallback = await inspectRemembered(child.data);
-          if (directoryRefreshClosed) {
-            return;
-          }
-          if (!currentDirectory(root.id, root.workspaceId, root.data)) {
-            break;
-          }
-          if (
-            currentChild() &&
-            fallback.path === child.data.path &&
-            isTrustedGroupScan(root.data, fallback)
-          ) {
-            scan = fallback;
-            break;
-          }
-        }
-      }
-      if (!currentDirectory(root.id, root.workspaceId, root.data)) {
-        continue;
-      }
-      const changed = options.db.transaction(() => {
-        const before = readNavigationCatalog(options.db);
-        const changed = reconcileDirectoryScan(options.db, root.id, scan);
-        return normalizeSessionNavigations(options.db, before) || changed;
-      })();
-      publishChange(changed);
-    }
-  }
-
-  function refreshDirectories(): Promise<void> {
-    if (directoryRefreshClosed) {
-      return Promise.resolve();
-    }
-    directoryPass ??= refreshDirectoryPass().finally(() => {
-      directoryPass = undefined;
-    });
-    return directoryPass;
-  }
-
-  function startDirectoryRefresh(): void {
-    if (directoryRefreshStarted || directoryRefreshClosed) {
-      return;
-    }
-    directoryRefreshStarted = true;
-    function run(): void {
-      void refreshDirectories()
-        .catch((error) => {
-          console.error("Work Craft directory refresh failed:", error);
-        })
-        .finally(() => {
-          if (!directoryRefreshClosed) {
-            directoryTimer = setTimeout(run, 5000);
-          }
-        });
-    }
-    run();
-  }
-
-  function closeDirectoryRefresh(): Promise<void> {
-    if (directoryClose !== undefined) {
-      return directoryClose;
-    }
-    directoryRefreshClosed = true;
-    clearTimeout(directoryTimer);
-    directoryAbort.abort();
-    directoryClose = Promise.allSettled([...inspections.values(), directoryPass]).then(() => {});
-    return directoryClose;
   }
 
   function onOutput(paneId: string, bytes: Uint8Array, runtimeGeneration: number): void {
@@ -511,20 +350,12 @@ export function createApp(options: {
       }
     }
     validateOrigin();
-    if (command.type === "directory.register" && directoryRefreshClosed) {
-      throw new ProtocolError("Directory discovery is closed");
-    }
     const registration =
       command.type === "directory.register"
-        ? await inspectPath(await canonicalDirectoryPath(command.path))
+        ? await discovery.prepareRegistration(command.path)
         : undefined;
-    if (command.type === "directory.register" && directoryRefreshClosed) {
-      throw new ProtocolError("Directory discovery is closed");
-    }
-    if (registration !== undefined && !registration.available) {
-      throw new ProtocolError(
-        registration.reason ?? "Directory became unavailable during registration",
-      );
+    if (registration !== undefined) {
+      discovery.validateRegistration(registration);
     }
     if (command.type === "pane.split") {
       try {
@@ -563,7 +394,7 @@ export function createApp(options: {
     const committedRevision = revision;
 
     for (const effect of effects) {
-      if (effect.type !== "spawn-pane" || runtime.isLive(effect.paneId)) {
+      if (runtime.isLive(effect.paneId)) {
         continue;
       }
       const pane = controlSnapshot().panes.find(({ id }) => id === effect.paneId);
@@ -600,9 +431,9 @@ export function createApp(options: {
     controlSnapshot,
     paneHistory,
     recover,
-    startDirectoryRefresh,
-    refreshDirectories,
-    closeDirectoryRefresh,
+    startDirectoryRefresh: discovery.start,
+    refreshDirectories: discovery.refresh,
+    closeDirectoryRefresh: discovery.close,
     execute,
     health() {
       return { epoch, revision, pid: process.pid, protocol: TERMINAL_PROTOCOL };
