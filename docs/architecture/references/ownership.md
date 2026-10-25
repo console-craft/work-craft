@@ -20,6 +20,12 @@ Paths in this table are relative to the repository root.
 | [`packages/cli/src/`](../../../packages/cli/src/)                               | Argument validation, API calls and plain-text/JSON output; no interactive UI or duplicate domain logic.                                    |
 | [`scripts/`](../../../scripts/)                                                 | Install/build support, compiled smoke, probes and cross-package process fixtures.                                                          |
 
+The shared, import-inert diagnostic recorder lives in
+[`packages/server/src/output-probe.ts`](../../../packages/server/src/output-probe.ts),
+exported as `@work-craft/server/client/output-probe`. The server's
+`terminal/output-probe.ts` and TUI's `client/output-probe.ts` retain component-local
+file initialization and signal handlers.
+
 ## TUI capabilities
 
 Paths below are relative to [`packages/tui/src/`](../../../packages/tui/src/).
@@ -48,7 +54,8 @@ and child-query owner, not a native terminal renderer mounted by the TUI.
 The [TUI lint configuration](../../../packages/tui/.oxlintrc.json) enforces these
 rules for value/type imports, re-exports and dynamic imports:
 
-- Import server APIs only through `@work-craft/server/client`.
+- Import server APIs only through `@work-craft/server/client` or the side-effect-free
+  `@work-craft/server/client/output-probe` recorder entry. Other client subpaths remain restricted.
 - Use direct `@/` imports within the TUI, not relative internal imports or barrels.
 - Shell composes capabilities; `client`, `input`, `navigation` and `workbench`
   must not import shell.

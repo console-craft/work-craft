@@ -150,3 +150,29 @@ test("disabled recorder creates no files or signal handlers; enabled subprocess 
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("shared recorder import stays inert with profiling enabled", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "work-craft-shared-probe-test-"));
+  try {
+    const child = Bun.spawnSync(
+      [
+        process.execPath,
+        "-e",
+        `const before=process.listenerCount("SIGUSR2");await import("@work-craft/server/client/output-probe");console.log(process.listenerCount("SIGUSR2")-before);`,
+      ],
+      {
+        cwd: join(import.meta.dir, "../../../../tui"),
+        env: {
+          ...process.env,
+          WORK_CRAFT_OUTPUT_PROFILE_DIR: directory,
+          WORK_CRAFT_OUTPUT_PROFILE_ROLE: "harness",
+        },
+      },
+    );
+    expect(child.exitCode, child.stderr.toString()).toBe(0);
+    expect(child.stdout.toString().trim()).toBe("0");
+    expect(await readdir(directory)).toEqual([]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

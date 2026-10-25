@@ -7,7 +7,12 @@
       {
         "patterns": [
           {
-            "group": ["@work-craft/server", "@work-craft/server/**", "!@work-craft/server/client"],
+            "group": [
+              "@work-craft/server",
+              "@work-craft/server/**",
+              "!@work-craft/server/client",
+              "!@work-craft/server/client/output-probe"
+            ],
             "message": "Import client-safe APIs from @work-craft/server/client."
           },
           {
@@ -32,7 +37,8 @@
                 "group": [
                   "@work-craft/server",
                   "@work-craft/server/**",
-                  "!@work-craft/server/client"
+                  "!@work-craft/server/client",
+                  "!@work-craft/server/client/output-probe"
                 ],
                 "message": "Import client-safe APIs from @work-craft/server/client."
               },
@@ -58,7 +64,8 @@
                 "group": [
                   "@work-craft/server",
                   "@work-craft/server/**",
-                  "!@work-craft/server/client"
+                  "!@work-craft/server/client",
+                  "!@work-craft/server/client/output-probe"
                 ],
                 "message": "Import client-safe APIs from @work-craft/server/client."
               },
@@ -88,7 +95,8 @@
                 "group": [
                   "@work-craft/server",
                   "@work-craft/server/**",
-                  "!@work-craft/server/client"
+                  "!@work-craft/server/client",
+                  "!@work-craft/server/client/output-probe"
                 ],
                 "message": "Import client-safe APIs from @work-craft/server/client."
               },
