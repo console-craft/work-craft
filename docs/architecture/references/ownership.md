@@ -20,6 +20,11 @@ Paths in this table are relative to the repository root.
 | [`packages/cli/src/`](../../../packages/cli/src/)                               | Argument validation, API calls and plain-text/JSON output; no interactive UI or duplicate domain logic.                                    |
 | [`scripts/`](../../../scripts/)                                                 | Install/build support, compiled smoke, probes and cross-package process fixtures.                                                          |
 
+Within `application/`, `directory-discovery.ts` owns shared registration/refresh
+inspections, guarded reconciliation, scheduling and cancellation/draining.
+`app.ts` retains command authorization, revisions and post-commit publication;
+daemon shutdown drains discovery before closing history and SQLite.
+
 The shared, import-inert diagnostic recorder lives in
 [`packages/server/src/output-probe.ts`](../../../packages/server/src/output-probe.ts),
 exported as `@work-craft/server/client/output-probe`. The server's

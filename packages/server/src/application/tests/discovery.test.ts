@@ -665,7 +665,7 @@ test("close also awaits registration inspections that have no refresh pass", asy
     closed = true;
   });
   try {
-    await Promise.resolve();
+    await new Promise<void>((resolve) => setImmediate(resolve));
     expect(signal?.aborted).toBe(true);
     expect(closed).toBe(false);
     release.resolve({ path: f.path, available: true, git: null });
