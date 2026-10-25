@@ -105,6 +105,10 @@ make a UI change easier.
   messages, field validation stays by its field, and child stderr stays terminal
   output. Reporting must not steal focus or unmount unrelated panes.
 
+The navigator results list grows from a zero flex basis into the space left by
+its title and filter. An automatic basis lets native scrollbar visibility change
+the filter's height, creating a layout feedback loop in short viewports.
+
 ## Tests and fixtures
 
 Script tests live in `scripts/tests/`; shared process fixtures remain in
