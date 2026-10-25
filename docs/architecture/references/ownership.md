@@ -45,8 +45,9 @@ Paths below are relative to [`packages/tui/src/`](../../../packages/tui/src/).
 | `ui/primitives/`, `ui/controls/`, `ui/components/` | Local reusable views and concrete internal mechanisms. Prefer existing components, then native OpenTUI primitives; do not create generic engines for hypothetical reuse.                                                                                                                                                                                                              |
 | `demos/`                                           | Standalone controls showcase and `components.tsx`, composed from `component-demos/` sections.                                                                                                                                                                                                                                                                                         |
 
-`client/terminal-consumer.ts` supports the retained-output registry; it is not the
-live material rendering path. The daemon's `terminal/projection.ts` is the parser
+`client/terminal-replay.ts` validates retained byte/resize ordering for buffer
+merging and material test fixtures; the output registry has no native consumer or
+consumption acknowledgements. The daemon's `terminal/projection.ts` is the parser
 and child-query owner, not a native terminal renderer mounted by the TUI.
 
 ## Enforced imports

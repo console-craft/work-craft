@@ -69,7 +69,6 @@ test("a full snapshot replaces an incomplete byte queue even at the same tail cu
   const previous: TerminalBuffer = {
     epoch: "epoch-a",
     runtimeGeneration: 0,
-    resetGeneration: 0,
     history: new Uint8Array(),
     historyCursor: 0,
     historyStartCursor: 0,
@@ -183,7 +182,7 @@ function fixture() {
 }
 
 for (const sessionId of ["session-work", "other-session"]) {
-  test(`buffered output retains response authority across ownership transfer (${sessionId})`, async () => {
+  test(`buffered output never renews captured input or material scope across ownership transfer (${sessionId})`, async () => {
     const { snapshot, client } = fixture();
     snapshot.sessions = [{ id: sessionId, name: "Viewer", position: 0 }];
     snapshot.navigation[0]!.sessionId = sessionId;
@@ -215,16 +214,15 @@ for (const sessionId of ["session-work", "other-session"]) {
         geometrySequence: 1,
       };
       await store.apply(output);
-      const original = store.getState().outputs.pane("pane-1").read()!;
+      const captured = store.getState();
       const stamp = {
         epoch: snapshot.epoch,
         attachmentGeneration: store.getState().attachment!.generation,
         navigationGeneration: 1,
         geometrySequence: 1,
       };
-      expect(terminalReplaySteps(original, null).steps.at(-1)).toMatchObject({
-        responseStamp: stamp,
-      });
+      expect(captured.canSendInput("pane-1", stamp)).toBe(true);
+      expect(captured.canReadMaterial("pane-1", stamp)).toBe(true);
       const geometry = structuredClone(snapshot.geometry);
       geometry.sequence++;
       geometry.tabs[0]!.generation++;
@@ -237,12 +235,12 @@ for (const sessionId of ["session-work", "other-session"]) {
       });
       await store.apply({ ...output, cursor: 8, geometrySequence: 2 });
       const replay = terminalReplaySteps(store.getState().outputs.pane("pane-1").read()!, null);
-      expect(
-        replay.steps.flatMap((step) =>
-          step.type === "bytes" && step.origin === "live" ? [step.responseStamp] : [],
-        ),
-      ).toEqual([stamp, null]);
-      expect(store.getState().canRespond("pane-1", stamp)).toBe(false);
+      expect(replay.needsSnapshot).toBe(false);
+      expect(captured.canSendInput("pane-1", stamp)).toBe(false);
+      expect(captured.canReadMaterial("pane-1", stamp)).toBe(false);
+      const current = { ...stamp, geometrySequence: 2 };
+      expect(captured.canSendInput("pane-1", current)).toBe(true);
+      expect(captured.canReadMaterial("pane-1", current)).toBe(true);
       const restored = structuredClone(geometry);
       restored.sequence++;
       restored.tabs[0]!.generation++;
@@ -254,18 +252,20 @@ for (const sessionId of ["session-work", "other-session"]) {
         resizes: [],
       });
       await store.apply({ ...output, cursor: 12 });
-      expect(
-        store.getState().outputs.pane("pane-1").read()!.chunks.at(-1)?.responseStamp,
-      ).toBeNull();
+      expect(captured.canSendInput("pane-1", stamp)).toBe(false);
+      expect(captured.canReadMaterial("pane-1", stamp)).toBe(false);
+      expect(captured.canSendInput("pane-1", { ...stamp, geometrySequence: 3 })).toBe(true);
+      expect(captured.canReadMaterial("pane-1", { ...stamp, geometrySequence: 3 })).toBe(true);
     } finally {
       store.stop();
     }
   });
 }
 
-test("captured input and response stamps never revalidate after navigation away and back before React commits", async () => {
+test("captured input and material scope never revalidate after navigation away and back before React commits", async () => {
   const { snapshot, client } = fixture();
   const store = createWorkCraftStore(client);
+  let releaseHistory: (() => void) | undefined;
   try {
     await store.start();
     await store.getState().attach("session-work");
@@ -277,16 +277,27 @@ test("captured input and response stamps never revalidate after navigation away 
       geometrySequence: 1,
     };
     expect(captured.canSendInput("pane-1", stamp)).toBe(true);
-    expect(captured.canRespond("pane-1", stamp)).toBe(true);
+    expect(captured.canReadMaterial("pane-1", stamp)).toBe(true);
+    const history = await client.paneHistory("pane-1");
+    const held = Promise.withResolvers<typeof history>();
+    releaseHistory = () => held.resolve(history);
+    client.paneHistory = () => held.promise;
+    const recovery = captured.resyncPane("pane-1");
+    expect(captured.canSendInput("pane-1", stamp)).toBe(false);
+    expect(captured.canReadMaterial("pane-1", stamp)).toBe(true);
+    releaseHistory();
+    await recovery;
+    expect(captured.canSendInput("pane-1", stamp)).toBe(true);
     for (const generation of [2, 3]) {
       const next = structuredClone(snapshot);
       next.revision += generation - 1;
       next.navigation[0]!.generation = generation;
       await store.apply({ type: "snapshot", snapshot: next });
       expect(captured.canSendInput("pane-1", stamp)).toBe(false);
-      expect(captured.canRespond("pane-1", stamp)).toBe(false);
+      expect(captured.canReadMaterial("pane-1", stamp)).toBe(false);
     }
   } finally {
+    releaseHistory?.();
     store.stop();
   }
 });

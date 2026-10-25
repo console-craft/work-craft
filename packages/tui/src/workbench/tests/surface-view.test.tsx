@@ -204,11 +204,11 @@ function splitSurfaceSnapshot(direction: "horizontal" | "vertical"): Snapshot {
   };
 }
 
-test("terminal renderer identity includes the daemon epoch and runtime/reset generations", () => {
-  expect(terminalPaneKey("pane-1", undefined)).toBe("pane-1:pending:0:0");
+test("terminal renderer identity includes the daemon epoch and runtime generation", () => {
+  expect(terminalPaneKey("pane-1", undefined)).toBe("pane-1:pending:0");
   expect(
     terminalPaneKey("pane-1", terminalBufferFixture({ epoch: "epoch-2", historyCursor: 42 })),
-  ).toBe("pane-1:epoch-2:0:0");
+  ).toBe("pane-1:epoch-2:0");
 });
 
 test("runtime replacement cannot reuse a native input encoder at the same history cursor", () => {

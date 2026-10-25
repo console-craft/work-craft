@@ -1,7 +1,6 @@
 import {
   decodeBytes,
   type GridMarker,
-  type InputStamp,
   type PaneHistoryResponse,
   type Snapshot,
   type TerminalSize,
@@ -12,7 +11,6 @@ import { MAX_TERMINAL_LIVE_BYTES, terminalReplaySteps } from "@/client/terminal-
 export type TerminalBuffer = {
   epoch: string;
   runtimeGeneration: number;
-  resetGeneration: number;
   needsHistory?: boolean;
   recovering?: boolean;
   history: Uint8Array;
@@ -27,7 +25,6 @@ export type TerminalBuffer = {
     data: Uint8Array;
     geometrySequence: number;
     origin: "history" | "live";
-    responseStamp?: InputStamp | null;
   }[];
 };
 
@@ -70,7 +67,6 @@ export function mergePaneHistory(
   const replacement: TerminalBuffer = {
     epoch,
     runtimeGeneration,
-    resetGeneration: current?.resetGeneration ?? 0,
     history: decodeBytes(history.data),
     historyCursor: history.cursor,
     historyStartCursor: history.startCursor,
@@ -126,7 +122,6 @@ export function appendTerminalChunk(
   data: Uint8Array,
   geometrySequence: number,
   origin: "history" | "live" = "live",
-  responseStamp?: InputStamp | null,
 ): TerminalBuffer {
   const chunks = [...buffer.chunks];
   const previous = chunks.at(-1);
@@ -136,7 +131,6 @@ export function appendTerminalChunk(
     previous.data.byteLength + data.byteLength <= 8192 &&
     previous.origin === origin &&
     previous.geometrySequence === geometrySequence &&
-    sameResponseStamp(previous.responseStamp, responseStamp) &&
     (buffer.resizes.at(-1)?.cursor ?? -1) < previous.cursor
   ) {
     const merged = new Uint8Array(previous.data.byteLength + data.byteLength);
@@ -149,7 +143,6 @@ export function appendTerminalChunk(
       data,
       geometrySequence,
       origin,
-      ...(responseStamp === undefined ? {} : { responseStamp }),
     });
   }
   let excess =
@@ -165,16 +158,4 @@ export function appendTerminalChunk(
     }
   }
   return { ...buffer, chunks };
-}
-
-export function sameResponseStamp(first?: InputStamp | null, second?: InputStamp | null): boolean {
-  return (
-    first === second ||
-    (!!first &&
-      !!second &&
-      first.epoch === second.epoch &&
-      first.attachmentGeneration === second.attachmentGeneration &&
-      first.navigationGeneration === second.navigationGeneration &&
-      first.geometrySequence === second.geometrySequence)
-  );
 }

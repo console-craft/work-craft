@@ -196,21 +196,17 @@ test("late recovery cannot replace overtaking live bytes and two same-cursor res
     expect([...buffer.history]).toEqual([97, 98]);
     expect([...buffer.chunks[0]!.data]).toEqual([99, 100]);
     expect(buffer.resizes).toEqual(markers);
-    expect(buffer.chunks[0]?.responseStamp).toBeNull();
   } finally {
     f.store.stop();
   }
 });
 
-test("pane recovery starts at native acknowledgement rather than the newest received cursor", async () => {
+test("pane recovery requests a full retained baseline despite newer received bytes", async () => {
   const f = fixture();
   await f.store.start();
   await Promise.all(
     f.control.terminalStates.map(({ paneId }) => f.store.getState().resyncPane(paneId)),
   );
-  const output = f.store.getState().outputs.pane("0");
-  output.next(null, 8192);
-  output.consumed({ cursor: 0, gridSequence: 0 });
   const afterCursors: (number | undefined)[] = [];
   f.client.paneHistory = async (paneId, after) => {
     afterCursors.push(after);
@@ -218,7 +214,7 @@ test("pane recovery starts at native acknowledgement rather than the newest rece
       epoch: f.full.epoch,
       paneId,
       runtimeGeneration: 1,
-      history: f.full.terminalHistories[0]!,
+      history: { ...f.full.terminalHistories[0]!, cursor: 3, data: "YWJj" },
     };
   };
   try {
@@ -231,9 +227,15 @@ test("pane recovery starts at native acknowledgement rather than the newest rece
       data: "YWJj",
       geometrySequence: f.control.geometry.sequence,
     });
-    output.next({ cursor: 0, gridSequence: 0 }, 8192);
     await f.store.getState().resyncPane("0");
-    expect(afterCursors).toEqual([0]);
+    expect(afterCursors).toEqual([undefined]);
+    const buffer = f.store.getState().outputs.pane("0").read()!;
+    expect(buffer.recovering).toBe(false);
+    expect(
+      terminalReplaySteps(buffer, null).steps.flatMap((step) =>
+        step.type === "bytes" ? [...step.data] : [],
+      ),
+    ).toEqual([97, 98, 99]);
   } finally {
     f.store.stop();
   }
@@ -309,7 +311,6 @@ test("successful no-change history recovery publishes an explicit completion", a
     await f.store.getState().resyncPane("0");
     expect(completed).toBe(true);
     expect(output.read()).not.toBe(before);
-    expect(output.read()?.resetGeneration).toBe(before?.resetGeneration);
   } finally {
     unsubscribe();
     f.store.stop();

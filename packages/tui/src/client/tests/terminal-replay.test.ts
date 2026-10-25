@@ -10,7 +10,6 @@ function buffer(overrides: Partial<TerminalBuffer> = {}): TerminalBuffer {
   return {
     epoch: "e",
     runtimeGeneration: 0,
-    resetGeneration: 0,
     history: encode("abcdefgh"),
     historyStartCursor: 0,
     historyPrefixBytes: 0,
@@ -128,13 +127,19 @@ test("replay still rejects oversized raw buffers and invalid synthetic prefix of
 test("legacy bytes precede the first known resize without guessed old dimensions", () => {
   const result = terminalReplaySteps(
     buffer({
+      history: encode("\x1bcabcdefgh"),
+      historyPrefixBytes: 2,
       initialSize: null,
       initialGridSequence: null,
       resizes: [{ cursor: 8, sequence: 1, cols: 100, rows: 30 }],
     }),
     null,
   );
-  expect(result.steps.map(({ type }) => type)).toEqual(["bytes", "resize"]);
+  expect(result.steps).toEqual([
+    { type: "bytes", cursor: 0, data: encode("\x1bc"), origin: "history" },
+    { type: "bytes", cursor: 8, data: encode("abcdefgh"), origin: "history" },
+    { type: "resize", marker: { cursor: 8, sequence: 1, cols: 100, rows: 30 } },
+  ]);
   expect(result.needsSnapshot).toBe(false);
 });
 
@@ -208,14 +213,50 @@ test("a retained baseline can replace obsolete native replay progress", () => {
   });
 });
 
-test("replay rejects an over-budget marker backlog without allocating an unbounded step queue", () => {
+test("replay accepts 1024 resize markers besides the bootstrap grid and rejects an over-budget backlog", () => {
   const current = buffer({
-    resizes: Array.from({ length: 1025 }, (_, i) => ({
+    resizes: Array.from({ length: 1024 }, (_, i) => ({
       cursor: 8,
       sequence: i + 1,
       cols: 80,
       rows: 24,
     })),
   });
+  const accepted = terminalReplaySteps(current, null);
+  expect(accepted.needsSnapshot).toBe(false);
+  expect(accepted.steps.filter((step) => step.type === "resize")).toHaveLength(1025);
+  current.resizes.push({ cursor: 8, sequence: 1025, cols: 80, rows: 24 });
   expect(terminalReplaySteps(current, null)).toEqual({ steps: [], needsSnapshot: true });
+});
+
+test("split VT bytes preserve exact order across equal-cursor resize markers", () => {
+  const result = terminalReplaySteps(
+    buffer({
+      history: new Uint8Array(),
+      historyCursor: 0,
+      chunks: [
+        { cursor: 2, data: new Uint8Array([240, 159]), geometrySequence: 0, origin: "live" },
+        {
+          cursor: 10,
+          data: new Uint8Array([153, 130, 27, 91, 50, 59, 51, 72]),
+          geometrySequence: 2,
+          origin: "live",
+        },
+      ],
+      resizes: [
+        { cursor: 4, sequence: 1, cols: 100, rows: 30 },
+        { cursor: 4, sequence: 2, cols: 120, rows: 40 },
+      ],
+    }),
+    null,
+  );
+  expect(result.needsSnapshot).toBe(false);
+  expect(result.steps).toEqual([
+    { type: "resize", marker: { cursor: 0, sequence: 0, cols: 80, rows: 24 } },
+    { type: "bytes", cursor: 2, data: new Uint8Array([240, 159]), origin: "live" },
+    { type: "bytes", cursor: 4, data: new Uint8Array([153, 130]), origin: "live" },
+    { type: "resize", marker: { cursor: 4, sequence: 1, cols: 100, rows: 30 } },
+    { type: "resize", marker: { cursor: 4, sequence: 2, cols: 120, rows: 40 } },
+    { type: "bytes", cursor: 10, data: new Uint8Array([27, 91, 50, 59, 51, 72]), origin: "live" },
+  ]);
 });

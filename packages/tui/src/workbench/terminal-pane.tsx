@@ -234,5 +234,5 @@ export function TerminalPane({
 }
 
 export function terminalPaneKey(paneId: string, buffer: TerminalBuffer | undefined): string {
-  return `${paneId}:${buffer?.epoch ?? "pending"}:${buffer?.runtimeGeneration ?? 0}:${buffer?.resetGeneration ?? 0}`;
+  return `${paneId}:${buffer?.epoch ?? "pending"}:${buffer?.runtimeGeneration ?? 0}`;
 }

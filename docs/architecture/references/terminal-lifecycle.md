@@ -18,7 +18,8 @@ positions and styles; it does not parse ANSI. Structural changes use the root
 control subscription; ordinary terminal output/material refresh does not.
 
 The client store recovers retained pane output with at most four concurrent
-abortable history requests. Recovery is scoped to connection, attachment,
+abortable history requests, each fetching a full retained baseline rather than a
+native-consumption frontier. Recovery is scoped to connection, attachment,
 navigation, epoch and runtime; completion is published even without new bytes.
 The picture can remain visible during recovery without permitting early input.
 

@@ -66,7 +66,6 @@ export function terminalBufferFixture(overrides: Partial<TerminalBuffer> = {}): 
   return {
     epoch: "epoch-a",
     runtimeGeneration: 0,
-    resetGeneration: 0,
     history: new Uint8Array(),
     historyStartCursor: 0,
     historyPrefixBytes: 0,
