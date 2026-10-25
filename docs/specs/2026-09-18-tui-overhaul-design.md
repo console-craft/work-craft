@@ -10,8 +10,7 @@ architecture documentation or an authorization to implement every item now.
 Read the [current overview](../architecture/overview.md),
 [ownership reference](../architecture/references/ownership.md) and
 [terminal lifecycle](../architecture/references/terminal-lifecycle.md) before
-designing a selected slice. Performance acceptance is tracked separately in
-[output/lifecycle acceptance](2026-10-21-output-lifecycle-design.md).
+designing a selected slice.
 
 ## Delivered baseline to preserve
 

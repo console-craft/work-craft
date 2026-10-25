@@ -151,9 +151,8 @@ bun scripts/run-bounded.ts 300000 bun test ./packages/tui/src/tests/shared-sessi
 Real-process acceptance requires a working shell/PTY and Git where repositories
 are created. Neovim journeys were removed by the reliability cutoff. Platform/permission
 skips include macOS-specific cwd probes and inaccessible-directory behavior under
-root. Three failed-reactivation cases remain quarantined on macOS pending targeted
-verification after the Bun PTY-exit fix; their assertions still run on other
-platforms. The static reliability audit's below-eight tests were explicitly
+root. Failed-reactivation final-picture cases run on all supported platforms.
+The static reliability audit's below-eight tests were explicitly
 removed, including multi-client cold-history equality, raw reload/input, stopped
 history, burst/query journeys and the output benchmark. Their removal reduces
 coverage; it does not establish that the observed failures were test-only or that
@@ -261,9 +260,6 @@ Repository workflow locations are defined in [AGENTS.md](../../../AGENTS.md).
 Active work lives under `docs/specs/`:
 
 - [Remaining product roadmap and stabilization debt](../../specs/2026-09-18-tui-overhaul-design.md).
-- [Unmet performance acceptance](../../specs/2026-10-21-output-lifecycle-design.md).
-- [macOS failed-reactivation quarantine follow-up](../../specs/2026-10-23-native-pty-exit-hang.md).
-- [Cold-history frame investigation and separate unexplained CI failures](../../specs/2026-10-25-cold-history-frame-followup.md).
 
 These describe unfinished work, not current implementation authority. Completed
 specs/reports live in Git history; retained evidence links use fixed revisions.

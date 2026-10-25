@@ -161,13 +161,9 @@ the entire state directory or manually remove a live daemon's socket/lock.
   child is reapable because exit waits in `ttywait` for controlling-terminal
   output. The Bun 1.4.4 pin includes upstream's off-thread reaping fix for both
   initial-watch and rewatch paths; keep this correction when changing runtimes.
-  Three failed-reactivation cases remain skipped on macOS pending separate
-  [quarantine-removal verification](../../specs/2026-10-23-native-pty-exit-hang.md).
 - Cold-history's former real multi-client acceptance exposed an intermittent
   full-frame mismatch after restart. That case was removed by the user-approved
-  reliability cutoff; removal and later green CI do not establish its repair. The
-  [open investigation](../../specs/2026-10-25-cold-history-frame-followup.md)
-  preserves the wrapping/geometry evidence and required client-isolation contract.
+  reliability cutoff; removal and later green CI do not establish its repair.
 - Physical-terminal visual/focus behavior, Linux live-cwd behavior and long-running
   listener stability are not certified by a macOS check. See
   [verification](development.md#checks-and-test-execution) for automated coverage
