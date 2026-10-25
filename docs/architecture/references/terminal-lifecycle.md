@@ -118,11 +118,16 @@ separate home for experiments and the same home for clients intended to share a
 daemon. `work-craft daemon stop` stops managed runtimes cleanly and preserves
 records/history.
 
-Schema 6 migrates schemas 4/5 without destructive reset, preserving resource IDs,
-layouts, policies and output; it adds durable session navigation and internal
-history boundaries. Earlier incompatible schemas are rejected, and migration
-failure rolls back. Mixed-version clients/daemons are unsupported: stop the old
-daemon and restart clients coherently. Startup never silently discards data.
+Schema 1 is the consolidated baseline, including durable session navigation and
+internal history boundaries. Empty, unversioned databases initialize atomically;
+baseline databases reopen without migration. Other versions and nonempty
+unversioned databases are rejected without changing their data or journal mode.
+There is no upgrade path from the former development schemas: use a separate home
+or explicitly discard that state with a compatible executable before switching
+versions. Historical schema-1 backups predate this baseline and are unsupported;
+the reused version number does not make their tables compatible. Mixed-version
+clients/daemons are unsupported: stop the old daemon and restart clients coherently.
+Startup never silently discards data.
 
 **`daemon destroy --force` stops managed runtimes and deletes persisted Work Craft
 state for the selected home.** Before using it:

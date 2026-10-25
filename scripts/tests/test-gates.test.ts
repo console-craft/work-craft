@@ -43,6 +43,7 @@ test("every discovered product or tooling test has exactly one gate; new tests d
   expect(groups.acceptance).toContain("packages/cli/src/tests/cli.test.ts");
   expect(groups.core).toContain("packages/server/src/tests/client.test.ts");
   expect(groups.acceptance).toContain("packages/server/src/tests/acceptance.test.ts");
+  expect(groups.acceptance).toContain("scripts/tests/seed.test.ts");
   expect(paths.some((path) => /\.(benchmark|diagnostic)\./.test(path))).toBe(false);
 });
 

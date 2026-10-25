@@ -1,8 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { migrateColdHistory } from "../../persistence/cold-history-migration.ts";
-import { migrateStage2 } from "../../persistence/stage-2-migration.ts";
-import { stage2Fixture } from "../../persistence/tests/stage-2.test-support.ts";
+import { databaseFixture } from "../../persistence/tests/database.test-support.ts";
 import { HistoryGeometry } from "../history-geometry.ts";
 import { TerminalHistory } from "../history.ts";
 
@@ -26,9 +24,7 @@ test("marker-only truncation preserves the next byte cursor after reopen", async
 });
 
 function fixture(maxMarkers = 1024) {
-  const db = stage2Fixture();
-  migrateStage2(db);
-  migrateColdHistory(db);
+  const db = databaseFixture();
   return { db, geometry: new HistoryGeometry(db, maxMarkers) };
 }
 
@@ -134,7 +130,7 @@ test("byte trimming keeps earlier dimensions as baseline and same-boundary marke
   }
 });
 
-test("legacy output stays explicitly unknown until a new grid boundary", () => {
+test("output without geometry stays explicitly unknown until a new grid boundary", () => {
   const { db, geometry } = fixture();
   try {
     expect(geometry.read("pane-1", 0, 8)).toMatchObject({

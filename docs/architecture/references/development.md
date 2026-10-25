@@ -28,6 +28,34 @@ WORK_CRAFT_HOME="$HOME/.local/state/work-craft-dev" bun run cli -- daemon stop
 Do not mix installed/source versions against one running daemon. Shutdown keeps
 state but stops shells; see [recovery and reset safety](terminal-lifecycle.md#local-state-and-safe-operation).
 
+### Reusable UX seed
+
+From the repository root, use one explicit development home for reset, seed and
+launch. Reset is destructive: close reconnecting clients and confirm the selected
+home and its managed runtimes first. When switching from an incompatible schema,
+perform the reset with the old compatible executable before changing versions.
+
+```sh
+export WORK_CRAFT_HOME="$HOME/.local/state/work-craft-dev"
+bun run cli -- daemon destroy --force
+bun run db:seed
+bun run tui
+```
+
+`db:seed` requires an explicit nonblank `WORK_CRAFT_HOME` and refuses existing
+application records, including workspaces with no sessions. It never resets state.
+It creates Session 1/2, Workspace 1/2 shared by both sessions, three Inbox and two
+Today items per workspace, and two tabs on one item. The first tab has two vertical
+splits (three panes); four real managed shells run in total, with the repository
+root as their cwd. Session 1 selects the populated first tab/pane.
+The final check allows 250 ms for PTY exit notifications before requiring four
+running panes; it checks startup, not long-term shell health.
+
+The script uses normal source CLI commands. Do not mutate the same home from
+another client while seeding or mix installed/source versions. Seeding stops on
+the first error and may leave partial records; inspect them or explicitly reset
+before retrying. No rollback deletes data or terminates existing runtimes for you.
+
 ## CLI reference
 
 The CLI is non-interactive, with plain text by default and `--json` for structured

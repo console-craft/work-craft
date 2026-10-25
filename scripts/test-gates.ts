@@ -7,6 +7,7 @@ export type TestSuite = "core" | "acceptance" | "tooling";
 // Explicit exceptions keep new correctness tests in core, never silently omitted.
 export const nonCoreTests: Record<"acceptance" | "tooling", string[]> = {
   acceptance: [
+    "scripts/tests/seed.test.ts",
     "packages/cli/src/tests/cli.test.ts",
     "packages/server/src/tests/acceptance.test.ts",
     "packages/server/src/application/tests/commands.test.ts",

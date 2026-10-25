@@ -1,7 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { migrateStage2 } from "../../persistence/stage-2-migration.ts";
-import { stage2Fixture } from "../../persistence/tests/stage-2.test-support.ts";
+import { databaseFixture } from "../../persistence/tests/database.test-support.ts";
 import {
   normalizeSessionNavigations,
   readNavigationCatalog,
@@ -11,9 +10,8 @@ import {
 import { selectNavigation } from "../navigation.ts";
 
 test("session memories round-trip independently and unchanged writes are no-ops", () => {
-  const db = stage2Fixture();
+  const db = databaseFixture();
   try {
-    migrateStage2(db);
     const initial = readSessionNavigation(db, "s");
     const changed = selectNavigation(readNavigationCatalog(db), initial, {
       kind: "tab",
@@ -33,9 +31,8 @@ test("session memories round-trip independently and unchanged writes are no-ops"
 });
 
 test("archive normalization repairs every attached session in the caller transaction", () => {
-  const db = stage2Fixture();
+  const db = databaseFixture();
   try {
-    migrateStage2(db);
     const before = readNavigationCatalog(db);
     db.transaction(() => {
       db.exec("UPDATE items SET archived = 1 WHERE id = 'a'");
@@ -62,9 +59,8 @@ test("archive normalization repairs every attached session in the caller transac
 });
 
 test("cursor writes roll back with their structural mutation", () => {
-  const db = stage2Fixture();
+  const db = databaseFixture();
   try {
-    migrateStage2(db);
     const before = readNavigationCatalog(db);
     expect(() =>
       db.transaction(() => {

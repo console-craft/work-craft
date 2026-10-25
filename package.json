@@ -21,6 +21,7 @@
   ],
   "scripts": {
     "dev": "bun  --watch src/main.ts",
+    "db:seed": "bun scripts/seed.ts",
     "build": "mkdir -p dist && bun build --compile src/main.ts --outfile dist/work-craft",
     "build:install": "bun run build && sh scripts/install.sh",
     "check": "bun run lint && bun run format:check && bun run typecheck && bun run test:core",

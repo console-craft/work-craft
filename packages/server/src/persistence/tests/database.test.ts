@@ -9,7 +9,10 @@ import { CATEGORIES } from "../../application/categories.ts";
 import {
   normalizeSessionNavigations,
   readNavigationCatalog,
+  readSessionNavigation,
+  writeSessionNavigation,
 } from "../../application/navigation-store.ts";
+import { selectNavigation } from "../../application/navigation.ts";
 import { readSnapshot } from "../../application/snapshot.ts";
 import { openDatabase } from "../database.ts";
 
@@ -43,9 +46,30 @@ function seedSnapshot(db: ReturnType<typeof openDatabase>): void {
   normalizeSessionNavigations(db, readNavigationCatalog(db));
 }
 
-test("migrates an empty database and exposes six fixed categories", () => {
+test("initializes the complete baseline without fabricating resources", () => {
   const db = openDatabase(":memory:");
-  expect(db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(6);
+  expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: 1 });
+  for (const table of [
+    "session_navigation",
+    "session_surface_tabs",
+    "session_tab_panes",
+    "terminal_grids",
+    "terminal_resizes",
+  ]) {
+    expect(db.query(`SELECT * FROM ${table}`).all()).toEqual([]);
+  }
+  expect(
+    db
+      .query<{ name: string }, []>("PRAGMA table_info(surfaces)")
+      .all()
+      .map(({ name }) => name),
+  ).not.toContain("active_tab_id");
+  expect(
+    db
+      .query<{ name: string }, []>("PRAGMA table_info(terminal_resizes)")
+      .all()
+      .map(({ name }) => name),
+  ).toContain("runtime_start");
   expect(CATEGORIES.map((category) => category.kind)).toEqual([
     "inbox",
     "today",
@@ -62,93 +86,66 @@ test("migrates an empty database and exposes six fixed categories", () => {
   db.close();
 });
 
-test("rejects version 1 workspace ownership without losing descendants or history", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "work-craft-migration-"));
-  const databasePath = join(directory, "work-craft.db");
-  const legacy = new Database(databasePath, { create: true });
-  legacy.exec(`
-    PRAGMA foreign_keys = ON;
-    CREATE TABLE sessions (id TEXT PRIMARY KEY, name TEXT NOT NULL, position INTEGER NOT NULL);
-    CREATE TABLE workspaces (id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, name TEXT NOT NULL, position INTEGER NOT NULL);
-    CREATE TABLE projects (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE, category TEXT NOT NULL CHECK (category IN ('inbox','today','design','implementation','collaboration','operations')), name TEXT NOT NULL, position INTEGER NOT NULL);
-    CREATE TABLE items (id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE, kind TEXT NOT NULL CHECK (kind IN ('generic','surface')), title TEXT NOT NULL, position INTEGER NOT NULL, data_json TEXT NOT NULL, provenance_item_id TEXT REFERENCES items(id));
-    CREATE TABLE surfaces (id TEXT PRIMARY KEY, item_id TEXT NOT NULL UNIQUE REFERENCES items(id) ON DELETE CASCADE, active_tab_id TEXT);
-    CREATE TABLE tabs (id TEXT PRIMARY KEY, surface_id TEXT NOT NULL REFERENCES surfaces(id) ON DELETE CASCADE, title TEXT NOT NULL, position INTEGER NOT NULL, layout_json TEXT);
-    CREATE TABLE panes (id TEXT PRIMARY KEY, surface_id TEXT NOT NULL REFERENCES surfaces(id) ON DELETE CASCADE, kind TEXT NOT NULL CHECK (kind = 'terminal'), title TEXT NOT NULL, cwd TEXT NOT NULL, restore_policy_json TEXT NOT NULL, process_status TEXT NOT NULL, error_text TEXT, started_at TEXT, exited_at TEXT);
-    CREATE TABLE terminal_chunks (id INTEGER PRIMARY KEY AUTOINCREMENT, pane_id TEXT NOT NULL REFERENCES panes(id) ON DELETE CASCADE, cursor_start INTEGER NOT NULL, cursor_end INTEGER NOT NULL, data BLOB NOT NULL);
-    CREATE INDEX terminal_chunks_pane_cursor ON terminal_chunks(pane_id, cursor_end);
-    INSERT INTO sessions VALUES ('session-1', 'Main', 0);
-    INSERT INTO workspaces VALUES ('workspace-1', 'session-1', 'Work', 0);
-    INSERT INTO projects VALUES ('project-1', 'workspace-1', 'implementation', 'Work Craft', 0);
-    INSERT INTO items VALUES ('item-1', 'project-1', 'surface', 'Build', 0, '{}', NULL);
-    INSERT INTO surfaces VALUES ('surface-1', 'item-1', 'tab-1');
-    INSERT INTO tabs VALUES ('tab-1', 'surface-1', 'Main', 0, '{"type":"pane","paneId":"pane-1"}');
-    INSERT INTO panes VALUES ('pane-1', 'surface-1', 'terminal', 'Shell', '/tmp', '{"type":"shell","executable":"/bin/sh","args":[]}', 'exited', NULL, NULL, NULL);
-    INSERT INTO terminal_chunks (pane_id, cursor_start, cursor_end, data) VALUES ('pane-1', 0, 2, X'6f6b');
-    PRAGMA user_version = 1;
-  `);
-  legacy.close();
-
-  expect(() => openDatabase(databasePath)).toThrow(/Incompatible/);
-  const migrated = new Database(databasePath);
-  try {
-    expect(
-      migrated.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version,
-    ).toBe(1);
-    expect(migrated.query("SELECT id, name FROM workspaces").all()).toEqual([
-      { id: "workspace-1", name: "Work" },
-    ]);
-    expect(migrated.query("SELECT id FROM projects").all()).toEqual([{ id: "project-1" }]);
-    expect(migrated.query("SELECT hex(data) AS data FROM terminal_chunks").all()).toEqual([
-      { data: "6F6B" },
-    ]);
-    expect(migrated.query("PRAGMA foreign_key_check").all()).toEqual([]);
-  } finally {
-    migrated.close();
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("rejects invalid legacy foreign keys before any schema replacement", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "work-craft-migration-invalid-"));
-  const databasePath = join(directory, "work-craft.db");
-  const legacy = new Database(databasePath, { create: true });
-  legacy.exec(`
-    PRAGMA foreign_keys = OFF;
-    CREATE TABLE sessions (id TEXT PRIMARY KEY, name TEXT NOT NULL, position INTEGER NOT NULL);
-    CREATE TABLE workspaces (id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, name TEXT NOT NULL, position INTEGER NOT NULL);
-    CREATE TABLE projects (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE, category TEXT NOT NULL CHECK (category IN ('inbox','today','design','implementation','collaboration','operations')), name TEXT NOT NULL, position INTEGER NOT NULL);
-    INSERT INTO projects VALUES ('project-1', 'missing-workspace', 'implementation', 'Work Craft', 0);
-    PRAGMA user_version = 1;
-  `);
-  legacy.close();
-
-  try {
-    expect(() => openDatabase(databasePath)).toThrow("Incompatible Work Craft database schema");
-    const preserved = new Database(databasePath);
-    try {
-      expect(
-        preserved.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version,
-      ).toBe(1);
-      expect(
-        preserved
-          .query<{ name: string }, []>("PRAGMA table_info(workspaces)")
-          .all()
-          .map(({ name }) => name),
-      ).toContain("session_id");
-    } finally {
-      preserved.close();
-    }
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
 test("makes acknowledged file-backed transactions power-loss durable", async () => {
   const directory = await mkdtemp(join(tmpdir(), "work-craft-database-"));
   const db = openDatabase(join(directory, "work-craft.db"));
   try {
     expect(db.query<{ synchronous: number }, []>("PRAGMA synchronous").get()?.synchronous).toBe(2);
+  } finally {
+    db.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("baseline navigation, output and runtime boundaries survive file-backed reopening", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "work-craft-baseline-"));
+  const path = join(directory, "state.sqlite");
+  let db = openDatabase(path);
+  try {
+    seedSnapshot(db);
+    const selected = selectNavigation(
+      readNavigationCatalog(db),
+      readSessionNavigation(db, "session-a"),
+      {
+        kind: "pane",
+        paneId: "pane-2",
+      },
+    );
+    db.transaction(() => {
+      writeSessionNavigation(db, selected);
+      db.exec(`
+        INSERT INTO terminal_grids (pane_id,start_cursor,end_cursor) VALUES ('pane-1',2,5);
+        INSERT INTO terminal_resizes (pane_id,sequence,cursor,cols,rows,runtime_start) VALUES
+          ('pane-1',1,2,80,24,NULL), ('pane-1',2,3,100,30,'fresh'), ('pane-1',3,4,120,40,'restored');
+      `);
+    })();
+    expect(() => db.exec("UPDATE terminal_resizes SET runtime_start='invalid'")).toThrow();
+    db.close();
+    db = openDatabase(path);
+    expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: 1 });
+    expect(db.query("PRAGMA foreign_keys").get()).toEqual({ foreign_keys: 1 });
+    expect(db.query("PRAGMA journal_mode").get()).toEqual({ journal_mode: "wal" });
+    expect(db.query("PRAGMA synchronous").get()).toEqual({ synchronous: 2 });
+    expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
+    expect(readSessionNavigation(db, "session-a")).toEqual(selected);
+    expect(db.query("SELECT runtime_start FROM terminal_resizes ORDER BY sequence").all()).toEqual([
+      { runtime_start: null },
+      { runtime_start: "fresh" },
+      { runtime_start: "restored" },
+    ]);
+    const history = readSnapshot(db, "reopened", 0).terminalHistories.find(
+      ({ paneId }) => paneId === "pane-1",
+    )!;
+    expect(new TextDecoder().decode(decodeBytes(history.data))).toEndWith("abc");
+    expect(history).toMatchObject({
+      startCursor: 2,
+      cursor: 5,
+      resizes: [
+        { cursor: 2, sequence: 1, cols: 80, rows: 24 },
+        { cursor: 3, sequence: 2, cols: 100, rows: 30 },
+        { cursor: 4, sequence: 3, cols: 120, rows: 40 },
+      ],
+    });
   } finally {
     db.close();
     await rm(directory, { recursive: true, force: true });
@@ -238,7 +235,7 @@ test("rejects malformed persisted JSON and invalid layout ratios", () => {
 test("incompatible versions and nonempty unversioned schemas preserve sentinel data and release handles", async () => {
   const directory = await mkdtemp(join(tmpdir(), "work-craft-schema-safety-"));
   try {
-    for (const version of [0, 1, 2, 3, 999]) {
+    for (const version of [0, 2, 3, 4, 5, 6, 999]) {
       const path = join(directory, `${version}.sqlite`);
       const old = new Database(path, { create: true });
       old.exec(
