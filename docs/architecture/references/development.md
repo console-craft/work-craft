@@ -130,6 +130,11 @@ policy local to the repository rather than modifying installed Superpowers skill
 
 ## Checks and test execution
 
+The shared React render fixture awaits mount effects inside `act` without explicitly
+flushing native frames. Measured-render helpers still use separate awaited frame acts;
+held responses and store publication without a React commit remain explicit test
+controls, not work to drain indiscriminately when silencing a warning.
+
 Run the everyday repository gate before completing a change:
 
 ```sh

@@ -8,7 +8,7 @@ import { act, type ReactNode } from "react";
 
 import { configureRendererListeners } from "@/ui/renderer";
 
-/** Keep the act environment enabled through deferred unmount effects, too. */
+/** Await mount effects without explicitly flushing native frames; keep act enabled through cleanup. */
 export async function testRender(
   node: ReactNode,
   options: TestRendererOptions,
@@ -30,6 +30,6 @@ export async function testRender(
   });
   configureRendererListeners(setup.renderer);
   root = createRoot(setup.renderer);
-  act(() => root?.render(node));
+  await act(async () => root?.render(node));
   return setup;
 }
