@@ -563,7 +563,7 @@ export function createApp(options: {
     const committedRevision = revision;
 
     for (const effect of effects) {
-      if (effect.type !== "spawn-pane" || runtime.isLive(effect.paneId)) {
+      if (runtime.isLive(effect.paneId)) {
         continue;
       }
       const pane = controlSnapshot().panes.find(({ id }) => id === effect.paneId);

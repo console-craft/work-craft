@@ -6,6 +6,7 @@ import { decodeBytes, ProtocolError } from "../../api/protocol.ts";
 import { openDatabase } from "../../persistence/database.ts";
 import { createApp, type WorkCraftApp } from "../app.ts";
 import { applyCommand } from "../commands.ts";
+import { readSessionNavigation } from "../navigation-store.ts";
 import { readSnapshot } from "../snapshot.ts";
 
 const apps: WorkCraftApp[] = [];
@@ -82,6 +83,49 @@ test("does not mutate when a parent is missing", () => {
     applyCommand(db, { type: "workspace.create", sessionId: "missing", name: "Nope" }),
   ).toThrow("session not found");
   expect(readSnapshot(db, "epoch", 0).workspaces).toEqual([]);
+});
+
+test("late activation failure rolls back structure and navigation without publication or spawn", async () => {
+  const { db, sessionId, itemId } = organizationalFixture();
+  const opened = applyCommand(db, { type: "surface.ensure", itemId }).result;
+  const app = createApp({ db });
+  const messages: string[] = [];
+  const socket = { send: (text: string) => messages.push(text) } as Bun.ServerWebSocket;
+  const start = spyOn(app.runtime, "start");
+  try {
+    await app.execute({
+      type: "session.navigate",
+      sessionId,
+      target: { kind: "pane", paneId: opened.paneId! },
+    });
+    const before = app.snapshot();
+    const navigation = readSessionNavigation(db, sessionId);
+    app.subscribe(socket);
+    messages.length = 0;
+    db.exec(`CREATE TRIGGER reject_activation BEFORE INSERT ON session_tab_panes
+      BEGIN SELECT RAISE(ABORT, 'activation write rejected'); END`);
+
+    await expect(
+      app.execute({
+        type: "tab.create",
+        surfaceId: opened.surfaceId!,
+        title: "Must roll back",
+        activation: { sessionId, generation: navigation.cursor.generation },
+      }),
+    ).rejects.toThrow("activation write rejected");
+
+    expect(app.snapshot()).toEqual(before);
+    expect(readSessionNavigation(db, sessionId)).toEqual(navigation);
+    expect(messages).toEqual([]);
+    expect(start).not.toHaveBeenCalled();
+    expect(db.inTransaction).toBe(false);
+  } finally {
+    start.mockRestore();
+    app.unsubscribe(socket);
+    await app.runtime.stopAll();
+    await app.history.close();
+    db.close();
+  }
 });
 
 test("directory command returns exact requested and root IDs without runtime effects", () => {
@@ -253,24 +297,46 @@ test("deleting a session preserves its workspace, history, and live runtime", as
   ).toContain("preserved-history");
 });
 
-test("stops the daemon without durable state", () => {
+test("stops the daemon without durable state", async () => {
   const db = openDatabase(":memory:");
+  const stops: boolean[] = [];
+  const app = createApp({ db, onStop: (destroy) => stops.push(destroy) });
+  apps.push(app);
+  const before = app.snapshot();
   expect(applyCommand(db, { type: "daemon.stop" })).toEqual({
     result: { id: "daemon", stopping: true },
-    effects: [{ type: "stop-daemon" }],
+    effects: [],
     changed: false,
   });
   expect(readSnapshot(db, "epoch", 0).sessions).toEqual([]);
+  expect(await app.execute({ type: "daemon.stop" })).toEqual({
+    ok: true,
+    revision: 0,
+    result: { id: "daemon", stopping: true },
+  });
+  expect(stops).toEqual([false]);
+  expect(app.snapshot()).toEqual(before);
 });
 
-test("requests daemon destruction without mutating durable state", () => {
+test("requests daemon destruction without mutating durable state", async () => {
   const db = openDatabase(":memory:");
+  const stops: boolean[] = [];
+  const app = createApp({ db, onStop: (destroy) => stops.push(destroy) });
+  apps.push(app);
+  const before = app.snapshot();
   expect(applyCommand(db, { type: "daemon.destroy" })).toEqual({
     result: { id: "daemon", destroying: true },
-    effects: [{ type: "destroy-daemon" }],
+    effects: [],
     changed: false,
   });
   expect(readSnapshot(db, "epoch", 0).sessions).toEqual([]);
+  expect(await app.execute({ type: "daemon.destroy" })).toEqual({
+    ok: true,
+    revision: 0,
+    result: { id: "daemon", destroying: true },
+  });
+  expect(stops).toEqual([true]);
+  expect(app.snapshot()).toEqual(before);
 });
 
 test("ensuring an item lazily creates one surface, tab, and shell pane", () => {
