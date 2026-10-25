@@ -246,8 +246,8 @@ Quarantine requires an explicit risk decision and retained assertions/revisit
 criteria; moving a failing product test into tooling is not a repair.
 
 Passing one host does not certify every supported platform or physical terminal.
-Existing React `act(...)` diagnostics, listener warnings and a server
-`no-unsafe-finally` lint warning are not repaired timing or long-duration stability.
+A clean lint or warning-free test run does not certify runtime timing or
+long-duration listener stability.
 
 When retaining a command log, mirror both streams and preserve failure status:
 
