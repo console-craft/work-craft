@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/console-craft/work-craft/compare/v1.1.0...v1.1.1) (2026-10-25)
+
+
+### Bug Fixes
+
+* **deps:** update dependency react to v19.3.1 ([#45](https://github.com/console-craft/work-craft/issues/45)) ([d738872](https://github.com/console-craft/work-craft/commit/d738872a6c6f11f0029637fe6bd80218e12c77ad))
+
 ## [1.1.0](https://github.com/console-craft/work-craft/compare/v1.0.0...v1.1.0) (2026-10-23)
 
 

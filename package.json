@@ -1,6 +1,6 @@
 {
   "name": "work-craft",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": true,
   "description": "A Bun workspace for the Work Craft server, terminal UI, and CLI.",
   "homepage": "https://github.com/console-craft/work-craft#readme",
