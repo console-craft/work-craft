@@ -1,98 +1,143 @@
 # Work Craft architecture
 
-Architecture tour · **1 of 7** · Next: [Work and navigation](work-and-navigation.md)
+Work Craft is a local terminal work organizer with one background daemon per state
+directory. The daemon owns saved work, session navigation, shell processes, and
+terminal interpretation. The React/OpenTUI interface and non-interactive CLI are
+clients of that daemon. Closing a client leaves its shells running; restarting the
+daemon restores saved structure and output into fresh shells.
 
-Work Craft is a local work organizer whose background daemon owns saved work and
-running terminals. The React/OpenTUI interface and the non-interactive CLI are
-clients of that daemon. Closing an interface does not stop its shells; restarting
-the daemon restores saved structure and retained display history, then starts new
-shells for panes that were active. It cannot restore an editor's process memory.
-
-A session is a shared navigation context over reusable workspaces. Workspaces own
-items; each item can acquire one terminal surface containing tabs and split panes.
-Clients attached to one session share its selected workspace, category, item, tab
-and pane. Clients retain their own focus, browsing cursors, filters and drafts.
-Different sessions can navigate the same workspace independently while still
-reaching the same item surfaces and processes.
+The most useful distinction is between **work identity**, **running processes**, and
+**a client's presentation**. An item identifies work and can own a terminal workspace
+(called a `surface` in code). Its tabs and pane layouts are durable. Its shell is a
+daemon-owned process. Focus, filters, open dialogs, and drafts belong to the TUI and
+can disappear without deleting work.
 
 ```mermaid
 flowchart TB
-  User[Developer] --> TUI[React and OpenTUI interface]
-  User --> CLI[Non-interactive CLI]
-  subgraph Daemon[Local Bun daemon]
-    App[Application rules and client connections]
-    Runtime[PTY runtimes and OpenTUI terminal parsers]
-    History[Bounded output history]
-    App <--> Runtime
-    Runtime --> History
-  end
-  TUI <-->|HTTP and WebSocket over Unix socket| App
-  CLI <-->|HTTP over Unix socket| App
-  App --> DB[(SQLite: work, navigation, retained output)]
-  History --> DB
-  Runtime <-->|PTY input and output| Shells[Shells and their programs]
-  App -->|read-only inspection| Git[Filesystem and Git worktree registry]
+    User[Person in an outer terminal]
+    Scripts[Scripts]
+    TUI[React and OpenTUI client]
+    CLI[Non-interactive CLI]
+    Client[Client API]
+    subgraph Daemon[One local daemon process]
+        API[Unix socket HTTP and WebSocket API]
+        App[Application commands and shared navigation]
+        Discovery[Directory and Git inspection]
+        Runtime[Shell runtimes and terminal projections]
+    end
+    DB[(SQLite state and retained output)]
+    Shells[PTY shells and their programs]
+    Files[Existing directories and Git worktrees]
+    User --> TUI
+    Scripts --> CLI
+    TUI --> Client
+    CLI --> Client
+    Client --> API
+    API --> App
+    App --> DB
+    App --> Discovery
+    Discovery --> Files
+    App --> Runtime
+    Runtime --> Shells
+    Runtime --> DB
+    Runtime --> API
+    API --> TUI
 ```
 
-The executable dispatches to the TUI with no arguments, to the CLI for commands,
-or to an internal daemon entry point. Both clients can start the daemon when it is
-absent. The daemon listens on a Unix socket, rather than a network port; filesystem
-permissions form the access boundary. There is no hosted service or plugin runtime.
+The diagram shows logical responsibilities. The API, application, discovery,
+SQLite connection, and runtime registry execute inside the same daemon process.
+The client API is imported into each client, not deployed as another service.
 
-## Key Facts
+## Product concepts and ownership
 
-- The daemon is the sole application writer of SQLite and the owner of PTYs.
-  Commands commit structural changes and shared navigation together before starting
-  processes. A created pane can therefore exist even if its shell fails to start.
-- A pane's saved identity survives process replacement. Daemon epochs, runtime
-  generations and connection/navigation generations distinguish different lifetimes
-  so delayed messages cannot borrow authority from a newer context.
-- The daemon parses terminal output and encodes input according to terminal modes.
-  The TUI paints portable material frames; it does not replay ANSI into a second
-  live terminal emulator. Output notifications and retained history remain separate
-  synchronization mechanisms.
-- One eligible viewer supplies the shared tab geometry. Other clients display the
-  resulting terminal grid within their local viewports. Geometry ownership does
-  not give that client exclusive keyboard access.
-- Output history and resize metadata are bounded. SQLite commits structural state
-  synchronously, but output flushes in batches, so a crash can lose recent output.
-- Coding is the user-facing name for the persisted `implementation` category.
-  It registers directories and discovers worktrees. Other categories contain
-  generic items, rather than specialized external-service integrations.
+- A **session** is an ordered set of workspace memberships and one shared navigation
+  cursor. Two clients attached to that session follow the same workspace, category,
+  item, tab, and active pane.
+- A **workspace** owns items and can belong to several sessions. Membership does not
+  clone its items, surfaces, or processes. Different sessions can select different
+  parts of the same workspace while accessing the same underlying terminals.
+- An **item** is a generic root/child outside Coding, or a registered directory and
+  discovered worktree in Coding. Hierarchy is limited to roots and one child level.
+- A **surface** is an item's lazily created terminal workspace. A tab contains a
+  binary split tree whose leaves identify panes. Each pane has a saved shell
+  restore policy and, while running, one daemon-owned pseudoterminal (PTY).
 
-## Find the explanation you need
+Coding is the product term used here and in README for the persisted
+`implementation` category. The current category metadata title is `Implementation`,
+and the TUI uses that title with a code icon. Other categories currently offer
+generic items and terminals; they are not dedicated issue trackers or
+collaboration integrations.
 
-| Concern | Owning explanation |
-| --- | --- |
-| Saved objects, shared selection, commit ordering | [Work and navigation](work-and-navigation.md) |
-| Directory identity, Git refresh, missing worktrees | [Directory catalog](directory-catalog.md) |
-| Shell creation, exit, restart, daemon shutdown | [Terminal processes](terminal-processes.md) |
-| ANSI parsing, material frames, scrollback restoration | [Terminal display](terminal-display.md) |
-| Reconnect, stale input, attachment and resize ownership | [Client coordination](client-coordination.md) |
-| UI composition, focus, keyboard commands, overlays | [Terminal interface](terminal-interface.md) |
-| Local verification, boundaries, release packaging | [Development](development.md) |
+## How an interaction becomes work
 
-## Consequential commitments
+Opening an item resolves its context in the session, creates its surface/tab/pane
+if absent, and selects it in a SQLite transaction. Only after commit does the
+application start a shell. A failed spawn leaves a real pane with a failed status
+and an explicit restart path. A successful command therefore establishes durable
+structure; it does not guarantee that the shell started successfully.
 
-Local single-daemon ownership makes clients replaceable and keeps catalog and
-navigation transactions together. Adding remote access would require a coordinated
-change to transport, authorization, daemon discovery and the current filesystem
-trust boundary. Moving runtime ownership into clients would be a major migration:
-process persistence, display parsing and input authority all depend on the daemon.
+PTY output is interpreted in the daemon and retained as bounded bytes with resize
+and runtime-start metadata. Clients receive output notifications and request
+portable cell pictures to render. Input travels back as semantic key, mouse,
+focus, or paste events; the daemon encodes it using the live terminal modes.
+See [terminal display](foundations/terminal-display.md) for that boundary.
 
-OpenTUI is a runtime dependency of both daemon and TUI. The daemon needs its native
-terminal parser even when no TUI is open. Both consumers and the React renderer are
-pinned to the same core version; upgrades must preserve parser, cell extraction,
-input encoding and rendering contracts. See [development](development.md).
+## Lifetimes and constraints
 
-## Code References
+| State | Owner | Survives a new client? | Survives daemon restart? |
+| --- | --- | --- | --- |
+| Catalog, layouts, session cursors | SQLite/daemon | Yes | Yes |
+| Flushed terminal bytes and grid metadata | SQLite/daemon | Yes | Yes, within retention |
+| Shell/program memory and terminal modes | Live runtime | Yes | No |
+| Connection, attachment, size ownership | Daemon memory | Re-established | No |
+| Focus, filter, expansion, dialogs, drafts | TUI memory | No | No |
 
-- [Executable dispatch](../src/main.ts) chooses the runtime entry point.
-- [Application assembly](../packages/server/src/application/app.ts) (`createApp`)
-  connects commands, snapshots, discovery, history, runtimes and connections.
-- [Client facade](../packages/server/src/client.ts) is the client-safe contract
-  used by the TUI and CLI.
-- [Database schema](../packages/server/src/persistence/database.ts) defines durable
-  ownership; [protocol](../packages/server/src/api/protocol.ts) defines exchanged state.
+Recovery starts fresh shells for panes saved as running, starting, or interrupted;
+already exited/failed panes remain stopped. Historical terminal modes and replies
+are not replayed into a fresh child. Output may be lost between its arrival and
+its buffered history flush during an abrupt crash.
 
-Architecture tour · **1 of 7** · Next: [Work and navigation](work-and-navigation.md)
+The service listens on a local Unix socket. Filesystem permissions are the local
+access boundary; there is no network authentication or remote service. Git
+inspection discovers existing checkouts without creating/deleting worktrees or
+changing branches. Database schema compatibility is checked, but there is no
+incremental migration engine.
+
+## Reading paths
+
+The ordered entries below are this overview's immediate children. Each area then
+has its own local sequence; use contextual links to jump to a specific concern.
+
+### Capabilities
+
+1. [Capabilities](capabilities/overview.md): follow work organization, repository
+   discovery, terminal workspaces, and interface ownership from intent to effect.
+
+### Foundations
+
+2. [Foundations](foundations/overview.md): understand durable state and daemon
+   lifetime, client coordination, terminal interpretation, and retained history.
+
+### Choices
+
+3. [Choices](choices/overview.md): assess commitments and the scope of changing
+   deployment, terminal authority, or the stored work model.
+
+### Development
+
+4. [Development guide](development.md): find entry points, existing verification
+   gates, diagnostics, and contribution guidance.
+
+For a terminal input bug, start with
+[client coordination](foundations/client-coordination.md), then
+[terminal display](foundations/terminal-display.md). For missing or duplicate
+repositories, start with [directory catalog](capabilities/directory-catalog.md).
+
+## Implementation entry points
+
+[The executable dispatcher](../src/main.ts) selects TUI, CLI, or internal daemon
+mode. [createApp](../packages/server/src/application/app.ts) joins transactions,
+notifications, discovery, sizing, history, and runtimes.
+[The client API](../packages/server/src/client.ts) is the client-safe contract;
+[the schema](../packages/server/src/persistence/database.ts) establishes durable
+ownership. Details and focused source links live in the owning documents.

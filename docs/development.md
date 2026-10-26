@@ -1,104 +1,91 @@
-# Development and verification
+# Development guide
 
-[Architecture entry point](overview.md) · [Contribution policies](../AGENTS.md)
+[Overview](overview.md) / Development guide
 
-This is a Bun workspace compiled into one local executable. Package separation
-keeps daemon internals out of disposable clients; it does not imply separately
-deployed services. Verification separates fast routine checks from process/PTY
-acceptance and explicit compatibility diagnostics. Follow [AGENTS.md](../AGENTS.md)
-for contribution and test-quality policy.
+Topic 4 of 4
 
-## Runtime and build boundaries
+[Parent: Overview](overview.md) | [Previous: Choices](choices/overview.md)
 
-The root [package manifest](../package.json) declares Bun 1.4.4. Server and TUI both
-pin OpenTUI core to 0.6.6; the TUI also pins its React adapter to 0.6.6 and uses
-React 19.3.1. The server needs native OpenTUI for headless terminal interpretation,
-not only for drawing. [Consumer checks](../scripts/tests/opentui-consumer.test.ts)
-verify that daemon, TUI and React resolve one core installation. An upgrade must
-validate extraction, semantic input, native resources and render behavior together;
-matching TypeScript signatures alone is insufficient.
+Development follows the same ownership boundaries as runtime behavior: the server
+owns durable state and processes, the clients use the public client API, and the
+TUI shell composes capability modules. Use the
+[architecture overview](overview.md) to choose an owner before changing a concern;
+[AGENTS.md](../AGENTS.md) remains the contribution-policy authority.
 
-From an installed development checkout, the main entry points are:
+## Entry points and local work
 
-```sh
-bun run dev
-bun run cli snapshot --json
-bun run server
-bun run build
-```
+Use Bun for dependencies/scripts. The repository declares the package manager in
+[package.json](../package.json); each package is private in the Bun workspace.
+Typical local entry points are `bun run dev` for watched TUI startup,
+`bun run cli -- <command>` for explicit CLI commands, and `bun run server` for
+direct daemon startup. `bun run build` compiles `src/main.ts` to
+`dist/work-craft`; `build:install` also runs the installer.
 
-`dev` watches the root dispatcher; no arguments select the TUI. `server` launches
-the internal daemon path. `build` compiles the dispatcher and imports into
-`dist/work-craft`. `build:install` additionally invokes the install script. Use a
-separate `WORK_CRAFT_HOME` for development/fixtures so commands do not mutate the
-ordinary local catalog or connect to an incompatible daemon. `db:seed` provides
-explicit development state through [seed.ts](../scripts/seed.ts).
+Use a separate `WORK_CRAFT_HOME` for disposable development state so experimental
+schema/runtime work does not share the normal instance. Clients and daemon must
+use the same state directory. A client automatically reuses a healthy daemon,
+so changing source and launching another client does not replace an already
+running server. Deliberately stop the instance before expecting new daemon code
+to take effect. `daemon stop` retains state; `daemon destroy --force` deletes it.
 
-The [release workflow](../.github/workflows/release.yml) builds on macOS ARM64 and
-glibc Linux x64, runs full product checks and packages the executable plus a checksum.
-Other platform builds are not currently part of that release matrix. Build/install
-instructions for users remain in [README](../README.md).
+`CONTROLS_DEMO=true` and `COMPONENTS_DEMO=true` select reusable control/component
+demos at the TUI entry point. They are presentation exploration paths, not the
+product's normal daemon-connected shell. `db:seed` supplies a development seed
+script; read [seed.ts](../scripts/seed.ts) before choosing a target state directory.
 
-## Verification ownership
+## Existing verification gates
 
-| Gate | Responsibility |
-| --- | --- |
-| `bun run check` | Lint, format check, typecheck and core tests |
-| `bun run test` / `test:core` | Default correctness tests under a bounded runner |
-| `bun run test:acceptance` | Explicit database/process/PTY and shared-session contracts |
-| `bun run test:tooling` | Selected compatibility and feasibility diagnostics |
-| `bun run check:all` | Check plus core/acceptance, build and compiled smoke test |
+These are the repository's established gates, not a claim they were run while
+writing this documentation. Choose focused tests by ownership and preserve the
+policy in AGENTS.md.
 
-`test:all` selects core and acceptance; it does not include tooling. New discovered
-test files default to core unless explicitly classified in
-[test-gates.ts](../scripts/test-gates.ts). The classifier rejects missing exception
-paths or duplicate memberships so tests are not silently omitted. Focused runs use
-`bun test` with explicit owning paths, not bare broad discovery.
+- `bun run check` runs lint, format check, typecheck, and core tests. `bun run test`
+  and `test:core` select the same core gate.
+- `bun run test:acceptance` runs explicitly classified process/database/product
+  acceptance files. CI runs this plus compiled build/smoke on Linux and macOS.
+- `bun run test:tooling` runs compatibility/feasibility/support tests classified
+  separately and selected by a dedicated path-sensitive workflow.
+- `bun run check:all` runs static checks, core plus acceptance tests, build, and
+  smoke. Despite the name, `test:all` selects core and acceptance, not tooling;
+  tooling remains its own gate.
+- Focused work uses `bun test` with explicit paths. The gate runner discovers
+  correctness files, defaults new files to core, and validates classified
+  exceptions. Diagnostics and benchmarks are not silently included as tests.
 
-Normal CI runs `check` on Linux. A separate macOS/Linux acceptance matrix runs
-acceptance, build and compiled smoke checks. The
-[tooling workflow](../.github/workflows/test-tooling.yml) runs the tooling gate on
-both platforms for its selected path changes or manual dispatch. `check:all` is
-the full local product certification path, not the expected cost of every edit.
+[CI](../.github/workflows/ci.yml),
+[test tooling](../.github/workflows/test-tooling.yml), and
+[release](../.github/workflows/release.yml) define actual automation. Release
+packaging runs `check:all` and produces one archive/checksum per supported target.
+[lefthook.yml](../lefthook.yml) defines staged formatting/lint/typecheck and push
+checks; repository policy distinguishes checkpoints from complete certification.
+Do not infer a full acceptance pass from a local commit.
 
-The [bounded runner](../scripts/run-bounded.ts) supplies deadlines and process
-cleanup. Detached fixture environments must retain `WORK_CRAFT_TEST_RUN_ID`; use
-`testProcessEnvironment()` when scrubbing environment values. When capturing command
-logs, repository policy requires mirroring stdout/stderr through `tee` with
-`pipefail` enabled. [Git hooks](../lefthook.yml) format staged files, lint relevant
-source and typecheck at pre-commit; pre-push runs `check`. Tests are not a pre-commit
-requirement. Do not stage or commit unless requested.
+## Ownership and useful investigation paths
 
-## Where changes and tests belong
+Application selection/item/directory tests live with their server owner. Real
+SQLite and subprocess boundaries matter where durability and lifetime are the
+risk. TUI `client`, `navigation`, `workbench`, `shell`, and reusable UI tests remain
+with those owners; package-wide acceptance and shared support live in
+`packages/tui/src/tests`. Import restrictions and their focused boundary tests
+protect client-safe server imports and shell/UI direction.
 
-Keep TUI tests under the owning capability's `tests/` directory. Root TUI `tests/`
-is for package-wide acceptance or genuinely shared support. The enforced production
-dependency directions are explained in [terminal interface](terminal-interface.md#composition-and-dependency-direction).
-Server code separates command/catalog behavior, transport authority, persistence,
-daemon lifecycle and terminal runtime concerns; choose the boundary that can prove
-the behavior under change.
+Use [test-gates.ts](../scripts/test-gates.ts) for exact gate membership and
+[run-bounded.ts](../scripts/run-bounded.ts) for bounded process fixtures and
+`testProcessEnvironment`. Detached fixtures must preserve
+`WORK_CRAFT_TEST_RUN_ID`, as required in AGENTS.md. When collecting shell logs,
+mirror both output streams with `tee` and preserve failure propagation as that
+policy specifies.
 
-For a regression, name the failure, primary owner and execution gate before writing
-the test. Prefer an existing owning case if it already covers the contract. Keep
-real database/process coverage where durability, lifecycle or authority is the risk;
-avoid duplicating those boundaries with broad UI mocks. Follow AGENTS.md's pre-PR
-test-quality review without substituting line counts or passing status for useful
-regression detection.
+For terminal compatibility, inspect
+[probe-opentui-compatibility.ts](../scripts/probe-opentui-compatibility.ts) and the
+owning projection/input tests before selecting a diagnostic. Instrumentation
+modules under server terminal, TUI client, and the client-safe output-probe export
+cover stages from PTY output through store/material/render. They diagnose timing
+and budgets; they do not alone establish visible terminal fidelity.
 
-Useful contract entry points include
-[command acceptance](../packages/server/src/application/tests/commands.test.ts),
-[shared navigation](../packages/server/src/application/tests/shared-navigation.test.ts),
-[stopped material](../packages/server/src/api/tests/stopped-material.test.ts),
-[shared-session TUI acceptance](../packages/tui/src/tests/shared-session.test.ts) and
-[import boundaries](../packages/tui/src/tests/boundaries.test.ts).
-[probe-opentui-compatibility.ts](../scripts/probe-opentui-compatibility.ts) owns the
-explicit native consumer probe; diagnostics are evidence for the selected contracts,
-not proof of compatibility with every terminal application.
+Specs and plans live in repository-root `.superpowers/` according to AGENTS.md.
+They describe work in progress; this architecture tree describes current
+implementation. Keep README focused on user onboarding/features, and update the
+owning current document when behavior or a useful source reference changes.
 
-Architecture docs describe current implementation. Unfinished requirements and
-investigation evidence belong in root `.superpowers/specs/`; local implementation
-plans belong in ignored `.superpowers/plans/`. Completed history stays in Git.
-Keep README user-focused and update the owning architecture explanation when a
-change alters state ownership, lifecycle, protocol or useful source navigation.
-
-[Architecture entry point](overview.md) · [Contribution policies](../AGENTS.md)
+[Parent: Overview](overview.md) | [Previous: Choices](choices/overview.md)
