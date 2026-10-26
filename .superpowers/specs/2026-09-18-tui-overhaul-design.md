@@ -7,9 +7,10 @@ navigation (Stage 2) and selected workbench operations are delivered. This is th
 remaining roadmap, consolidated from the approved designs; it is not current
 architecture documentation or an authorization to implement every item now.
 
-Read the [current overview](../architecture/overview.md),
-[ownership reference](../architecture/references/ownership.md) and
-[terminal lifecycle](../architecture/references/terminal-lifecycle.md) before
+Read the [current overview](../../docs/overview.md),
+[TUI ownership](../../docs/capabilities/terminal-interface.md),
+[terminal lifecycle](../../docs/capabilities/persistent-terminals.md) and
+[input authority](../../docs/foundations/client-synchronization.md) before
 designing a selected slice.
 
 ## Delivered baseline to preserve
@@ -110,7 +111,7 @@ These deferred issues remain distinct from the delivered navigator:
 
 The testing-policy overhaul is delivered; commands, gates, hooks, failure handling
 and test-first policy now live in the
-[development reference](../architecture/references/development.md).
+[development reference](../../docs/foundations/development.md).
 The retired proposal also suggested deeper cost reduction, not implemented or
 authorized as part of that gate split:
 
