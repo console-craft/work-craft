@@ -1,5 +1,8 @@
 # Local daemon, persistence and safe operation
 
+State reading path — **1 of 2** · [Overview](../overview.md) · Next:
+[Client synchronization](client-synchronization.md)
+
 **The state directory is the installation boundary.** It identifies one daemon,
 one SQLite database and one Unix socket. Different homes are independent local
 installations, not cooperating servers. Clients do not own the database or shell
@@ -10,16 +13,17 @@ lifecycle.
 Path resolution prefers `WORK_CRAFT_HOME`, then `$XDG_STATE_HOME/work-craft`, then
 `~/.local/state/work-craft`. It produces:
 
-| File                | Role                                                                        |
-| ------------------- | --------------------------------------------------------------------------- |
-| `work-craft.sqlite` | Durable application rows and terminal history; SQLite may add `-wal`/`-shm` |
-| `work-craft.sock`   | HTTP/WebSocket Unix socket, mode `0600`                                     |
-| `daemon.lock`       | Exclusive daemon ownership with published PID, mode `0600`                  |
+- **`work-craft.sqlite`:** application rows and terminal history. SQLite can add
+  `-wal` and `-shm` sidecars.
+- **`work-craft.sock`:** HTTP/WebSocket Unix socket, mode `0600` (owner read/write).
+- **`daemon.lock`:** exclusive daemon ownership with a published PID, mode `0600`.
 
-The daemon creates/restricts the state directory to `0700`. Startup acquires the
-lock before touching the socket or database. Stale-lock takeover uses coordinated
-claims and file identities; cleanup removes only lock/socket files still owned by
-that instance. A healthy existing socket is not blindly removed.
+The daemon restricts the state directory to its owner with mode `0700`. Startup
+acquires the lock before touching the socket or database. Competing starters
+coordinate before taking over a stale lock and check that the file identity has
+not changed. Cleanup removes only lock/socket files still owned by that daemon,
+so it cannot remove a replacement daemon's files. A healthy existing socket is
+not blindly removed.
 
 Client startup first checks health/protocol, then launches a detached daemon if
 connection fails. Source mode launches the server entry point with Bun; compiled
@@ -31,8 +35,9 @@ recovers eligible terminals and starts discovery before serving clients.
 
 SQLite stores sessions, memberships, items, surfaces, tabs/layouts, panes/restore
 policies, navigation/memories and terminal byte/geometry tables. Foreign keys are
-enabled; file databases use WAL and `synchronous = FULL`. Domain changes are
-synchronous transactions. Terminal bytes/markers are batched separately; see
+enabled. File databases use SQLite's write-ahead log (WAL) and full synchronous
+commits (`synchronous = FULL`). Domain changes use synchronous transactions.
+Terminal bytes/markers are batched separately; see
 [persistent terminals](../capabilities/persistent-terminals.md#history-and-restart-semantics).
 
 The current baseline uses `PRAGMA user_version = 1`. An empty unversioned database
@@ -45,9 +50,11 @@ does not compare all table definitions. Older development databases with a reuse
 version number are not thereby compatible. Use a fresh explicit home rather than
 assuming an old backup or a mixed executable set can be opened safely.
 
-Live PTYs/parsers, epochs, connection attachments and size election are memory
-state, not durable records. A restart reconstructs these from saved work/history;
-it does not deserialize an old running process.
+Live pseudoterminals/parsers, the daemon's instance ID (epoch), client session
+attachments and size decisions exist in memory. Restart creates fresh live state
+from saved work and history; it does not deserialize an old running process.
+[Client synchronization](client-synchronization.md) explains which identifiers
+change and how clients reject responses from an old daemon.
 
 ## Shutdown and destruction
 
@@ -98,3 +105,6 @@ Normal `daemon stop` preserves records/history and is not a reset.
   baseline schema, initialization and compatibility checks.
 - [CLI main.ts](../../packages/cli/src/main.ts) (`waitForDestroyed`): destruction
   completion confirmation.
+
+State reading path — **1 of 2** · [Overview](../overview.md) · Next:
+[Client synchronization](client-synchronization.md)

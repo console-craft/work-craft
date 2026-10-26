@@ -40,14 +40,18 @@ UI showcases. Their theme/width controls do not persist an application preferenc
 Run `bun run check` before completing work. It runs lint, format checking,
 TypeScript checking and core tests sequentially.
 
-| Command                              | Scope                                                                      | External test deadline |
-| ------------------------------------ | -------------------------------------------------------------------------- | ---------------------- |
-| `bun run test` / `bun run test:core` | Rules, SQLite, lightweight transport and native component/parser contracts | 120 seconds            |
-| `bun run test:acceptance`            | Real application/PTY, CLI/daemon, recovery and shared-TUI journeys         | 300 seconds            |
-| `bun run test:all`                   | Core then acceptance; all product suites, not tooling                      | Per suite              |
-| `bun run test:tooling`               | Compatibility probes, benchmark support and research characterizations     | 120 seconds            |
-| `bun run test:smoke`                 | Relocated compiled executable with disposable state; build first           | 60 seconds             |
-| `bun run check:all`                  | Static checks, all product suites, build and compiled smoke                | Per suite              |
+- **`bun run test` / `bun run test:core`:** rules, SQLite, lightweight transport
+  and native component/parser contracts; 120-second external deadline.
+- **`bun run test:acceptance`:** real application/PTY, CLI/daemon, recovery and
+  shared-TUI journeys; 300-second external deadline.
+- **`bun run test:all`:** core then acceptance, covering all product suites without
+  tooling; each suite keeps its own deadline.
+- **`bun run test:tooling`:** compatibility probes, benchmark support and research
+  characterizations; 120-second external deadline.
+- **`bun run test:smoke`:** relocated compiled executable with disposable state;
+  build first. The external deadline is 60 seconds.
+- **`bun run check:all`:** static checks, all product suites, build and compiled
+  smoke; deadlines apply per suite.
 
 [test-gates.ts](../../scripts/test-gates.ts) discovers correctness files under
 `packages/` and `scripts/`. New tests default to core. Explicit acceptance/tooling
@@ -76,8 +80,9 @@ Keep server tests in the owning `api`, `application`, `daemon`, `persistence` or
 shared support. CLI tests live in `packages/cli/src/tests/`; script tests/support
 live in `scripts/tests/` and `scripts/test-support/`.
 
-Before RED, name the protected failure, primary owner and execution gate. Extend
-an existing owning test when it already covers the contract. Choose the cheapest
+Before writing a failing regression test (RED), name the protected failure,
+primary owner and execution gate. Extend an existing owning test when it already
+covers the contract. Choose the cheapest
 boundary that faithfully proves the risk; database/process authority and lifecycle
 still need real boundaries. Neither test-count growth nor moving a failing
 contract into tooling establishes quality.
@@ -87,16 +92,18 @@ frames and buffered input. Preserve those controls: one generic flush can hide t
 ordering bug being tested. Some connected UI fixtures use real daemon parsers;
 being in a capability directory does not make a test isolated.
 
-[run-bounded.ts](../../scripts/run-bounded.ts) supervises in a separate native-free
-parent and returns nonzero for timeout (124), interruption or unsafe cleanup. It
-tracks descendants and revalidates process births before signalling. Detached
+[run-bounded.ts](../../scripts/run-bounded.ts) supervises tests from a separate
+parent process that does not load native terminal modules. It returns nonzero for
+timeout (124), interruption or unsafe cleanup. It tracks descendants and checks
+their process start times again before signalling. Detached
 fixtures must retain `WORK_CRAFT_TEST_RUN_ID`; use `testProcessEnvironment()` when
 scrubbing ordinary environment variables. This is cooperative supervision, not
 an OS sandbox for arbitrary ownership-erasing programs.
 
 Preserve reproducer evidence for unresolved runtime/infrastructure failures;
-green static checks do not establish physical-terminal focus/fidelity, Linux cwd
-behavior from a macOS run, or long-duration listener stability. See
+passing static checks does not prove physical-terminal focus or display fidelity,
+or long-duration listener stability. A macOS run cannot certify Linux cwd behavior.
+See
 [terminal risks](../capabilities/persistent-terminals.md#known-limitations-and-unresolved-risks).
 The full changed-test scoring/review policy remains in [AGENTS.md](../../AGENTS.md).
 

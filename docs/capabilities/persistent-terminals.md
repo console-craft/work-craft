@@ -3,17 +3,23 @@
 Terminal reading path — **1 of 2** · [Overview](../overview.md) · Next:
 [Terminal interface](terminal-interface.md)
 
-**A pane is durable; its shell process and parser are not.** The daemon owns PTYs,
-shell PIDs, native parsers and runtime generations. A reconnecting client uses the
-same running process. A daemon restart reconstructs bounded display and starts a
-new shell for eligible interrupted panes; it cannot restore arbitrary process memory.
+**A pane is durable; its shell process and parser are not.** The daemon owns
+pseudoterminals (PTYs), shell processes and native parsers. A **runtime generation**
+is the counter that identifies each new shell/parser started for the same saved
+pane. A reconnecting client uses the same running process. A daemon restart
+reconstructs bounded display and starts a new shell for eligible interrupted
+panes; it cannot restore arbitrary process memory.
 
 ## Process and output lifecycle
 
-`RuntimeRegistry.start` admits one start per pane, waits for a prior runtime's
-final PTY drain, advances the generation and validates its saved shell/cwd. It
-then creates a parser and Bun PTY process. Status progresses through `starting`
-and `running` to `exited`, or to `failed` if preparation/spawn fails.
+`RuntimeRegistry.start` permits one start per pane. It waits for the prior
+shell's final PTY output, advances the runtime counter and validates the saved
+shell executable and working directory (cwd). It then creates a parser and a Bun
+PTY process. Status progresses through `starting` and `running` to `exited`, or to
+`failed` if preparation or spawn fails.
+
+**Material** is the portable picture of styled cells and cursor that the daemon
+produces for a client. Output parsing, history and client drawing use these paths:
 
 ```text
 PTY bytes -> daemon native parser -> portable styled cell/cursor material
@@ -27,8 +33,10 @@ client semantic key/paste/mouse/focus -> scope validation
 
 The daemon alone replies to child terminal queries. Emulator replies do not count
 as physical user activity. The TUI never replays historical queries into a live
-child. Material reads and semantic input are scoped by the
-[synchronization protocol](../foundations/client-synchronization.md).
+child. Reads and semantic input include the IDs and counters for
+their current connection, selection, grid and shell. The
+[synchronization protocol](../foundations/client-synchronization.md) explains how
+the daemon checks this scope before using a request.
 
 When a process exits, the daemon waits for final output, captures its last frame
 and releases the live parser/PTY resources. The retained last picture remains
@@ -47,30 +55,38 @@ Byte cursors, initial geometry, resize ordering and explicit `fresh`/`restored`
 runtime boundaries are retained together. Exceeding byte or marker retention
 advances the replay baseline and exposes truncation with a reset/notice.
 
-| Event                                 | Result                                                                                                       |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| Client quits, reloads or reconnects   | Existing shell/parser remain; client display is recovered                                                    |
-| Shell exits                           | Read-only final display/history; typing and paste do not restart it                                          |
-| Daemon restarts                       | Previously `running`, `starting` or `interrupted` panes get a separator and one fresh-shell recovery attempt |
-| Pane was already `exited` or `failed` | Remains stopped across daemon restart                                                                        |
-| Explicit Reactivate / `pane restart`  | Start a fresh shell in the same pane, preserving bounded history and adding a manual-restart separator       |
+- **Client quits, reloads or reconnects:** the same shell/parser remains; the
+  client recovers its display without respawning the shell or adding a separator.
+- **Shell exits:** its final picture and history become read-only. Typing and paste
+  do not restart it, and there is no automatic retry loop.
+- **Daemon restarts:** previously `running`, `starting` or `interrupted` panes get
+  a restart separator and one fresh-shell recovery attempt. Panes already marked
+  `exited` or `failed` stay stopped.
+- **Explicit Reactivate / `pane restart`:** for a stopped pane, start a fresh shell
+  in the same pane, retaining bounded history and adding a manual-restart separator.
+  An already-live runtime stays running; the command does not replace it or add a
+  separator. The TUI offers Reactivate only for `exited` panes. CLI `pane restart`
+  can retry a failed pane after its startup cause is fixed.
 
 Recovery replays bytes and geometry in disposable parsers with no child attached.
-It drains/discards historical responses, converts the result into an inert styled
-display transcript and initializes a distinct fresh parser. Old terminal modes,
-partial escape sequences and input protocols must not leak into the fresh child.
+It discards historical terminal-query responses and converts the recovered
+picture into generated display commands. A separate fresh parser consumes those
+commands before the new child starts. This preserves display without carrying old
+terminal modes, partial escape sequences or input protocols into the new shell.
 
-Stopped-history reconstruction has one daemon-wide display-only cache and a
-128-request lane shared with start preparation. Switching between stopped panes
-can rebuild the cache. Per-client scroll offsets do not resize historical grids;
-starting a new runtime resets local scrolling.
+Stopped-history reconstruction uses one display-only cache for the whole daemon.
+It shares a queue, limited to 128 requests, with preparation for new shell starts.
+Switching between stopped panes can rebuild the cache. Per-client scroll offsets
+do not resize historical grids; starting a new runtime resets local scrolling.
 
 ## One canonical grid across viewers
 
-Each tab elects its latest-active eligible viewer across all sessions. Attachment
-and physical activity advance election order; passive resize, output and
-programmatic focus do not. The owner's resize changes the canonical grid;
-nonowners only update their candidate viewport. Covered or unusable viewers
+Each tab chooses one viewer to control its terminal size across all sessions. It
+chooses the most recently active client whose viewport is usable and uncovered.
+Attachment and physical activity advance election order; passive resize, output
+and programmatic focus do not. The chosen viewer's resize changes the **canonical
+grid**, the columns and rows used by the child and shared parser. Other clients
+only report their candidate viewport dimensions. Covered or unusable viewers
 withdraw. With no eligible viewer, the last usable size is retained.
 
 Geometry is recorded in history and broadcast before the PTY/parser resize.

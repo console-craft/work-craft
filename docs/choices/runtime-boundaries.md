@@ -1,37 +1,42 @@
 # Runtime boundaries and consequential choices
 
-**Work Craft couples persistent local process ownership with disposable clients
-and a daemon-owned native terminal engine.** These are implemented boundaries,
-not a reconstruction of why earlier authors chose them.
+**Work Craft keeps processes and terminal interpretation in one local daemon,
+while its clients can be replaced.** These are current implementation choices.
+The explanation below describes their consequences without assuming why earlier
+authors made them.
 
-## One local authority
+## One daemon owns local state and processes
 
 The Unix-socket daemon owns SQLite mutations, discovery, shell processes, parser
-state and size arbitration. Clients submit semantic operations instead of
-reimplementing domain rules. The same executable contains all three entry points;
-workspace packages are code boundaries, not independently deployed services.
+state and shared terminal-size decisions. Clients submit commands that name an
+operation instead of reimplementing domain rules. The same executable contains
+all three entry points; workspace packages are code boundaries, not independently
+deployed services.
 
-This makes client replacement/reconnection independent of process lifetime and
-gives shared sessions one authoritative selection. It also means the daemon is
-the availability boundary: its failure ends live shell continuity, and recovery
-can start only fresh shells plus retained display. Filesystem permissions provide
+A client can therefore reconnect or be replaced without changing process
+lifetime, and clients in the same session have one saved selection. The daemon
+also determines availability: if it fails, live shell continuity ends. Recovery
+can only start fresh shells and reconstruct retained display. Filesystem permissions provide
 the local security boundary; there is no remote identity/authentication layer.
 
 **Changeability — Major migration:** remote access or distributed/multi-owner
 operation would require new authentication, transport, storage/process ownership,
 failure and conflict contracts, not simply exposing the socket over TCP.
 
-## SQLite current state, effects after commit
+## Save current state before running process effects
 
 SQLite holds the current domain model, not an event log. Synchronous transactions
-combine structural changes, navigation repair and optional activation. Runtime
-effects happen afterward; process-status failures become further state updates.
+combine structural changes, navigation repair and optional selection of the
+exact resulting pane. Process effects happen afterward; failures become further
+status updates.
 Terminal output uses a separate bounded batched retention path.
 
-The consequence is explicit partial success: a durable pane may exist with failed
-runtime startup. Pretending spawn is part of a rollback would misrepresent both
-saved state and external effects. Clients must wait for the correct commit and
-current readiness rather than treating a response as a rendered live terminal.
+A pane can therefore be saved even if its shell fails to start. The client must
+show that failure on the pane rather than assume the whole operation rolled
+back. Clients also wait for the correct commit and current display readiness; a
+command response alone does not mean a terminal is ready to receive input. The
+[synchronization sequence](../foundations/client-synchronization.md#command-order-and-failure)
+shows this order and its failure behavior.
 
 **Changeability — Coordinated change:** command/effect semantics involve domain
 transactions, publication, clients and lifecycle tests. Replacing SQLite would be
@@ -42,14 +47,17 @@ boundaries. The current schema has no general upgrade pipeline.
 
 Both server and TUI pin `@opentui/core` at `0.6.6`; the TUI also uses its React
 binding and React `19.3.1`. The server uses public native context/embedded-terminal
-APIs to parse output, answer queries, encode input and extract portable material.
-The TUI draws material without sharing borrowed native planes, glyph IDs or an
-independent ANSI parser.
+APIs to parse output, answer queries, encode input and extract **material**, a
+portable picture of styled cells and cursor. The TUI draws those cells without
+sharing native buffer references or glyph IDs, and without its own ANSI parser.
 
-One parser/mode authority avoids per-client query replies and conflicting input
-encoding. It requires a versioned material/semantic transport, scope validation,
-native-resource cleanup and explicit reconstruction budgets. It does not make
-native fidelity limitations disappear. The current mode-2048 workaround and
+Keeping terminal modes in one parser avoids duplicate query replies and
+conflicting input encoding from different clients. It requires a versioned
+protocol for pictures and input events. Each request carries its current client,
+selection, grid and shell identities, which the daemon validates before use.
+Native resources need explicit cleanup, and reconstruction uses finite budgets.
+This does not remove limitations in the native terminal display. The current
+mode-2048 workaround and
 [known display limits](../capabilities/persistent-terminals.md#known-limitations-and-unresolved-risks)
 are part of that commitment.
 
