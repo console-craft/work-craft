@@ -2,9 +2,9 @@
 
 - Use Bun for dependencies and scripts.
 - Keep changes focused and follow existing project conventions.
-- Read `docs/overview.md` before planning features or changing architectural boundaries; it and its linked capability/foundation documents describe the current implementation.
-- Read `docs/capabilities/terminal-interface.md` before changing source organization or TUI ownership, and `docs/capabilities/persistent-terminals.md` plus `docs/foundations/client-synchronization.md` before changing terminal behavior, input authority or recovery.
-- Keep TUI tests in their capability owner's `tests/` directory; reserve `packages/tui/src/tests/` for package-wide acceptance and genuinely shared support. Follow the enforced import boundaries in the terminal-interface document and the current verification workflow in `docs/foundations/development.md`.
+- Read `docs/overview.md` before planning features or changing architectural boundaries; it and its linked architecture documents describe the current implementation.
+- Read `docs/terminal-interface.md` before changing source organization or TUI ownership, and `docs/terminal-processes.md`, `docs/terminal-display.md` plus `docs/client-coordination.md` before changing terminal behavior, input authority or recovery.
+- Keep TUI tests in their capability owner's `tests/` directory; reserve `packages/tui/src/tests/` for package-wide acceptance and genuinely shared support. Follow the enforced import boundaries in the terminal-interface document and the current verification workflow in `docs/development.md`.
 - Keep README user/feature-focused with installation, short onboarding and essential caveats. Put technical/current developer guidance in the owning capability, foundation or choice document under `docs/`, not dated specs; update it when behavior changes.
 - Keep all Superpowers work in the repository-root `.superpowers/` directory, not `docs/`. Save design specs and open investigation briefs in version-controlled `.superpowers/specs/`, and local implementation plans in gitignored `.superpowers/plans/`; these locations override skill defaults. Specs track unfinished work, not current implementation authority. Preserve active requirements and unresolved issue evidence before retiring documents; completed history belongs in Git, not a separate handovers directory.
 - Optimize for a small codebase that one person can maintain.
