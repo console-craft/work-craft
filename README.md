@@ -97,14 +97,14 @@ work-craft daemon status
   or other running applications. Already stopped shells stay stopped.
 - History is bounded, not an unlimited archive. Terminal rendering still has
   known Unicode/hyperlink limitations. See
-  [runtime limitations](docs/capabilities/persistent-terminals.md#known-limitations-and-unresolved-risks).
+  [runtime limitations](docs/foundations/terminal-display.md#known-limitations-and-unresolved-risks).
 - Non-Coding categories currently provide generic items and terminal workspaces,
   not specialized task, GitHub or Azure DevOps screens.
 
 ## Building or contributing?
 
 Start with the [architecture overview](docs/overview.md),
-[development guide](docs/foundations/development.md) and
+[development guide](docs/development.md) and
 [agent guidelines](AGENTS.md). Released changes are in the [changelog](CHANGELOG.md).
 
 ## License

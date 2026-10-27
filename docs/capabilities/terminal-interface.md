@@ -1,132 +1,103 @@
-# Terminal interface, focus and client boundaries
+# Terminal interface
 
-Terminal reading path — **2 of 2** · Previous:
-[Persistent terminals](persistent-terminals.md) · [Overview](../overview.md)
+[Overview](../overview.md) / [Capabilities](overview.md) / Terminal interface
 
-**The TUI owns interaction and presentation, never durable work or process
-lifetime.** React composes OpenTUI renderables; a disposable client store supplies
-daemon state. Local focus, browse candidates and pending UI intent are separate
-from the daemon's shared session selection.
+Topic 4 of 4
 
-## Composition and ownership
+[Previous: Terminal workspaces](terminal-workspaces.md)
 
-| TUI capability | Responsibility                                                                                                  |
-| -------------- | --------------------------------------------------------------------------------------------------------------- |
-| `client/`      | Connection, attachment, control synchronization, live authority and pane-local output publication               |
-| `input/`       | Pure keyboard interpretation, command metadata and spatial-focus rules; no RPC execution                        |
-| `shell/`       | Compose capabilities, route actions, submit commands, manage dialogs/focus/errors and coordinate terminal entry |
-| `navigation/`  | Category/item projections, filtering, expansion, browse candidates and path labels; no Git discovery            |
-| `workbench/`   | Tabs, split geometry, stable pane leaves, material requests, input queues and native readiness                  |
-| `ui/`          | Application-independent primitives, controls, components, interaction mechanisms and themes                     |
+The TUI is a disposable projection of daemon state composed by `WorkCraftShell`.
+The shell joins navigation, terminal workbench, client store, command routing,
+and reusable UI. Capability modules do not import the shell, and reusable UI does
+not know about Work Craft's work/session model. This makes focus and interaction
+coordination explicit without moving process ownership into React.
 
-`main.tsx` registers `TerminalMaterialRenderable` and creates the renderer.
-`App` selects the default theme and composes `useWorkCraft()` with `WorkCraftShell`.
-Controls/components demos are alternate entry-point views, not another application
-or a persisted theme preference.
+## Composition and import boundaries
 
-The [lint configuration](../../packages/tui/.oxlintrc.json) enforces direct `@/`
-internal imports, the public `@work-craft/server/client` boundary (plus the inert
-`client/output-probe` recorder), and no production imports of test support.
-`client`, `input`, `navigation` and `workbench` cannot import `shell`; reusable `ui`
-cannot import application capabilities or demos. The shell composes downward.
-Theme contracts/providers remain in `ui/theming/`.
+```mermaid
+flowchart TB
+    App[App and theme provider]
+    Shell[Shell composition and interaction coordination]
+    Client[Client store and pane output subscriptions]
+    Navigation[Categories and navigator]
+    Input[Command routing and focus types]
+    Workbench[Tabs, pane layout, terminal viewport]
+    UI[Reusable UI, interaction, theming]
+    API[Client-safe server exports]
+    App --> Shell
+    Shell --> Client
+    Shell --> Navigation
+    Shell --> Input
+    Shell --> Workbench
+    Shell --> UI
+    Client --> API
+    Workbench --> API
+    Workbench --> UI
+    Navigation --> UI
+```
 
-## Keyboard, focus and asynchronous entry
+The diagram summarizes responsibility direction, not every allowed import.
+[The TUI import rules](../../packages/tui/.oxlintrc.json) enforce the key boundaries:
+production TUI uses `@/` internal aliases and only client-safe server exports;
+`client`, `input`, `navigation`, and `workbench` cannot import `shell`; reusable
+`ui` cannot import application capabilities or demos. Production cannot import
+tests/support. Tests live with their capability owner, while package-wide
+acceptance and genuinely shared helpers live in `src/tests`.
 
-The command router interprets host shortcuts and leader sequences. The shell
-combines routing with actual native focus, command availability, dialog state and
-live connection scope. Unhandled terminal input becomes semantic events for the
-daemon's parser; reusable controls retain their own text/editing behavior.
+## Shared context, local interaction
 
-Four identities must not be conflated:
+The client store owns connection state, acknowledged attachment, control snapshot,
+geometry, and per-pane output buffers. React reads it with `useSyncExternalStore`.
+The shell derives active work from that snapshot and attachment. Local reducer
+state owns focus region, navigator query/cursor/expansion/width, dialog and prompt
+values, and operational errors. The native focused renderable and current store
+are consulted at input time because React closures may lag a burst of keys.
 
-1. The local navigator's highlighted candidate.
-2. The daemon's selected item/tab/pane for the attached session.
-3. The client's logical/native focus target.
-4. The exact destination of a pending open/create/split/restart operation.
+`command-router` maps Hyper, Ctrl, leader, and scoped plain keys to commands, and
+produces status hints from the same definitions. The shell computes which commands
+are currently meaningful. Handled application keys are consumed; unhandled keys
+can reach the focused terminal only when current eligibility allows it. Modal
+focus, leader state, disconnected operation, and undersized windows affect
+routing before terminal input is admitted.
 
-Terminal entry waits for the command's committed revision in the same epoch, the
-active intended destination, usable geometry and a presented current-scope frame.
-New input, focus or navigation can cancel an obsolete entry. Split/restart/tab
-creation cannot fall back to a convenient running sibling. Restart submission
-protection remains until its authoritative response revision is observed even if
-the pending focus transfer was canceled.
+Create/open/split commands have two outcomes: durable state may commit, and local
+focus may later move to the resulting control or pane. `use-shell-commands`
+tracks operation identity, while terminal-entry coordination waits for the right
+context, measured layout, control, and terminal readiness. Later input or context
+changes can cancel a deferred focus handoff without undoing committed work.
 
-Native events may arrive before React commits. Captured callbacks therefore read
-live store state and synchronous intent refs instead of trusting an old rendered
-projection. Layout effects, native measurement callbacks and frame listeners are
-part of the synchronization mechanism, not interchangeable render timing details.
+## Layout changes authority
 
-## Rendering is not authority
+At widths below 80 columns the interface blocks ordinary interaction. From 80 to
+119 columns an open navigator is a drawer; at 120 and above it can dock beside
+the workbench. The shell reports a workbench canvas only while connected, suitably
+sized, and unobstructed by a drawer or dialog. Hiding/covering the terminal therefore
+withdraws the client's eligibility for geometry and input; it does not resize a
+shell to the overlay's area.
 
-Pane output has independent subscriptions outside the root React control
-subscription. `TerminalViewport` coalesces material refreshes at 33 ms with one
-abortable request per pane. The returned styled cell/cursor picture is drawn at
-explicit positions; the client does not parse ANSI.
+The one-row status bar stays outside application overlays. `DialogOverlay` sets
+`overlayMargins={{ bottom: 1 }}` while the reusable dialog component retains its
+general defaults. Terminal panes reserve their border and any recovery notice;
+too-small panes cannot admit child input. A smaller observing client clips and
+follows the daemon cursor within the authoritative terminal picture instead of
+inventing a second child size.
 
-Input forwarding needs all of the following, followed by daemon revalidation:
+On reconnect or session attachment transition, the shell can retain the previous
+presentation. That picture does not grant input authority. Current acknowledged
+attachment, store scope, viewport, and terminal presentation still gate input.
+See [client coordination](../foundations/client-coordination.md) and
+[terminal display](../foundations/terminal-display.md) before changing these guards.
 
-- Store authority: connected current attachment, epoch/navigation/tab geometry,
-  correct item ancestry/layout/runtime and a running selected pane.
-- Shell eligibility: unobscured usable presentation, no blocking dialog/drawer or
-  resize guard, and no conflicting entry/restart operation.
-- Native leaf readiness: measured dimensions and a current-scope picture actually
-  presented by a native frame, not merely received by JavaScript.
+## Investigate
 
-A terminal viewport needs at least 20 columns by five rows for input or stopped
-browsing; Reactivate needs a 20-column by four-row pane. Input captures its original
-sender and a finite received-output frontier. Later output cannot extend that
-frontier indefinitely. Pending and in-flight events share an 8-MiB budget with
-128 bytes charged per descriptor. Scope replacement/unmount cancels queued work.
-FIFO acknowledgments indicate PTY buffer drain, not application-level execution.
+[main.tsx](../../packages/tui/src/main.tsx) configures the renderer and registers
+the terminal material renderable. [shell.tsx](../../packages/tui/src/shell/shell.tsx)
+composes the interface and viewport reports.
+[use-shell-focus.ts](../../packages/tui/src/shell/use-shell-focus.ts),
+[use-terminal-entry.ts](../../packages/tui/src/shell/use-terminal-entry.ts), and
+[commands.ts](../../packages/tui/src/shell/commands.ts) own interaction handoffs.
+[terminal-pane.tsx](../../packages/tui/src/workbench/terminal-pane.tsx) joins process
+state and display readiness. Reusable controls, focus management, theming, and
+primitives live under [ui](../../packages/tui/src/ui).
 
-The shell may retain a coherent same-session body while reconnecting. That is
-presentation only: commands, viewport reports and input continue using live
-authority. Pane IDs and keyed ancestry preserve terminal identity across geometry
-changes; runtime/epoch replacement deliberately gives the terminal a new identity.
-
-## Layout, overlays and errors
-
-Below 80 columns the shell blocks normal interaction with a resize guard. At 120
-columns and above, an open navigator docks; at narrower usable widths it becomes
-a covering drawer. Covered viewers withdraw from size election and terminal input.
-
-Application dialogs/guards reserve the **bottom one-row status bar** rather than
-covering or dimming it. Reusable dialog components retain full-screen defaults;
-the application supplies its own bottom margin. Field validation remains beside
-the field, operational errors appear as source-labelled status messages, and
-child stderr remains terminal output. Reporting must not steal focus or unmount
-unrelated panes.
-
-## CLI boundary
-
-The CLI parses arguments without interactive prompts and uses the same daemon
-commands over HTTP. Explicit cwd/registration paths resolve in the calling
-process. Results are plain text or `--json`; usage errors exit 2 and runtime/API
-errors exit 1. Even `daemon status` ensures the daemon is running, so it is not a
-passive filesystem-only liveness probe. Interactive input remains a WebSocket/TUI
-responsibility.
-
-## Code References
-
-- [shell.tsx](../../packages/tui/src/shell/shell.tsx),
-  [use-shell-focus.ts](../../packages/tui/src/shell/use-shell-focus.ts) and
-  [use-terminal-entry.ts](../../packages/tui/src/shell/use-terminal-entry.ts):
-  application composition, live gates and exact-destination entry.
-- [command-router.ts](../../packages/tui/src/input/command-router.ts): host routing
-  and hint definitions; [state.ts](../../packages/tui/src/shell/state.ts): disposable UI state.
-- [surface-view.tsx](../../packages/tui/src/workbench/surface-view.tsx) and
-  [terminal-pane.tsx](../../packages/tui/src/workbench/terminal-pane.tsx): stable
-  leaves, runtime identity and stopped actions.
-- [terminal-viewport.tsx](../../packages/tui/src/workbench/terminal-viewport.tsx),
-  [terminal-input.ts](../../packages/tui/src/workbench/terminal-input.ts) and
-  [terminal-material.ts](../../packages/tui/src/workbench/terminal-material.ts):
-  material/readiness, bounded captured input and native drawing.
-- [layout.ts](../../packages/tui/src/shell/layout.ts) and
-  [dialog-overlay.tsx](../../packages/tui/src/shell/dialog-overlay.tsx): responsive
-  dimensions and application status-row reservation.
-- [CLI main.ts](../../packages/cli/src/main.ts) and
-  [args.ts](../../packages/cli/src/args.ts): executable command surface and exit behavior.
-
-Terminal reading path — **2 of 2** · Previous:
-[Persistent terminals](persistent-terminals.md) · [Overview](../overview.md)
+[Previous: Terminal workspaces](terminal-workspaces.md)

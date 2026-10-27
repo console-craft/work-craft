@@ -3,3 +3,5 @@ CHANGELOG.md
 
 # Preserve visual alignment
 packages/tui/src/ui/icons/nerd.ts
+docs/
+.superpowers/
