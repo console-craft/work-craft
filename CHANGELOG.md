@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.2](https://github.com/console-craft/work-craft/compare/v1.1.1...v1.1.2) (2026-10-29)
+
+
+### Bug Fixes
+
+* **deps:** update dependency @opentui/core to v0.7.0 ([#52](https://github.com/console-craft/work-craft/issues/52)) ([44a013c](https://github.com/console-craft/work-craft/commit/44a013cd02fa7f01e0e55080947b6706c81948fd))
+* **deps:** update dependency @opentui/react to v0.7.0 ([#53](https://github.com/console-craft/work-craft/issues/53)) ([4ff05fa](https://github.com/console-craft/work-craft/commit/4ff05fa5de721fa7c04850f00fe118eabc5be0a1))
+
 ## [1.1.1](https://github.com/console-craft/work-craft/compare/v1.1.0...v1.1.1) (2026-10-25)
 
 
