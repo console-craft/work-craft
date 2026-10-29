@@ -11,7 +11,7 @@
     "start": "bun src/main.ts"
   },
   "dependencies": {
-    "@opentui/core": "0.6.6",
+    "@opentui/core": "0.7.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
